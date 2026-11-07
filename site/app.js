@@ -383,17 +383,22 @@
         if (!s) return `<div class="side-row"><span class="logo">—</span><b>Bye</b><span></span></div>`;
         const t = teamById[s.team];
         const won = winnerId === s.team, lost = winnerId && !won;
+        const other = s === a ? b : a;
+        const wpv = !wk.final && s.winProb != null ? Math.round(s.winProb * 100) : null;
+        const fav = wpv != null && other && other.winProb != null && s.winProb > other.winProb;
         return `<div class="side-row${lost ? " lost" : ""}">${logo(t)}
           <span style="min-width:0"><div class="team-name">${esc(t.name)}${won ? '<span class="win-tag">W</span>' : ""}</div><div class="team-mgr">${esc(t.manager)} · ${record(t)}</div></span>
+          ${wpv != null ? `<span class="wp${fav ? " fav" : ""}" title="ESPN live win probability">${wpv}% <small>to win</small></span>` : "<span></span>"}
           <span class="score">${fmt(s.pts)}${s.proj != null ? `<small>proj ${fmt(s.proj)}</small>` : ""}</span></div>`;
       };
       const isOpen = open === String(g.id);
       const liveG = !wk.final;
-      const wp = liveG && a && a.winProb != null ? `${esc(teamById[a.team].abbrev || "Home")} ${Math.round(a.winProb * 100)}% to win` : "";
+      const wpBar = liveG && a && b && a.winProb != null && b.winProb != null
+        ? `<div class="wp-bar" aria-hidden="true"><span style="width:${(100 * a.winProb / (a.winProb + b.winProb)).toFixed(1)}%"></span></div>` : "";
       const tier = TIER[g.tier] || (g.playoff ? "Playoffs" : "");
       return `<article class="game${g.tier && g.tier !== "NONE" && g.tier !== "WINNERS_BRACKET" ? " consolation" : ""}">
         <button class="game-btn" data-game="${g.id}" aria-expanded="${isOpen}">${row(a)}${row(b)}
-          <div class="game-foot"><span>${tier ? tier + " · " : ""}${liveG ? "In progress" : "Final"}${wp ? " · " + wp : ""}</span><span>${isOpen ? "Hide box score ↑" : "Box score ↓"}</span></div>
+          ${wpBar}<div class="game-foot"><span>${tier ? tier + " · " : ""}${liveG ? "In progress" : "Final"}</span><span>${isOpen ? "Hide box score ↑" : "Box score ↓"}</span></div>
         </button>
         ${isOpen && a && b ? `<div class="box-toggle" role="tablist" aria-label="Show lineup">
             <button type="button" role="tab" data-boxside="0" aria-selected="true" class="active">${esc(teamById[a.team].name)}</button>

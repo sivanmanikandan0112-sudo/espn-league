@@ -176,7 +176,13 @@ select { background: var(--surface); border: 1px solid var(--line); border-radiu
 .games { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 12px; align-items: start; }
 .game { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
 .game-btn { display: block; width: 100%; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
-.side-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 16px; }
+.side-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 16px; }
+.wp { display: flex; flex-direction: column; align-items: center; min-width: 52px; padding: 4px 8px; border-radius: 9px; background: var(--surface-2);
+  font-weight: 800; font-size: 16px; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.wp small { font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.wp.fav { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.wp-bar { height: 6px; background: var(--line); }
+.wp-bar span { display: block; height: 100%; background: var(--accent); }
 .side-row + .side-row { border-top: 1px solid var(--line); }
 .side-row .logo { width: 36px; height: 36px; }
 .side-row.lost { opacity: .6; }
