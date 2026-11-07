@@ -93,10 +93,9 @@ The ESPN cookies live only in the Worker's secrets.
 cd worker
 npx wrangler login
 npx wrangler deploy
-grep '^ESPN_S2=' ../.env | cut -d= -f2- | npx wrangler secret put ESPN_S2
-grep '^ESPN_SWID=' ../.env | cut -d= -f2- | npx wrangler secret put ESPN_SWID
+sh set-secrets.sh                      # stores ESPN_S2 / ESPN_SWID from ../.env (never printed)
 npx wrangler secret put GITHUB_TOKEN   # optional: fine-grained token, this repo only, Actions read/write
 ```
 
 Then put the Worker's URL in `site/config.js` (`liveApi`). When the ESPN cookies expire, re-run the two
-`secret put` lines (and `gh secret set -f .env` for the GitHub build).
+`sh worker/set-secrets.sh` (and `gh secret set -f .env` for the GitHub build).
