@@ -551,3 +551,37 @@ a.bm-foot:hover { color: var(--accent); }
 .sg-pick .pick { grid-template-columns: 52px 30px minmax(0, 1fr); }
 .sg-pick .pick-name b { display: block; }
 .sg-pick .picks { min-width: 0; }
+
+/* ---- pick'em ---- */
+.pk-who { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin-bottom: 14px; max-width: 760px; }
+.pk-who .field { flex-direction: column; align-items: flex-start; gap: 4px; }
+.pk-who input[type=password] { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 110px; font-size: 16px; letter-spacing: .3em; }
+.pk-who .pk-remember { flex-direction: row; align-items: center; gap: 6px; }
+.pk-who .cta { margin: 0; border: 0; cursor: pointer; font: inherit; font-weight: 700; padding: 10px 18px; }
+.pk-who .note { flex-basis: 100%; margin: 0; }
+.pk-games { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 10px; margin-top: 8px; }
+.pk-game { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: stretch; }
+.pk-vs { align-self: center; font-size: 12px; font-weight: 700; color: var(--ink-2); }
+.pk-team { display: flex; gap: 10px; align-items: center; min-width: 0; text-align: left; padding: 10px 12px; border-radius: 12px; cursor: pointer;
+  background: var(--surface); border: 2px solid var(--line); color: var(--ink); font: inherit; }
+.pk-team > span { min-width: 0; }
+.pk-team b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pk-team .logo { width: 32px; height: 32px; flex: none; }
+.pk-team:hover { border-color: var(--ink-2); }
+.pk-team.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.pk-save { margin: 14px 0; }
+.pk-save .cta { display: inline-block; margin: 0; border: 0; cursor: pointer; font: inherit; font-weight: 700; padding: 12px 22px; }
+.pk-grid { border-collapse: collapse; font-size: 13px; }
+.pk-grid th, .pk-grid td { padding: 6px 8px; border: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.pk-grid tbody th { text-align: left; }
+.pk-grid thead th .logo { width: 22px; height: 22px; font-size: 9px; display: inline-grid; vertical-align: middle; }
+.pk-grid .pk-cell .logo { width: 26px; height: 26px; font-size: 9px; display: inline-grid; }
+.pk-cell.right { background: color-mix(in srgb, var(--accent) 35%, var(--surface)); }
+.pk-cell.wrong { background: color-mix(in srgb, var(--hot) 30%, var(--surface)); }
+.pk-cell.ahead { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.pk-cell.behind { background: color-mix(in srgb, var(--hot) 12%, var(--surface)); }
+@media (max-width: 640px) {
+  .pk-game { grid-template-columns: 1fr; }
+  .pk-vs { justify-self: center; }
+  .pk-who .cta { flex: 1; }
+}

@@ -100,3 +100,19 @@ npx wrangler secret put GITHUB_TOKEN   # optional: fine-grained token, this repo
 
 Then put the Worker's URL in `site/config.js` (`liveApi`). When the ESPN cookies expire, re-run the two
 `sh worker/set-secrets.sh` (and `gh secret set -f .env` for the GitHub build).
+
+## Weekly pick'em
+
+Matchups → Pick'em. Picks for a week open when ESPN moves on to it (early Wednesday) and lock at that week's first
+NFL kickoff; the worker enforces this and hides everyone's picks until the lock. Each member claims their name with a
+4-digit PIN the first time they pick (stored hashed in the worker's `PICKEM` KV namespace). One point per correct
+pick; the leaderboard and weekly winners count games once they're final.
+
+If someone forgets their PIN (or someone else grabbed their name), clear it and they can set a new one:
+
+```bash
+cd worker && npx wrangler kv key delete --remote --binding PICKEM "pin:2026:{MEMBER-ID}"
+```
+
+(Member ids are the `{...}` ids in `site/data/index.js`; local testing can force picks open with
+`PICKEM_FORCE_OPEN=1` in `worker/.dev.vars`.)

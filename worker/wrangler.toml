@@ -11,3 +11,8 @@ GITHUB_WORKFLOW = "refresh.yml"
 # Rebuild the full site every 30 minutes (only if a GITHUB_TOKEN secret is set).
 [triggers]
 crons = ["*/30 * * * *"]
+
+# Weekly pick'em: PINs and picks
+[[kv_namespaces]]
+binding = "PICKEM"
+id = "9f2c23bf91a34b78a401c335bbc09a02"

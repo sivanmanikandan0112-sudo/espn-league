@@ -83,16 +83,146 @@ async function liveWeek(env) {
   return { season: yr, week, latestScoringPeriod: status.latestScoringPeriod, updated: new Date().toISOString(), games, stats };
 }
 
+// ---------------------------------------------------------------- weekly pick'em
+// Picks for a week are open from when ESPN moves on to that week (early Wednesday) until its first NFL kickoff.
+// Everyone's picks stay hidden until that lock; a 4-digit PIN (set on first use) stops people picking as someone else.
+
+const json = (env, req, body, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...cors(env, req) } });
+
+async function cached(key, seconds, make) {
+  const cache = caches.default;
+  const k = new Request("https://cache.local/" + key);
+  const hit = await cache.match(k);
+  if (hit) return hit.json();
+  const val = await make();
+  await cache.put(k, new Response(JSON.stringify(val), { headers: { "Cache-Control": `public, max-age=${seconds}` } }));
+  return val;
+}
+
+async function firstKickoff(yr, week) {
+  const all = await cached(`pro-schedule-${yr}`, 6 * 3600, async () => {
+    const r = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${yr}?view=proTeamSchedules_wl`);
+    const d = await r.json();
+    const first = {};
+    for (const t of d.settings.proTeams) {
+      for (const [wk, games] of Object.entries(t.proGamesByScoringPeriod || {})) {
+        for (const g of games) if (!first[wk] || g.date < first[wk]) first[wk] = g.date;
+      }
+    }
+    return first;
+  });
+  return all[String(week)] || null;
+}
+
+async function pickemWeek(env) {
+  const yr = season();
+  return cached(`pickem-week-${yr}`, 120, async () => {
+    const d = await espn(env, yr, "view=mStatus&view=mTeam&view=mMatchupScore");
+    const week = d.status.currentMatchupPeriod;
+    const games = (d.schedule || []).filter(m => m.matchupPeriodId === week && m.home && m.away)
+      .map(m => ({ id: m.id, home: m.home.teamId, away: m.away.teamId }));
+    const members = [...new Set((d.teams || []).flatMap(t => t.owners || []))];
+    const over = d.status.latestScoringPeriod > (d.status.finalScoringPeriod || 17);
+    return { season: yr, week, games, members, over };
+  });
+}
+
+async function pinHash(env, season, member, pin) {
+  const data = new TextEncoder().encode(`${env.PIN_SALT || "league-hq"}|${season}|${member}|${pin}`);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// returns null when the PIN is right (or was just set), otherwise an error message
+async function checkPin(env, season, member, pin) {
+  if (!/^\d{4}$/.test(String(pin || ""))) return "Enter a 4-digit PIN.";
+  const failKey = `fails:${season}:${member}`;
+  const fails = Number(await env.PICKEM.get(failKey)) || 0;
+  if (fails >= 10) return "Too many wrong PINs. Try again in an hour.";
+  const want = await env.PICKEM.get(`pin:${season}:${member}`);
+  const got = await pinHash(env, season, member, pin);
+  if (!want) { await env.PICKEM.put(`pin:${season}:${member}`, got); return null; } // first use claims the name
+  if (want === got) return null;
+  await env.PICKEM.put(failKey, String(fails + 1), { expirationTtl: 3600 });
+  return "Wrong PIN for that name.";
+}
+
+async function pickemState(env, now = Date.now()) {
+  const wk = await pickemWeek(env);
+  const lockAt = await firstKickoff(wk.season, wk.week);
+  const open = !wk.over && (env.PICKEM_FORCE_OPEN === "1" || (lockAt != null && now < lockAt));
+  return { ...wk, lockAt, open };
+}
+
+async function allPicks(env, season) {
+  const out = {};
+  let cursor;
+  do {
+    const page = await env.PICKEM.list({ prefix: `picks:${season}:`, cursor });
+    for (const k of page.keys) {
+      const [, , week, member] = k.name.split(":");
+      const v = await env.PICKEM.get(k.name, "json");
+      if (v) (out[week] = out[week] || {})[member] = v.picks;
+    }
+    cursor = page.list_complete ? null : page.cursor;
+  } while (cursor);
+  return out;
+}
+
+async function handlePickem(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Pick'em storage isn't set up yet." }, 503);
+  const st = await pickemState(env);
+  if (req.method === "GET" && url.pathname === "/pickem") {
+    const picks = await allPicks(env, st.season);
+    const submitted = Object.keys(picks[st.week] || {});
+    if (st.open) delete picks[st.week]; // nobody sees this week's picks until they lock
+    return json(env, req, { season: st.season, week: st.week, lockAt: st.lockAt, open: st.open, games: st.games, submitted, weeks: picks });
+  }
+  if (req.method !== "POST") return json(env, req, { error: "Not found" }, 404);
+  let body;
+  try { body = await req.json(); } catch (_) { return json(env, req, { error: "Bad request" }, 400); }
+  const member = String(body.member || "");
+  if (!st.members.includes(member)) return json(env, req, { error: "That name isn't in the league." }, 400);
+  if (url.pathname === "/pickem/mine") {
+    const exists = await env.PICKEM.get(`pin:${st.season}:${member}`);
+    if (!exists) return json(env, req, { picks: {}, newPin: true });
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    const v = await env.PICKEM.get(`picks:${st.season}:${st.week}:${member}`, "json");
+    return json(env, req, { picks: (v && v.picks) || {} });
+  }
+  if (url.pathname === "/pickem/submit") {
+    if (!st.open) return json(env, req, { error: "Picks for this week are locked." }, 409);
+    const picks = {};
+    for (const g of st.games) {
+      const t = Number((body.picks || {})[g.id]);
+      if (t === g.home || t === g.away) picks[g.id] = t;
+    }
+    if (!Object.keys(picks).length) return json(env, req, { error: "Pick at least one game." }, 400);
+    const err = await checkPin(env, st.season, member, body.pin); // only after the picks are valid, so a bad try never claims a name
+    if (err) return json(env, req, { error: err }, 403);
+    await env.PICKEM.put(`picks:${st.season}:${st.week}:${member}`, JSON.stringify({ picks, at: new Date().toISOString() }));
+    return json(env, req, { ok: true, picks, count: Object.keys(picks).length, of: st.games.length });
+  }
+  return json(env, req, { error: "Not found" }, 404);
+}
+
 function cors(env, req) {
   const origin = req.headers.get("Origin") || "";
   const allowed = [env.SITE_ORIGIN, "http://localhost:8765"].includes(origin) ? origin : env.SITE_ORIGIN;
-  return { "Access-Control-Allow-Origin": allowed, "Vary": "Origin", "Access-Control-Allow-Methods": "GET, OPTIONS" };
+  return { "Access-Control-Allow-Origin": allowed, "Vary": "Origin", "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type" };
 }
 
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (req.method === "OPTIONS") return new Response(null, { headers: cors(env, req) });
+    if (url.pathname.startsWith("/pickem")) {
+      try { return await handlePickem(req, env, url); }
+      catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
+    }
     if (url.pathname !== "/live") return new Response("League HQ live worker. Try /live", { status: 404 });
 
     const cache = caches.default;

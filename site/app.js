@@ -416,10 +416,11 @@
     return `<section class="recap"><div class="section-head"><h2>Week ${w} recap</h2><button type="button" class="share-btn" data-share="recap" data-week="${w}">${SHARE_ICON}Share</button></div><div class="recap-grid">${items.join("")}</div></section>`;
   }
 
-  const MATCHUP_TABS = [["", "Weekly"], ["bracket", "Playoff bracket"]];
+  const MATCHUP_TABS = [["", "Weekly"], ["bracket", "Playoff bracket"], ["pickem", "Pick'em"]];
 
   function renderMatchups() {
     if (state.sub === "bracket") return renderBracket();
+    if (state.sub === "pickem") return renderPickem();
     const weeks = D.weeks.map(x => x.week);
     let w = parseInt(state.params.get("week"), 10);
     if (!weeks.includes(w)) w = L.over ? weeks[weeks.length - 1] : L.currentWeek;
@@ -551,6 +552,185 @@
       ${subnav("matchups", MATCHUP_TABS, "bracket")}
       <div class="bracket">${cols}${champCol}</div>`;
   }
+
+
+  // ---------------------------------------------------------------- weekly pick'em
+  // Picks live on the live worker. It enforces the lock (first NFL kickoff of the week), hides everyone's
+  // picks until then, and checks each person's 4-digit PIN (set the first time they pick).
+  const PK = { data: null, sel: {}, member: store.get("pk-member", ""), pin: store.get("pk-pin", ""), ready: false, msg: "", err: false, loading: false };
+
+  const pkApi = (path, body) => fetch(LIVE_API_BASE() + path, body
+    ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" }
+    : { cache: "no-store" }).then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok && !j.error) j.error = "Something went wrong (" + r.status + ")."; return j; });
+  function LIVE_API_BASE() { return ((window.LEAGUE_CONFIG || {}).liveApi || "").replace(/\/$/, ""); }
+
+  function pkMembers() {
+    const cur = window.LEAGUE_DATA[IDX.current];
+    const ids = [...new Set(((cur || D).teams || []).flatMap(t => t.owners || []))];
+    return ids.map(id => ({ id, name: memberName(id) })).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async function renderPickem() {
+    const head = (title, sub) => `<div class="section-head"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("matchups", MATCHUP_TABS, "pickem")}`;
+    if (state.season !== IDX.current) {
+      main.innerHTML = head("Pick'em", "") + `<div class="empty">Pick'em started in ${IDX.current}. <a href="#/matchups/pickem">Go to this season's pick'em</a></div>`;
+      return;
+    }
+    if (!LIVE_API_BASE()) { main.innerHTML = head("Pick'em", "") + '<div class="empty">Pick\'em needs the live worker, which isn\'t set up.</div>'; return; }
+    if (!PK.data || Date.now() - (PK.at || 0) > 60000) {
+      if (!PK.data) main.innerHTML = head("Pick'em", "") + '<div class="empty">Loading pick\'em…</div>';
+      PK.data = await pkApi("/pickem");
+      PK.at = Date.now();
+      if (state.tab !== "matchups" || state.sub !== "pickem") return;
+    }
+    pickemView();
+  }
+
+  function pickemView() {
+    const P = PK.data;
+    const head = (title, sub) => `<div class="section-head"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("matchups", MATCHUP_TABS, "pickem")}`;
+    if (!P || P.error) { main.innerHTML = head("Pick'em", "") + `<div class="empty">${esc((P && P.error) || "Couldn't load pick'em.")} <button type="button" class="linkbtn" data-pk="reload">Try again</button></div>`; return; }
+    const cur = window.LEAGUE_DATA[IDX.current];
+    const tb = id => (cur.teams.find(t => t.id === id) || { name: "Team " + id, logo: "", manager: "" });
+    const lock = P.lockAt ? new Date(P.lockAt) : null;
+    const lockText = lock ? lock.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+    const members = pkMembers();
+    const nameOf = id => (members.find(m => m.id === id) || { name: memberName(id) }).name;
+
+    // results: who won each game (final), or who's ahead (live)
+    const result = (week, gid) => {
+      const wk = cur.weeks.find(w => w.week === Number(week));
+      const g = wk && wk.games.find(x => String(x.id) === String(gid));
+      if (!g || g.sides.length !== 2) return null;
+      const [a, b] = g.sides;
+      if (g.winner === "HOME") return { team: a.team, final: true };
+      if (g.winner === "AWAY") return { team: b.team, final: true };
+      if (wk.final) return { team: null, final: true }; // tie
+      if (a.pts === b.pts) return null;
+      return { team: a.pts > b.pts ? a.team : b.team, final: false };
+    };
+
+    // season leaderboard from every locked week
+    const board = {};
+    const weekBest = {};
+    Object.entries(P.weeks || {}).forEach(([w, byMember]) => {
+      Object.entries(byMember).forEach(([m, picks]) => {
+        const row = board[m] = board[m] || { m, right: 0, decided: 0, made: 0, weeksWon: 0 };
+        let right = 0;
+        Object.entries(picks).forEach(([gid, team]) => {
+          row.made++;
+          const r = result(w, gid);
+          if (r && r.final) { row.decided++; if (r.team === team) { row.right++; right++; } }
+        });
+        (weekBest[w] = weekBest[w] || []).push({ m, right });
+      });
+    });
+    Object.entries(weekBest).forEach(([w, rows]) => {
+      const wk = cur.weeks.find(x => x.week === Number(w));
+      if (!wk || !wk.final) return;
+      const top = Math.max(...rows.map(r => r.right));
+      if (top > 0) rows.filter(r => r.right === top).forEach(r => board[r.m].weeksWon++);
+    });
+    const leaders = Object.values(board).sort((a, b) => b.right - a.right || b.weeksWon - a.weeksWon || a.decided - b.decided);
+    const leaderboard = leaders.length ? section("Season leaderboard", "One point per correct pick, counted once each game is final.", table([
+      { label: "Picker", cell: r => `<b>${esc(nameOf(r.m))}</b>` },
+      { label: "Correct", num: 1, cell: r => `${r.right}–${r.decided - r.right}` },
+      { label: "Hit rate", num: 1, cell: r => (r.decided ? (100 * r.right / r.decided).toFixed(0) + "%" : "—") },
+      { label: "Weeks won", num: 1, cell: r => r.weeksWon },
+    ], leaders)) : "";
+
+    let body = "";
+    if (P.open) {
+      const sub = `Open · locks <b>${esc(lockText)}</b> at the week's first kickoff. Pick a winner for every matchup; you can change picks until the lock. Nobody sees anyone's picks until then.`;
+      const who = `<div class="panel pk-who">
+        <label class="field">Who are you? <select id="pk-member"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
+        <label class="field">PIN <input id="pk-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="4 digits" value="${esc(PK.pin)}"></label>
+        <label class="field pk-remember"><input id="pk-remember" type="checkbox"${store.get("pk-pin", "") ? " checked" : ""}> Remember me on this device</label>
+        <button type="button" class="cta" data-pk="continue">${PK.ready ? "Switch" : "Continue"}</button>
+        <p class="note">First time? The PIN you enter becomes yours for the season, so nobody else can pick for you.</p></div>`;
+      let games = "";
+      if (PK.ready) {
+        const n = Object.keys(PK.sel).length;
+        games = `<div class="pk-games">${P.games.map(g => `<div class="pk-game">${[g.away, g.home].map(tid => {
+          const t = tb(tid), on = PK.sel[g.id] === tid;
+          return `<button type="button" class="pk-team${on ? " on" : ""}" data-pk-game="${g.id}" data-pk-team="${tid}" aria-pressed="${on}">${logo(t)}<span><b>${esc(t.name)}</b><span class="team-mgr">${esc(t.manager)} · ${record(t)}</span></span></button>`;
+        }).join('<span class="pk-vs">vs</span>')}</div>`).join("")}</div>
+          <div class="pk-save"><button type="button" class="cta" data-pk="save">Save picks (${n} of ${P.games.length})</button></div>`;
+      }
+      const msg = PK.msg ? `<p class="note${PK.err ? " live" : ""}">${esc(PK.msg)}</p>` : "";
+      const inList = (P.submitted || []).map(nameOf).sort();
+      const subm = `<p class="note">Picks in (${inList.length} of ${members.length}): ${inList.length ? esc(inList.join(", ")) : "nobody yet"}</p>`;
+      body = head(`Week ${P.week} pick'em`, sub) + who + msg + games + subm + leaderboard;
+    } else {
+      const picks = (P.weeks || {})[P.week] || {};
+      const pickers = Object.keys(picks).sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+      const wk = cur.weeks.find(w => w.week === P.week);
+      const status = wk && wk.final ? "Final" : "Locked · games in progress";
+      let grid = '<div class="empty">Nobody made picks this week.</div>';
+      if (pickers.length) {
+        const rows = pickers.map(m => {
+          let right = 0;
+          const cells = P.games.map(g => {
+            const t = picks[m][g.id], r = result(P.week, g.id);
+            const cls = !t || !r ? "" : r.team === t ? (r.final ? "right" : "ahead") : r.team == null ? "" : (r.final ? "wrong" : "behind");
+            if (r && r.final && r.team === t) right++;
+            return `<td class="pk-cell ${cls}" title="${t ? esc(tb(t).name) : "no pick"}">${t ? logo(tb(t)) : "—"}</td>`;
+          }).join("");
+          return `<tr><th>${esc(nameOf(m))}</th>${cells}<td class="n"><b>${right}</b></td></tr>`;
+        }).join("");
+        const heads = P.games.map(g => `<th title="${esc(tb(g.away).name)} vs ${esc(tb(g.home).name)}">${logo(tb(g.away))}<span class="muted">v</span>${logo(tb(g.home))}</th>`).join("");
+        grid = `<div class="sg-wrap"><table class="pk-grid"><thead><tr><th></th>${heads}<th class="n">Right</th></tr></thead><tbody>${rows}</tbody></table></div>
+          <p class="note">Green = right, red = wrong; lighter shades mean that pick is currently ahead or behind in a live game.</p>`;
+      }
+      const next = P.lockAt && Date.now() >= P.lockAt ? " Next week's picks open early Wednesday morning, once this week is final." : "";
+      body = head(`Week ${P.week} pick'em`, `${status}.${next}`) + section("This week's picks", "", grid) + leaderboard;
+    }
+    main.innerHTML = body;
+  }
+
+  async function pkContinue() {
+    const member = document.getElementById("pk-member").value;
+    const pin = document.getElementById("pk-pin").value.trim();
+    const remember = document.getElementById("pk-remember").checked;
+    if (!member) { PK.msg = "Choose your name first."; PK.err = true; return pickemView(); }
+    if (!/^\d{4}$/.test(pin)) { PK.msg = "Enter a 4-digit PIN."; PK.err = true; return pickemView(); }
+    const r = await pkApi("/pickem/mine", { member, pin });
+    if (r.error) { PK.msg = r.error; PK.err = true; PK.ready = false; return pickemView(); }
+    PK.member = member; PK.pin = pin; PK.ready = true; PK.err = false;
+    PK.sel = {};
+    Object.entries(r.picks || {}).forEach(([g, t]) => { PK.sel[g] = Number(t); });
+    PK.msg = r.newPin ? "Welcome! Your PIN will be saved with your first picks." : Object.keys(PK.sel).length ? "Your saved picks are loaded. Change anything before the lock." : "";
+    store.set("pk-member", member);
+    store.set("pk-pin", remember ? pin : "");
+    pickemView();
+  }
+
+  async function pkSave() {
+    const r = await pkApi("/pickem/submit", { member: PK.member, pin: PK.pin, picks: PK.sel });
+    if (r.error) { PK.msg = r.error; PK.err = true; return pickemView(); }
+    PK.msg = `Saved ${r.count} of ${r.of} picks. You can change them until the lock.`;
+    PK.err = false;
+    PK.data = await pkApi("/pickem");
+    PK.at = Date.now();
+    pickemView();
+  }
+
+  main.addEventListener("click", e => {
+    const t = e.target.closest("[data-pk-team]");
+    if (t) {
+      PK.sel[t.dataset.pkGame] = Number(t.dataset.pkTeam);
+      PK.msg = "";
+      t.closest(".pk-game").querySelectorAll(".pk-team").forEach(b => { const on = b === t; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+      const save = main.querySelector('[data-pk="save"]');
+      if (save) save.textContent = `Save picks (${Object.keys(PK.sel).length} of ${PK.data.games.length})`;
+      return;
+    }
+    const a = e.target.closest("[data-pk]");
+    if (!a) return;
+    if (a.dataset.pk === "continue") pkContinue();
+    if (a.dataset.pk === "save") pkSave();
+    if (a.dataset.pk === "reload") { PK.data = null; renderPickem(); }
+  });
 
   // ---------------------------------------------------------------- insights
   function table(cols, rows) {
@@ -1256,7 +1436,7 @@
       liveAsOf = lv.updated;
       updateLiveChip();
       const typing = document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
-      if (state.season === IDX.current && ["standings", "matchups"].includes(state.tab) && !typing) {
+      if (state.season === IDX.current && ["standings", "matchups"].includes(state.tab) && state.sub !== "pickem" && !typing) {
         const y = window.scrollY;
         await route();
         window.scrollTo(0, y);
