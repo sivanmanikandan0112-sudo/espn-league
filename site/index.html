@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>League HQ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to league content</a>
+  <header class="masthead">
+    <div class="wrap masthead-inner">
+      <a href="#/" class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40"><path d="M6 30 L20 8 L34 30 Z" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/><path d="M13 30 L20 19 L27 30" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/></svg>
+        </span>
+        <span>
+          <span class="brand-kicker">League HQ</span>
+          <span class="brand-name" id="league-name">Loading…</span>
+        </span>
+      </a>
+      <div class="week-badge">
+        <span class="week-kicker" id="season-label"></span>
+        <span class="week-big" id="week-label"></span>
+        <span class="week-sub" id="teams-label"></span>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <nav class="tabs" aria-label="Sections">
+      <a href="#/" data-tab="standings">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 14V8h3v6M6.5 14V3h3v11M11 14V6h3v8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        Standings</a>
+      <a href="#/matchups" data-tab="matchups">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l4 5-4 5M13 3l-4 5 4 5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        Matchups</a>
+      <a href="#/trades" data-tab="trades">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        Trade history</a>
+      <span class="tabs-season" id="tabs-season"></span>
+    </nav>
+    <main id="main" tabindex="-1"></main>
+  </div>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <p><strong>Power value</strong> is the sum of each rostered player's ESPN rest-of-season projected points.
+        Position bars count each team's top QBs, RBs, WRs and TEs (starters plus one backup); the number in each bar is that position's rank in the league.</p>
+      <p class="muted" id="updated"></p>
+    </div>
+  </footer>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

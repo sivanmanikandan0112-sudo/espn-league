@@ -1,0 +1,50 @@
+name: Refresh league site
+
+# Pulls fresh data from ESPN and redeploys the site to GitHub Pages.
+# Times are UTC. ET = UTC-5 (Nov-Mar) / UTC-4 (Sep-Oct).
+on:
+  schedule:
+    - cron: "*/15 17-23 * * 0"     # Sunday afternoon games, every 15 min
+    - cron: "*/15 0-4 * * 1,2,5"   # Sun / Mon / Thu night games, every 15 min
+    - cron: "0 */3 * * *"          # otherwise every 3 hours (waivers, trades, lineup moves)
+  workflow_dispatch: {}            # "Run workflow" button for an instant refresh
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pull league data from ESPN
+        env:
+          ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
+          ESPN_S2: ${{ secrets.ESPN_S2 }}
+          ESPN_SWID: ${{ secrets.ESPN_SWID }}
+        run: python3 build.py
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

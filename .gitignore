@@ -1,0 +1,6 @@
+.env
+site/data.js
+site/logos/
+__pycache__/
+.cache/
+.DS_Store
