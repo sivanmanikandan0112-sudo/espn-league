@@ -43,25 +43,34 @@ def availability(p, weeks, current, nfl_last, bye_week):
 
 
 def best_lineup(avail, slots, flex, fallback):
-    """avail: list of (points, player_key, pos). Returns (points, [starter keys])."""
+    """avail: list of (points, player_key, pos).
+    Returns (points, [(player key, points, slot)], {slot: points}) where slot is QB/RB/WR/TE or FLEX,
+    so position strength compares the same number of lineup spots for every team."""
     used, pts, starters = set(), 0.0, []
+    by_slot = {pos: 0.0 for pos in slots}
+    by_slot["FLEX"] = 0.0
     for pos, n in slots.items():
         best = sorted((a for a in avail if a[2] == pos), key=lambda a: -a[0])[:n]
         for v, key, _ in best:
-            used.add(key); pts += v; starters.append((key, v))
-        pts += fallback.get(pos, 0.0) * (n - len(best))
+            used.add(key); pts += v; starters.append((key, v, pos)); by_slot[pos] += v
+        fill = fallback.get(pos, 0.0) * (n - len(best))  # empty slot: a free agent would be picked up
+        pts += fill; by_slot[pos] += fill
     rest = sorted((a for a in avail if a[1] not in used and a[2] in ("RB", "WR", "TE")), key=lambda a: -a[0])[:flex]
     for v, key, _ in rest:
-        pts += v; starters.append((key, v))
-    pts += max(fallback.get(p, 0.0) for p in ("RB", "WR", "TE")) * (flex - len(rest))
-    return pts, starters
+        pts += v; starters.append((key, v, "FLEX")); by_slot["FLEX"] += v
+    fill = max(fallback.get(p, 0.0) for p in ("RB", "WR", "TE")) * (flex - len(rest))
+    pts += fill; by_slot["FLEX"] += fill
+    return pts, starters, by_slot
 
 
 def team_power(players, weeks, slots, flex, fallback):
-    """players: [{key, pos, wk: {week: pts}}]. Returns expected totals and per-player credit."""
+    """players: [{key, pos, wk: {week: pts}}].
+    Returns expected total, per-player credit, per-player starts, and expected points by lineup slot."""
     rng = random.Random(SEED)
     credit = {p["key"]: 0.0 for p in players}
     starts = {p["key"]: 0.0 for p in players}
+    slot_pts = {pos: 0.0 for pos in slots}
+    slot_pts["FLEX"] = 0.0
     total = 0.0
     for _ in range(SIMULATIONS):
         out_until = {}
@@ -71,10 +80,13 @@ def team_power(players, weeks, slots, flex, fallback):
                     out_until[p["key"]] = w + rng.randint(*INJURY_LENGTH) - 1
             avail = [(p["wk"][w], p["key"], p["pos"]) for p in players
                      if w in p["wk"] and out_until.get(p["key"], 0) < w]
-            pts, starters = best_lineup(avail, slots, flex, fallback)
+            pts, starters, by_slot = best_lineup(avail, slots, flex, fallback)
             total += pts
-            for key, v in starters:
+            for key, v, _ in starters:
                 credit[key] += v
                 starts[key] += 1
+            for s, v in by_slot.items():
+                slot_pts[s] += v
     n = float(SIMULATIONS)
-    return total / n, {k: v / n for k, v in credit.items()}, {k: v / n for k, v in starts.items()}
+    return (total / n, {k: v / n for k, v in credit.items()}, {k: v / n for k, v in starts.items()},
+            {k: v / n for k, v in slot_pts.items()})

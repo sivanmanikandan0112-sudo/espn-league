@@ -14,6 +14,7 @@
   --rb: #19a463;
   --wr: #e2862f;
   --te: #9b4fd1;
+  --flex: #6f7f78;
   --shadow: 0 1px 2px rgba(10, 30, 20, .06), 0 4px 14px rgba(10, 30, 20, .05);
   --radius: 14px;
   color-scheme: light;
@@ -22,14 +23,14 @@
   :root:not([data-theme="light"]) {
     --bg: #0b1310; --surface: #121d19; --surface-2: #1a2823; --ink: #e6efea; --ink-2: #93a59c;
     --line: #23332d; --head: #07100d; --head-ink: #e6efea; --accent: #2bc47b; --hot: #f06a48;
-    --qb: #6390ec; --rb: #2bc47b; --wr: #f09a48; --te: #b276e4;
+    --qb: #6390ec; --rb: #2bc47b; --wr: #f09a48; --te: #b276e4; --flex: #8fa39a;
     --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0b1310; --surface: #121d19; --surface-2: #1a2823; --ink: #e6efea; --ink-2: #93a59c;
   --line: #23332d; --head: #07100d; --head-ink: #e6efea; --accent: #2bc47b; --hot: #f06a48;
-  --qb: #6390ec; --rb: #2bc47b; --wr: #f09a48; --te: #b276e4;
+  --qb: #6390ec; --rb: #2bc47b; --wr: #f09a48; --te: #b276e4; --flex: #8fa39a;
   --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark;
 }
 
@@ -94,7 +95,7 @@ select { background: var(--surface); border: 1px solid var(--line); border-radiu
 .legend { display: flex; gap: 14px; align-items: center; font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--ink-2); text-transform: uppercase; margin: 0 2px 8px; flex-wrap: wrap; }
 .legend .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
-.dot.QB { background: var(--qb); } .dot.RB { background: var(--rb); } .dot.WR { background: var(--wr); } .dot.TE { background: var(--te); }
+.dot.QB { background: var(--qb); } .dot.RB { background: var(--rb); } .dot.WR { background: var(--wr); } .dot.TE { background: var(--te); } .dot.FLEX { background: var(--flex); }
 
 /* team cards */
 .teams { display: flex; flex-direction: column; gap: 10px; }
@@ -115,7 +116,7 @@ select { background: var(--surface); border: 1px solid var(--line); border-radiu
 
 .bar { display: flex; height: 18px; margin: 0 16px 14px; border-radius: 6px; overflow: hidden; background: var(--surface-2); }
 .seg { display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 700; min-width: 18px; }
-.seg.QB { background: var(--qb); } .seg.RB { background: var(--rb); } .seg.WR { background: var(--wr); } .seg.TE { background: var(--te); }
+.seg.QB { background: var(--qb); } .seg.RB { background: var(--rb); } .seg.WR { background: var(--wr); } .seg.TE { background: var(--te); } .seg.FLEX { background: var(--flex); }
 
 .team-body { border-top: 1px solid var(--line); padding: 14px 16px 18px; background: var(--bg); }
 .facts { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13px; color: var(--ink-2); margin-bottom: 14px; }

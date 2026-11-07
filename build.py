@@ -33,6 +33,7 @@ PRO = {0: "FA", 1: "ATL", 2: "BUF", 3: "CHI", 4: "CIN", 5: "CLE", 6: "DAL", 7: "
        17: "NE", 18: "NO", 19: "NYG", 20: "NYJ", 21: "PHI", 22: "ARI", 23: "PIT", 24: "LAC",
        25: "SF", 26: "SEA", 27: "TB", 28: "WSH", 29: "CAR", 30: "JAX", 33: "BAL", 34: "HOU"}
 POWER_POSITIONS = ["QB", "RB", "WR", "TE"]
+BAR_SLOTS = POWER_POSITIONS + ["FLEX"]  # position bars: one segment per lineup slot type
 TRADE_MESSAGE = 244  # activity-feed message type for "player traded"
 
 
@@ -337,14 +338,13 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
             if back and r["_sim"]["rosTotal"] <= 0:
                 r["returns"] = back
             sim_players.append({"key": r["id"], "pos": r["pos"], "wk": wk})
-        total, credit, starts = power.team_power(sim_players, power_weeks, slots, slot_counts.get(23, 0), fallback)
+        total, credit, starts, by_slot = power.team_power(sim_players, power_weeks, slots, slot_counts.get(23, 0), fallback)
         t["power"] = round(total)
-        t["posPower"] = {pos: 0.0 for pos in POWER_POSITIONS}
         for r in t["roster"]:
             if r["id"] in credit:
                 r["starts"] = round(starts[r["id"]], 1)
-                t["posPower"][r["pos"]] += credit[r["id"]]
-        t["posPower"] = {k: round(v, 1) for k, v in t["posPower"].items()}
+        # bar segments by lineup slot (FLEX separate), so every team's WRs fill the same 2 WR spots
+        t["posPower"] = {k: round(by_slot.get(k, 0.0), 1) for k in BAR_SLOTS}
     rank_positions(teams)
     for i, t in enumerate(sorted(teams.values(), key=lambda t: -t["power"])):
         t["powerRank"] = i + 1
@@ -352,24 +352,28 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
 
 
 def add_season_strength(data, teams, regular):
-    """Past seasons: position bars = points actually started at each position in the regular season."""
+    """Past seasons: position bars = points actually started in each lineup slot type in the regular season
+    (QB/RB/WR/TE slots, with all flex-type slots as FLEX)."""
     for t in teams.values():
-        t["posPower"] = {pos: 0.0 for pos in POWER_POSITIONS}
+        t["posPower"] = {pos: 0.0 for pos in BAR_SLOTS}
     for w in data["weeks"]:
         if w["week"] > regular:
             continue
         for g in w["games"]:
             for s in g["sides"]:
                 for p in s["lineup"]:
-                    if stats.is_starter(p) and p["pos"] in POWER_POSITIONS and s["team"] in teams:
-                        teams[s["team"]]["posPower"][p["pos"]] += p["pts"]
+                    if not stats.is_starter(p) or s["team"] not in teams:
+                        continue
+                    slot = p["slot"] if p["slot"] in POWER_POSITIONS else "FLEX" if p["slot"] in ("FLEX", "RB/WR", "WR/TE", "OP") else None
+                    if slot:
+                        teams[s["team"]]["posPower"][slot] += p["pts"]
     for t in teams.values():
         t["posPower"] = {k: round(v, 1) for k, v in t["posPower"].items()}
     rank_positions(teams)
 
 
 def rank_positions(teams):
-    for pos in POWER_POSITIONS:
+    for pos in BAR_SLOTS:
         for i, t in enumerate(sorted(teams.values(), key=lambda t: -t["posPower"][pos])):
             t.setdefault("posRank", {})[pos] = i + 1
 

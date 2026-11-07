@@ -23,6 +23,9 @@
 
   // ---------------------------------------------------------------- helpers
   const POS = ["QB", "RB", "WR", "TE"];
+  // position-bar segments: one per lineup slot type, with FLEX on its own so every team's
+  // WR segment compares the same two WR spots (older data without FLEX simply has 4)
+  const SEGS = () => POS.concat(D.teams.some(t => t.posPower && t.posPower.FLEX > 0) ? ["FLEX"] : []);
   const INJ = { QUESTIONABLE: "Q", DOUBTFUL: "D", OUT: "OUT", INJURY_RESERVE: "IR", SUSPENSION: "SUSP", PROBABLE: "P", DAY_TO_DAY: "DTD" };
   const pad = n => String(n).padStart(2, "0");
   const fmt = n => Number(n || 0).toFixed(2);
@@ -168,9 +171,9 @@
         Each remaining week we start the best available QB, RBs, WRs, TE and FLEX by ESPN's projections, skipping byes and players ESPN expects to miss time,
         and replay the season 500 times with random injuries. So bench players count exactly as often as they'd really play: handcuffs earn credit when a starter goes down,
         stashed injured players earn it once they're back, and a backup QB who never sees the field adds almost nothing. Kickers and defenses are left out.
-        "Starts X of Y wks" on each player is how often he makes that lineup. Bar segments are each position's share; the number is the team's rank there.</p>`;
+        "Starts X of Y wks" on each player is how often he makes that lineup. Bar segments are each lineup spot's share (QB, both RBs, both WRs, TE, and FLEX on its own, so every team is compared on the same spots); the number is the team's rank there.</p>`;
     }
-    return `<p><strong>${L.season} season.</strong> Bar segments show the points each team actually started at QB, RB, WR and TE in the regular season; the number is its rank at that position.
+    return `<p><strong>${L.season} season.</strong> Bar segments show the points each team actually started in its QB, RB, WR, TE and FLEX spots in the regular season; the number is its rank there.
       Rosters are as they stood at the end of the season, with each player's final position rank.</p>`;
   }
 
@@ -198,7 +201,7 @@
     s.pf = ["Points scored", (a, b) => b.pf - a.pf];
     s.luck = ["Luck", (a, b) => (b.luck || 0) - (a.luck || 0)];
     s.eff = ["Lineup efficiency", (a, b) => (b.efficiency || 0) - (a.efficiency || 0)];
-    POS.forEach(p => { s[p] = [p + (L.over ? " points" : " power"), (a, b) => a.posRank[p] - b.posRank[p]]; });
+    SEGS().forEach(p => { s[p] = [p + (L.over ? " points" : " power"), (a, b) => a.posRank[p] - b.posRank[p]]; });
     return s;
   }
 
@@ -206,7 +209,7 @@
     if (state.sort === "standing") return t.standing;
     if (state.sort === "power") return t.powerRank;
     if (state.sort === "finish") return t.finalRank || i + 1;
-    if (POS.includes(state.sort)) return t.posRank[state.sort];
+    if (SEGS().includes(state.sort)) return t.posRank[state.sort];
     return i + 1;
   }
 
@@ -237,7 +240,7 @@
 
   function teamCard(t, i, maxPos) {
     const open = state.open.has(t.id);
-    const segs = POS.map(p => {
+    const segs = SEGS().map(p => {
       const w = maxPos ? (t.posPower[p] / maxPos) * 100 : 0;
       return `<span class="seg ${p}" style="width:${w.toFixed(2)}%" title="${p}: ${Math.round(t.posPower[p])} ${L.over ? "points started" : "lineup pts"} · #${t.posRank[p]} in league">${t.posRank[p]}</span>`;
     }).join("");
@@ -259,7 +262,7 @@
         </span>
         ${chev}
       </button>
-      <div class="bar" aria-label="Position ranks: ${POS.map(p => p + " " + t.posRank[p]).join(", ")}">${segs}</div>
+      <div class="bar" aria-label="Position ranks: ${SEGS().map(p => p + " " + t.posRank[p]).join(", ")}">${segs}</div>
       ${open ? `<div class="team-body">
         <div class="facts">
           <span>League standing <b>#${t.standing}</b></span>${L.over ? `<span>Finish <b>${finishText(t.finalRank)}</b></span>` : `<span>Power rank <b>#${t.powerRank}</b></span>`}
@@ -334,7 +337,7 @@
     const ranked = D.teams.slice().sort(S[state.sort][1]).map((t, i) => [t, i]);
     const shown = q ? ranked.filter(([t]) => t.name.toLowerCase().includes(q) || t.manager.toLowerCase().includes(q) ||
       t.roster.some(p => p.name.toLowerCase().includes(q))) : ranked;
-    const maxPos = Math.max(...D.teams.map(t => POS.reduce((s, p) => s + t.posPower[p], 0)));
+    const maxPos = Math.max(...D.teams.map(t => SEGS().reduce((s, p) => s + (t.posPower[p] || 0), 0)));
     const allOpen = D.teams.every(t => state.open.has(t.id));
     main.innerHTML = `<div class="layout">
       <section>
@@ -348,7 +351,7 @@
             <input id="q" type="search" placeholder="Find a team, manager or player" value="${esc(state.q)}" aria-label="Search teams, managers, or players"></label>
           <label class="field">Sort by <select id="sort">${Object.entries(S).map(([k, [label]]) => `<option value="${k}"${k === state.sort ? " selected" : ""}>${label}</option>`).join("")}</select></label>
         </div>
-        <div class="legend"><span>Team / ${esc(S[state.sort][0])}</span>${POS.map(p => `<span><i class="dot ${p}"></i>${p}</span>`).join("")}<span class="right">Bar numbers = position rank</span></div>
+        <div class="legend"><span>Team / ${esc(S[state.sort][0])}</span>${SEGS().map(p => `<span><i class="dot ${p}"></i>${p}</span>`).join("")}<span class="right">Bar numbers = position rank</span></div>
         <div class="teams" id="teams">${shown.length ? shown.map(([t, i]) => teamCard(t, i, maxPos)).join("") : '<div class="empty">No team, manager or player matches that.</div>'}</div>
       </section>
       ${sidebar()}
