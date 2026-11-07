@@ -42,7 +42,7 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
     *Schedule swap* (every team's record on every other team's schedule, best and worst),
     *Hot & cold* (last 3 weeks vs. season average, adjusted for the league-wide swing),
     *Vs. projection* (points scored vs. ESPN's pre-game projection for the lineup started),
-    *Lineups* (efficiency: points started vs. best lineup; bench cost: losses the best lineup would have won).
+    *Efficiency* (points started vs. best lineup).
   - *Draft*: each pick vs. players at the same position drafted around the same spot; team grades, steals, busts.
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
   game, player of the week, most points left on the bench, best bench performance).

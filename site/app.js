@@ -848,7 +848,7 @@
     t.push(["schedule", "Schedule"]);
     if (D.scheduleSwap && D.scheduleSwap.weeks) t.push(["swap", "Schedule swap"]);
     if (D.teams.some(x => x.vsProj)) t.push(["projection", "Vs. projection"]);
-    t.push(["efficiency", "Lineups"]);
+    t.push(["efficiency", "Efficiency"]);
     if (D.draft) t.push(["draft", "Draft"]);
     return t;
   }
@@ -967,26 +967,12 @@
 
     efficiency() {
       const rows = D.teams.filter(t => t.efficiency != null).sort((a, b) => b.efficiency - a.efficiency);
-      const effTable = section("Lineup efficiency", { short: "Points started vs. the best possible lineup.", full: "Points started as a share of the best possible lineup each week, in hindsight. Regular season." }, table([
+      return section("Manager efficiency", { short: "Points started vs. the best possible lineup.", full: "Points started as a share of the best possible lineup each week, in hindsight. Regular season." }, table([
         { label: "Team", cell: teamCell },
         { label: "Efficiency", num: 1, cell: t => `<span class="pbar"><span class="pbar-fill eff" style="width:${Math.max(0, (t.efficiency - 70) / 30 * 100)}%"></span><span class="pbar-v">${t.efficiency.toFixed(1)}%</span></span>` },
         { label: "Bench pts left", num: 1, cell: t => Number(t.benchLeft).toFixed(1) },
         { label: "Points for", num: 1, cell: t => fmt(t.pf) },
       ], rows));
-      // bench cost in wins: losses the best possible lineup would have won (opponent's score as it was)
-      const costRows = D.teams.filter(t => t.winsLost != null).sort((a, b) => b.winsLost - a.winsLost || b.benchLeft - a.benchLeft);
-      const total = costRows.reduce((n, t) => n + t.winsLost, 0);
-      const costTable = section("What the bench cost", { short: "Losses each team's best lineup would have won.", full: `For every loss, we replay it with the team's best possible lineup that week (in hindsight) against the opponent's actual score. Each loss that flips is a win the bench cost them. ${total} win${total === 1 ? "" : "s"} across the league so far.` }, table([
-        { label: "Team", cell: teamCell },
-        { label: "Record", num: 1, cell: t => record(t) },
-        { label: "Wins lost", num: 1, cell: t => t.winsLost ? `<b class="neg">${t.winsLost}</b>` : "0" },
-        { label: "Best-lineup record", num: 1, cell: t => `${t.wins + t.winsLost}–${t.losses - t.winsLost}${t.ties ? "–" + t.ties : ""}` },
-      ], costRows));
-      const flips = costRows.flatMap(t => (t.lostWeeks || []).map(l => Object.assign({ t }, l))).sort((a, b) => b.week - a.week || (b.best - b.oppPts) - (a.best - a.oppPts));
-      const flipList = flips.length ? section("Games the bench lost", "", `<div class="picks">${flips.map(f => `<div class="pick"><span class="pick-no">Wk ${f.week}</span>${logo(f.t)}
-        <span class="pick-name"><b>${esc(f.t.name)}</b><span class="team-mgr">lost ${fmt(f.pts)}–${fmt(f.oppPts)} to ${esc(tname(f.opp))} · best lineup: ${fmt(f.best)}</span></span>
-        <a class="pick-v when" href="${href("matchups", { week: f.week, game: (D.weeks.find(w => w.week === f.week) || { games: [] }).games.find(g => g.sides.some(s => s.team === f.t.id) && g.sides.some(s => s.team === f.opp))?.id ?? "" })}">Box score →</a></div>`).join("")}</div>`) : "";
-      return costTable + flipList + effTable;
     },
 
     draft() {
