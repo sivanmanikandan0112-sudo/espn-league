@@ -23,9 +23,7 @@
 
   // ---------------------------------------------------------------- helpers
   const POS = ["QB", "RB", "WR", "TE"];
-  // position-bar segments: one per lineup slot type, with FLEX on its own so every team's
-  // WR segment compares the same two WR spots (older data without FLEX simply has 4)
-  const SEGS = () => POS.concat(D.teams.some(t => t.posPower && t.posPower.FLEX > 0) ? ["FLEX"] : []);
+  const SEGS = () => POS; // position-bar segments
   const INJ = { QUESTIONABLE: "Q", DOUBTFUL: "D", OUT: "OUT", INJURY_RESERVE: "IR", SUSPENSION: "SUSP", PROBABLE: "P", DAY_TO_DAY: "DTD" };
   const pad = n => String(n).padStart(2, "0");
   const fmt = n => Number(n || 0).toFixed(2);
@@ -171,9 +169,9 @@
         Each remaining week we start the best available QB, RBs, WRs, TE and FLEX by ESPN's projections, skipping byes and players ESPN expects to miss time,
         and replay the season 500 times with random injuries. So bench players count exactly as often as they'd really play: handcuffs earn credit when a starter goes down,
         stashed injured players earn it once they're back, and a backup QB who never sees the field adds almost nothing. Kickers and defenses are left out.
-        "Starts X of Y wks" on each player is how often he makes that lineup. Bar segments are each lineup spot's share (QB, both RBs, both WRs, TE, and FLEX on its own, so every team is compared on the same spots); the number is the team's rank there.</p>`;
+        "Starts X of Y wks" on each player is how often he makes that lineup. The bars rate each position group on its own: expected points from the team's best QB, best 3 RBs, best 3 WRs (their two spots plus FLEX) and best TE each week, the same spots for every team; the number is the team's rank at that position.</p>`;
     }
-    return `<p><strong>${L.season} season.</strong> Bar segments show the points each team actually started in its QB, RB, WR, TE and FLEX spots in the regular season; the number is its rank there.
+    return `<p><strong>${L.season} season.</strong> The bars rate each position group by what it actually produced in the regular season: each week's best QB, 3 RBs, 3 WRs and TE on the roster; the number is the team's rank at that position.
       Rosters are as they stood at the end of the season, with each player's final position rank.</p>`;
   }
 
@@ -242,7 +240,7 @@
     const open = state.open.has(t.id);
     const segs = SEGS().map(p => {
       const w = maxPos ? (t.posPower[p] / maxPos) * 100 : 0;
-      return `<span class="seg ${p}" style="width:${w.toFixed(2)}%" title="${p}: ${Math.round(t.posPower[p])} ${L.over ? "points started" : "lineup pts"} · #${t.posRank[p]} in league">${t.posRank[p]}</span>`;
+      return `<span class="seg ${p}" style="width:${w.toFixed(2)}%" title="${p} group: ${Math.round(t.posPower[p])} ${L.over ? "pts produced" : "projected pts"} · #${t.posRank[p]} in league">${t.posRank[p]}</span>`;
     }).join("");
     const starters = t.roster.filter(p => p.slot !== "BE" && p.slot !== "IR");
     const bench = t.roster.filter(p => p.slot === "BE" || p.slot === "IR");

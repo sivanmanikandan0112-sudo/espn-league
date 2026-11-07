@@ -33,7 +33,6 @@ PRO = {0: "FA", 1: "ATL", 2: "BUF", 3: "CHI", 4: "CIN", 5: "CLE", 6: "DAL", 7: "
        17: "NE", 18: "NO", 19: "NYG", 20: "NYJ", 21: "PHI", 22: "ARI", 23: "PIT", 24: "LAC",
        25: "SF", 26: "SEA", 27: "TB", 28: "WSH", 29: "CAR", 30: "JAX", 33: "BAL", 34: "HOU"}
 POWER_POSITIONS = ["QB", "RB", "WR", "TE"]
-BAR_SLOTS = POWER_POSITIONS + ["FLEX"]  # position bars: one segment per lineup slot type
 TRADE_MESSAGE = 244  # activity-feed message type for "player traded"
 
 
@@ -292,7 +291,7 @@ def build_season(season, is_current, names):
     if not over:
         add_power(data, teams, slot_counts, best_fa, latest, final_week, season)
     else:
-        add_season_strength(data, teams, regular)
+        add_season_strength(data, teams, regular, slot_counts)
 
     # -- analytics
     luck = stats.all_play_and_luck(data)
@@ -338,42 +337,43 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
             if back and r["_sim"]["rosTotal"] <= 0:
                 r["returns"] = back
             sim_players.append({"key": r["id"], "pos": r["pos"], "wk": wk})
-        total, credit, starts, by_slot = power.team_power(sim_players, power_weeks, slots, slot_counts.get(23, 0), fallback)
+        total, credit, starts, groups = power.team_power(sim_players, power_weeks, slots, slot_counts.get(23, 0), fallback)
         t["power"] = round(total)
         for r in t["roster"]:
             if r["id"] in credit:
                 r["starts"] = round(starts[r["id"]], 1)
-        # bar segments by lineup slot (FLEX separate), so every team's WRs fill the same 2 WR spots
-        t["posPower"] = {k: round(by_slot.get(k, 0.0), 1) for k in BAR_SLOTS}
+        # position bars: each position group rated on the same spots for every team (power.group_spots)
+        t["posPower"] = {k: round(groups.get(k, 0.0), 1) for k in POWER_POSITIONS}
     rank_positions(teams)
     for i, t in enumerate(sorted(teams.values(), key=lambda t: -t["power"])):
         t["powerRank"] = i + 1
     data["league"]["powerWeeks"] = [power_weeks[0], power_weeks[-1]]
 
 
-def add_season_strength(data, teams, regular):
-    """Past seasons: position bars = points actually started in each lineup slot type in the regular season
-    (QB/RB/WR/TE slots, with all flex-type slots as FLEX)."""
+def add_season_strength(data, teams, regular, slot_counts):
+    """Past seasons: position bars = what each position group actually produced, rated on the same spots as the
+    current season (best QB, 3 RBs, 3 WRs, 1 TE on the roster each regular-season week)."""
+    slots = {"QB": slot_counts.get(0, 0), "RB": slot_counts.get(2, 0), "WR": slot_counts.get(4, 0), "TE": slot_counts.get(6, 0)}
+    spots = power.group_spots(slots, slot_counts.get(23, 0) + slot_counts.get(3, 0) + slot_counts.get(5, 0))
     for t in teams.values():
-        t["posPower"] = {pos: 0.0 for pos in BAR_SLOTS}
+        t["posPower"] = {pos: 0.0 for pos in POWER_POSITIONS}
     for w in data["weeks"]:
         if w["week"] > regular:
             continue
         for g in w["games"]:
             for s in g["sides"]:
-                for p in s["lineup"]:
-                    if not stats.is_starter(p) or s["team"] not in teams:
-                        continue
-                    slot = p["slot"] if p["slot"] in POWER_POSITIONS else "FLEX" if p["slot"] in ("FLEX", "RB/WR", "WR/TE", "OP") else None
-                    if slot:
-                        teams[s["team"]]["posPower"][slot] += p["pts"]
+                if s["team"] not in teams:
+                    continue
+                for pos, k in spots.items():
+                    best = sorted((p["pts"] for p in s["lineup"] if p["pos"] == pos and p["slot"] != "IR"), reverse=True)[:k]
+                    teams[s["team"]]["posPower"][pos] += sum(best)
     for t in teams.values():
         t["posPower"] = {k: round(v, 1) for k, v in t["posPower"].items()}
     rank_positions(teams)
 
 
 def rank_positions(teams):
-    for pos in BAR_SLOTS:
+    for pos in POWER_POSITIONS:
         for i, t in enumerate(sorted(teams.values(), key=lambda t: -t["posPower"][pos])):
             t.setdefault("posRank", {})[pos] = i + 1
 

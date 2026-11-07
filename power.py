@@ -63,14 +63,21 @@ def best_lineup(avail, slots, flex, fallback):
     return pts, starters, by_slot
 
 
+def group_spots(slots, flex):
+    """Lineup spots each position group is rated on: its own slots, plus FLEX for RB and WR (the positions
+    that realistically fill it). Same for every team, so groups compare fairly whoever ends up in FLEX."""
+    return {pos: n + (flex if pos in ("RB", "WR") else 0) for pos, n in slots.items()}
+
+
 def team_power(players, weeks, slots, flex, fallback):
     """players: [{key, pos, wk: {week: pts}}].
-    Returns expected total, per-player credit, per-player starts, and expected points by lineup slot."""
+    Returns expected lineup total, per-player credit, per-player starts, and per-position group strength
+    (expected points from that position's best players over its fixed spots, see group_spots)."""
     rng = random.Random(SEED)
     credit = {p["key"]: 0.0 for p in players}
     starts = {p["key"]: 0.0 for p in players}
-    slot_pts = {pos: 0.0 for pos in slots}
-    slot_pts["FLEX"] = 0.0
+    spots = group_spots(slots, flex)
+    group = {pos: 0.0 for pos in slots}
     total = 0.0
     for _ in range(SIMULATIONS):
         out_until = {}
@@ -80,13 +87,14 @@ def team_power(players, weeks, slots, flex, fallback):
                     out_until[p["key"]] = w + rng.randint(*INJURY_LENGTH) - 1
             avail = [(p["wk"][w], p["key"], p["pos"]) for p in players
                      if w in p["wk"] and out_until.get(p["key"], 0) < w]
-            pts, starters, by_slot = best_lineup(avail, slots, flex, fallback)
+            pts, starters, _ = best_lineup(avail, slots, flex, fallback)
             total += pts
             for key, v, _ in starters:
                 credit[key] += v
                 starts[key] += 1
-            for s, v in by_slot.items():
-                slot_pts[s] += v
+            for pos, k in spots.items():
+                best = sorted((a[0] for a in avail if a[2] == pos), reverse=True)[:k]
+                group[pos] += sum(best) + fallback.get(pos, 0.0) * (k - len(best))
     n = float(SIMULATIONS)
     return (total / n, {k: v / n for k, v in credit.items()}, {k: v / n for k, v in starts.items()},
-            {k: v / n for k, v in slot_pts.items()})
+            {k: v / n for k, v in group.items()})

@@ -29,8 +29,9 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 - **Standings / Power value** (current season) = expected starting-lineup points over the remaining weeks
   (`power.py`): best QB/RB/WR/TE/FLEX each week from available players, replayed 500 times with random injuries,
   so bench players count as often as they'd really play. Roster cards show ROS position rank and expected starts.
-  Position bars split that by lineup spot (QB, RB, WR, TE, and FLEX on its own), so every team's WR segment
-  compares the same two WR spots regardless of who fills FLEX.
+  Position bars rate each position group on its own, by player position, on the same spots for every team:
+  best QB, best 3 RBs, best 3 WRs (their two spots + FLEX) and best TE each week, in the same simulation. They
+  rate the groups, so they don't sum to the power value (a FLEX-capable player counts in his own group).
 - **Insights** (its own tabs, each linkable as `#/insights/<name>`, code in `stats.py`):
   - *Playoff race*: playoff / bye / title odds from 10,000 simulated finishes (team strengths shrunk halfway to
     the league average, `STRENGTH_SHRINK`; the week in progress uses ESPN's live win probabilities).
