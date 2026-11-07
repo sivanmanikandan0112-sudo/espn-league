@@ -57,7 +57,8 @@
     </div>
   </footer>
 
-  <script src="data.js"></script>
+  <!-- cache-bust the data file so every visit gets the latest ESPN refresh -->
+  <script>document.write('<script src="data.js?t=' + Date.now() + '"><\/script>');</script>
   <script src="app.js"></script>
 </body>
 </html>
