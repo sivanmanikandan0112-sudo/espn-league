@@ -65,6 +65,17 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   at-a-glance tiles, roster spots and limits, schedule & playoffs (seeding, reseeding, tiebreaks), waivers & trades,
   draft type/date/order, and every scoring rule grouped by passing, rushing, receiving, kicking and D/ST (with the
   points- and yards-allowed brackets). Follows the season switcher, so older seasons show the rules they used.
+- **My team** (`#/myteam`): claim your team once with your pick'em name + PIN (checked by the worker's
+  `/pickem/claim`; remembered on the device). The page shows your matchup and win chance, standing/power/odds/luck/
+  lineup/draft tiles, your NFL games to watch, byes ahead, full schedule (results, then remaining opponents) and roster
+  with ROS ranks. Your team is also highlighted on Standings, Matchups (your game first), Insights tables and the
+  watch guide. Works in past seasons too (member ids are ESPN accounts). On phones Settings moves to a gear in the header.
+- **Watch guide** (Matchups → Watch guide): this week's real NFL games ranked by how much they matter to the league:
+  every league starter in the game, weighted by ESPN's projection and by how close his fantasy matchup is (0.35 for a
+  lopsided one up to 1.0 for a toss-up), scaled so the biggest game is 100. Kickoffs come from ESPN's NFL schedule.
+- **Byes ahead** (Insights): for every week left, projected points each team's best lineup loses vs. full strength to
+  byes (and players ESPN expects to miss), with K / D/ST flags when every kicker or defense is on bye
+  (`add_bye_crunch` in `build.py`).
 - **Phones**: below 640px wide the site switches to an app-style layout (bottom tab bar, one-line header, tables as
   cards, one-team-at-a-time box scores, swipeable weekly-winners strip). It can be added to a home screen (iPhone:
   Share → Add to Home Screen; Android/Chrome: Install app; Mac Safari: File → Add to Dock) via `manifest.webmanifest`

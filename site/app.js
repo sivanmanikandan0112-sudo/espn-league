@@ -97,7 +97,7 @@
     const hash = location.hash.replace(/^#/, "") || "/";
     const [path, qs] = hash.split("?");
     const params = new URLSearchParams(qs || "");
-    const tab = ["matchups", "insights", "trades", "history", "settings"].find(t => path.startsWith("/" + t)) || "standings";
+    const tab = ["myteam", "matchups", "insights", "trades", "history", "settings"].find(t => path.startsWith("/" + t)) || "standings";
     const season = Number(params.get("season")) || IDX.current;
     state.tab = tab;
     state.sub = path.split("/")[2] || "";
@@ -126,6 +126,7 @@
     else if (tab === "trades") renderTrades();
     else if (tab === "history") renderHistory();
     else if (tab === "settings") renderSettings();
+    else if (tab === "myteam") renderMyTeam();
     else renderStandings();
   }
 
@@ -255,11 +256,11 @@
       ? `<span class="stat"><div class="stat-k">Finish</div><div class="stat-v${t.finalRank === 1 ? " champ" : ""}">${finishText(t.finalRank)}</div></span>`
       : `<span class="stat"><div class="stat-k" title="Expected starting-lineup points, weeks ${PW()}">Power value</div><div class="stat-v">${(t.power || 0).toLocaleString()}</div></span>`;
     const odds = t.odds ? `<span>Playoff odds <b>${pct(t.odds.playoffPct)}</b></span><span>Title odds <b>${pct(t.odds.titlePct)}</b></span>` : "";
-    return `<article class="team${open ? " open" : ""}" data-id="${t.id}">
+    return `<article class="team${open ? " open" : ""}${isMine(t) ? " mine" : ""}" data-id="${t.id}">
       <button class="team-head" aria-expanded="${open}" data-toggle="${t.id}">
         <span class="rank">${pad(rankFor(t, i))}</span>
         ${logo(t)}
-        <span style="min-width:0"><div class="team-name">${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span>
+        <span style="min-width:0"><div class="team-name">${isMine(t) ? '<span class="me-tag">You</span>' : ""}${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span>
         <span class="stats">
           <span class="stat"><div class="stat-k">Record</div><div class="stat-v">${record(t)}</div></span>
           <span class="stat"><div class="stat-k">Points for</div><div class="stat-v">${fmt(t.pf)}</div></span>
@@ -576,7 +577,7 @@
     return `<section class="recap"><div class="section-head"><h2>Week ${w} recap</h2><button type="button" class="share-btn" data-share="recap" data-week="${w}">${SHARE_ICON}Share</button></div><div class="recap-grid">${items.join("")}</div></section>`;
   }
 
-  const MATCHUP_TABS = [["", "Weekly"], ["bracket", "Playoff bracket"], ["pickem", "Pick'em"]];
+  const MATCHUP_TABS = [["", "Weekly"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"], ["pickem", "Pick'em"]];
 
   // Big plays from the live worker (TDs, field goals, turnovers, defensive plays, big gains), newest first.
   function feedFor(week, gameId) {
@@ -606,6 +607,7 @@
   function renderMatchups() {
     if (state.sub === "bracket") return renderBracket();
     if (state.sub === "pickem") return renderPickem();
+    if (state.sub === "watch") return renderWatch();
     const weeks = D.weeks.map(x => x.week);
     let w = parseInt(state.params.get("week"), 10);
     if (!weeks.includes(w)) w = L.over ? weeks[weeks.length - 1] : L.currentWeek;
@@ -614,7 +616,8 @@
     const open = state.params.get("game");
     const focusTeam = Number(state.params.get("team")) || null;   // set by Record book links
     const focusPlayer = state.params.get("player");
-    const games = wk.games.slice().sort((a, b) => (a.tier === "WINNERS_BRACKET" ? 0 : 1) - (b.tier === "WINNERS_BRACKET" ? 0 : 1)).map(g => {
+    const mineFirst = g => g.sides.some(s => isMine(teamById[s.team])) ? 0 : 1;
+    const games = wk.games.slice().sort((a, b) => mineFirst(a) - mineFirst(b) || (a.tier === "WINNERS_BRACKET" ? 0 : 1) - (b.tier === "WINNERS_BRACKET" ? 0 : 1)).map(g => {
       const [a, b] = g.sides;
       const winnerId = g.winner === "HOME" ? a && a.team : g.winner === "AWAY" ? b && b.team : null;
       const row = s => {
@@ -634,7 +637,7 @@
       const wpBar = liveG && a && b && a.winProb != null && b.winProb != null
         ? `<div class="wp-bar" aria-hidden="true"><span style="width:${(100 * a.winProb / (a.winProb + b.winProb)).toFixed(1)}%"></span></div>` : "";
       const tier = TIER[g.tier] || (g.playoff ? "Playoffs" : "");
-      return `<article class="game${g.tier && g.tier !== "NONE" && g.tier !== "WINNERS_BRACKET" ? " consolation" : ""}">
+      return `<article class="game${g.tier && g.tier !== "NONE" && g.tier !== "WINNERS_BRACKET" ? " consolation" : ""}${g.sides.some(s => isMine(teamById[s.team])) ? " mine" : ""}">
         <button class="game-btn" data-game="${g.id}" aria-expanded="${isOpen}">${row(a)}${row(b)}
           ${isOpen ? wpBar : ""}<div class="game-foot"><span>${tier ? tier + " · " : ""}${liveG ? "In progress" : "Final"}</span><span>${isOpen ? "Hide box score ↑" : "Box score ↓"}</span></div>
         </button>
@@ -925,7 +928,7 @@
     return `<div class="table-wrap"><table class="tbl"><thead><tr>${cols.map(c => `<th class="${c.num ? "n" : ""}">${c.label}</th>`).join("")}</tr></thead>
       <tbody>${rows.map(r => `<tr>${cols.map((c, i) => `<td class="${c.num ? "n" : ""}${i === 0 ? " lead" : ""}${c.wide ? " wide" : ""}" data-label="${c.label}">${c.cell(r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
   }
-  const teamCell = t => `<span class="tcell">${logo(t)}<span><span class="tname">${esc(t.name)}</span><span class="team-mgr">${esc(t.manager)}</span></span></span>`;
+  const teamCell = t => `<span class="tcell${isMine(t) ? " mine" : ""}">${logo(t)}<span><span class="tname">${esc(t.name)}</span><span class="team-mgr">${esc(t.manager)}</span></span></span>`;
   const barCell = (v, cls) => `<span class="pbar"><span class="pbar-fill ${cls || ""}" style="width:${Math.min(100, v || 0)}%"></span><span class="pbar-v">${pct(v)}</span></span>`;
   const signedPts = (n, goodHigh) => `<b class="${(goodHigh ? n > 0.05 : n < -0.05) ? "pos" : (goodHigh ? n < -0.05 : n > 0.05) ? "neg" : ""}">${signed(n)}</b>`;
   const tname = id => (teamById[id] || { name: "Team " + id }).name;
@@ -948,12 +951,36 @@
     t.push(["schedule", "Schedule"]);
     if (D.scheduleSwap && D.scheduleSwap.weeks) t.push(["swap", "Schedule swap"]);
     if (D.teams.some(x => x.vsProj)) t.push(["projection", "Vs. projection"]);
+    if (D.teams.some(x => x.byeCrunch && x.byeCrunch.length)) t.push(["byes", "Byes ahead"]);
     t.push(["efficiency", "Efficiency"]);
     if (D.draft) t.push(["draft", "Draft"]);
     return t;
   }
 
   const INSIGHTS = {
+    byes() {
+      // only weeks where some team is short (byes are over by the playoffs)
+      const weeks = D.teams[0].byeCrunch.map(x => x.w).filter(w => D.teams.some(t => t.byeCrunch.some(x => x.w === w && (x.lost >= 0.5 || x.need.length))));
+      if (!weeks.length) return section("Byes ahead", "", `<div class="empty">No bye weeks left this season.</div>`);
+      const rows = D.teams.map(t => ({ t, total: t.byeCrunch.reduce((s, x) => s + x.lost, 0) })).sort((a, b) => b.total - a.total);
+      const max = Math.max(1, ...D.teams.flatMap(t => t.byeCrunch.map(x => x.lost)));
+      const who = x => x.out.map(p => `${p.name} (${p.pos}${p.bye ? ", bye" : ", out"})`).join(", ");
+      const cell = (t, x) => {
+        const tip = `${t.name}, week ${x.w}: ` + (x.lost >= 0.5 ? `−${x.lost.toFixed(1)} pts. ${who(x)}` : "full strength") + (x.need.length ? `. No ${x.need.join(" or ")} that week` : "");
+        return `<div class="bc-cell" style="--a:${(x.lost / max).toFixed(2)}" title="${esc(tip)}">${x.lost >= 0.5 ? "−" + x.lost.toFixed(0) : ""}${x.need.length ? `<i>${esc(x.need.join("/"))}</i>` : ""}</div>`;
+      };
+      const grid = `<div class="bc-wrap"><div class="bc-grid" style="--n:${weeks.length}">
+        <div class="bc-h bc-first">Team</div>${weeks.map(w => `<div class="bc-h">${w > L.regularSeasonWeeks ? "PO" : "Wk"} ${w}</div>`).join("")}<div class="bc-h">Total</div>
+        ${rows.map(({ t, total }) => `<div class="bc-team bc-first${isMine(t) ? " mine" : ""}">${logo(t)}<span class="tname">${esc(t.name)}</span></div>${t.byeCrunch.filter(x => weeks.includes(x.w)).map(x => cell(t, x)).join("")}<div class="bc-tot">${total >= 0.5 ? "−" + total.toFixed(0) : "0"}</div>`).join("")}
+      </div></div>`;
+      const worst = D.teams.flatMap(t => t.byeCrunch.map(x => Object.assign({ t }, x))).filter(x => x.lost >= 3 || x.need.length)
+        .sort((a, b) => b.lost - a.lost).slice(0, 10);
+      const line = x => `<div class="rec"><span class="rec-v">${x.lost >= 0.5 ? "−" + x.lost.toFixed(1) : "0"}</span><span class="rec-who">${logo(x.t)}<span><b>${esc(x.t.name)}</b>
+        <span class="team-mgr">Week ${x.w}: ${esc(who(x))}${x.need.length ? `${x.out.length ? " · " : ""}no ${esc(x.need.join(" or "))}` : ""}</span></span></span></div>`;
+      return section("Byes ahead", { short: "Projected points each team's best lineup loses to byes in the weeks left.", full: "For every week still to play: how many projected points each team's best lineup loses compared with its full-strength lineup, because starters are on bye (or ESPN expects them to miss the game). Bench depth counts: if a backup fills in well, little is lost. K or D/ST means every kicker or defense on the roster is on bye that week, so one has to be picked up. Tap or hover a cell for who's missing." }, grid) +
+        (worst.length ? section("Toughest weeks", "The biggest holes coming up.", `<div class="rec-card wrap">${worst.map(line).join("")}</div>`) : "");
+    },
+
     race() {
       if (D.teams.some(t => t.odds)) {
         const rows = D.teams.slice().sort((a, b) => b.odds.playoffPct - a.odds.playoffPct || b.odds.titlePct - a.odds.titlePct);
@@ -1395,6 +1422,223 @@
     main.innerHTML = `<div class="section-head"><div><h1>League history</h1><p class="sub">${IDX.seasons.length} seasons · ${H.members.length} members all-time</p></div></div>
       ${subnav("history", HISTORY_TABS, sub)}${HISTORY[sub](H)}`;
   }
+
+  // ---------------------------------------------------------------- watch guide
+  // Which real NFL games matter most this week: every league starter playing in each game, weighted by his
+  // projection and by how close his fantasy matchup is (a toss-up counts more than a blowout).
+  function watchModel() {
+    if (!L.isCurrent || L.over || !(D.nflGames || []).length) return null;
+    const wk = D.weeks.find(w => w.week === L.currentWeek);
+    if (!wk) return null;
+    const now = Date.now();
+    const games = D.nflGames.map(g => Object.assign({}, g, { at: g.date ? new Date(g.date).getTime() : 0, rows: [], stake: 0, starters: 0, proj: 0 }));
+    const byTeam = {};
+    games.forEach(g => { byTeam[g.home] = g; byTeam[g.away] = g; });
+    wk.games.filter(m => m.sides.length === 2).forEach(m => {
+      const [a, b] = m.sides;
+      const close = a.winProb != null && b.winProb != null ? 1 - Math.abs(a.winProb - b.winProb)
+        : Math.max(0, 1 - Math.abs((a.proj != null ? a.proj : a.projected) - (b.proj != null ? b.proj : b.projected)) / 50);
+      [a, b].forEach((s, i) => s.lineup.filter(p => p.slot !== "BE" && p.slot !== "IR").forEach(p => {
+        const g = byTeam[p.team];
+        if (!g) return;
+        const pr = p.proj || 0;
+        g.starters++; g.proj += pr; g.stake += pr * (0.35 + 0.65 * close);
+        let row = g.rows.find(r => r.game === m.id);
+        if (!row) g.rows.push(row = { game: m.id, close, sides: [{ team: a.team, players: [] }, { team: b.team, players: [] }] });
+        row.sides[i].players.push(p);
+      }));
+    });
+    const max = Math.max(1, ...games.map(g => g.stake));
+    games.forEach(g => {
+      g.score = Math.round(100 * g.stake / max);
+      g.state = !g.at || now < g.at ? "upcoming" : now < g.at + 4.25 * 3600e3 ? "live" : "final";
+      g.rows.sort((x, y) => y.close - x.close);
+    });
+    return { week: wk.week, games };
+  }
+  const kickText = g => g.state === "live" ? "Live now" : g.state === "final" ? "Final" : g.tbd ? "Time TBD"
+    : new Date(g.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const closeText = c => c >= 0.8 ? "Toss-up" : c >= 0.5 ? "Close" : "Leaning";
+  const lastName = n => /D\/ST$/.test(n) ? n.replace(" D/ST", " D") : n.split(" ").slice(1).join(" ") || n;
+  const plist = (ps, done) => ps.map(p => `${esc(lastName(p.name))} <span class="muted">${done ? fmt(p.pts) : (p.proj || 0).toFixed(1)}</span>`).join(", ");
+
+  function renderWatch() {
+    const head = `<div class="section-head"><div><h1>Watch guide</h1>${expl("The real NFL games that matter most to the league this week.",
+      "Each game is rated by the league starters playing in it, weighted by their projections and by how close their fantasy matchups are: a player in a toss-up counts almost three times as much as one in a lopsided matchup. 100 = the week's biggest game. Numbers next to players are ESPN's projections (points once their game is over).")}</div></div>${subnav("matchups", MATCHUP_TABS, "watch")}`;
+    const M = watchModel();
+    if (!M) { main.innerHTML = head + `<div class="empty">The watch guide covers the current week while the season is in progress.${state.season !== IDX.current ? ` <a href="#/matchups/watch">Go to this week's guide</a>` : ""}</div>`; return; }
+    const me = myTeam();
+    const card = g => {
+      const mineHere = me && g.rows.some(r => r.sides.some(s => s.team === me.id && s.players.length));
+      const rows = g.rows.map(r => {
+        const [x, y] = r.sides.map(s => Object.assign({ t: teamById[s.team] }, s));
+        const side = s => `<span class="wg-side${isMine(s.t) ? " me" : ""}"><b>${esc(s.t.name)}</b>${s.players.length ? " " + plist(s.players, g.state === "final") : ' <span class="muted">none</span>'}</span>`;
+        return `<div class="wg-row">${side(x)}<span class="wg-vs">vs</span>${side(y)}<span class="wg-close c${r.close >= 0.8 ? 3 : r.close >= 0.5 ? 2 : 1}">${closeText(r.close)}</span></div>`;
+      }).join("");
+      return `<article class="wg-game ${g.state}${mineHere ? " mine" : ""}">
+        <div class="wg-top"><span class="wg-teams">${esc(g.away)} <span class="muted">at</span> ${esc(g.home)}</span><span class="wg-when${g.state === "live" ? " live" : ""}">${esc(kickText(g))}</span></div>
+        <div class="wg-meter"><span class="wg-score" title="Importance this week (100 = biggest game)">${g.score}</span><span class="wg-bar" aria-hidden="true"><i style="width:${g.score}%"></i></span>
+          <span class="team-mgr">${g.starters} league starter${g.starters === 1 ? "" : "s"} · ${g.proj.toFixed(0)} projected pts${mineHere ? " · <b>you have players here</b>" : ""}</span></div>
+        ${rows ? `<div class="wg-rows">${rows}</div>` : ""}</article>`;
+    };
+    const left = M.games.filter(g => g.state !== "final" && g.starters);
+    const top = left.slice().sort((a, b) => b.stake - a.stake).slice(0, 3);
+    const days = {};
+    M.games.filter(g => g.state !== "final" && g.starters && !top.includes(g)).forEach(g => {
+      const k = g.at ? new Date(g.at).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }) : "Time TBD";
+      (days[k] = days[k] || []).push(g);
+    });
+    const done = M.games.filter(g => g.state === "final" && g.starters);
+    const none = M.games.filter(g => !g.starters);
+    main.innerHTML = head +
+      (top.length ? section("Must-watch", "", `<div class="wg-list">${top.map(card).join("")}</div>`) : `<div class="empty">Every game with league starters has been played this week.</div>`) +
+      Object.entries(days).map(([d, gs]) => section(esc(d), "", `<div class="wg-list">${gs.map(card).join("")}</div>`)).join("") +
+      (done.length ? section("Already played", "", `<div class="wg-list">${done.map(card).join("")}</div>`) : "") +
+      (none.length ? `<p class="sub">No league starters: ${none.map(g => esc(g.away + " at " + g.home)).join(", ")}.</p>` : "");
+  }
+
+  // ---------------------------------------------------------------- my team
+  // Claimed with the same name + PIN as pick'em (checked by the live worker) and remembered on this device.
+  // The member id is an ESPN account, so it finds the right team in every season.
+  const ME = { member: store.get("me", ""), pick: "", msg: "", err: false, busy: false };
+  if (ME.member && !PK.member) PK.member = ME.member;
+  function myTeam(data) { return ME.member ? (((data || D) || {}).teams || []).find(t => (t.owners || []).includes(ME.member)) || null : null; }
+  function isMine(t) { return !!(t && ME.member && (t.owners || []).includes(ME.member)); }
+
+  function renderMyTeam() {
+    const head = (title, sub, extra) => `<div class="section-head"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div>${extra || ""}</div>`;
+    const switchBtn = `<button type="button" class="linkbtn" data-me="switch">Not you? Switch</button>`;
+    if (!ME.member) {
+      const members = pkMembers();
+      main.innerHTML = head("My team", "Tell the site which team is yours. This page gets built around it, and your team is highlighted everywhere else.") +
+        `<form class="panel me-claim" id="me-claim">
+          <label class="field">Who are you? <select id="me-member"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === (ME.pick || PK.member) ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
+          <label class="field">PIN <input id="me-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="4 digits"></label>
+          <button type="submit" class="cta"${ME.busy ? " disabled" : ""}>${ME.busy ? "Checking…" : "This is me"}</button>
+          ${ME.msg ? `<p class="pk-msg${ME.err ? " err" : ""}">${esc(ME.msg)}</p>` : ""}
+          <p class="sub">Same name and PIN as pick'em and the trade block. Never set one? Choose a 4-digit PIN now and it becomes yours.</p>
+        </form>`;
+      return;
+    }
+    const t = myTeam();
+    if (!t) { main.innerHTML = head("My team", `${esc(memberName(ME.member))} wasn't in the league in ${L.season}.`, switchBtn); return; }
+    const cur = L.isCurrent && !L.over;
+
+    // at a glance
+    const tiles = [["Standing", L.over && t.finalRank ? `#${t.finalRank} final` : `#${t.standing} of ${L.size}`, record(t) + (t.streak ? " · " + t.streak : "")]];
+    if (t.powerRank) tiles.push(["Power rank", `#${t.powerRank}`, cur ? `${Math.round(t.power)} proj pts left` : ""]);
+    if (t.odds) tiles.push(["Playoff odds", pct(t.odds.playoffPct), "Title " + pct(t.odds.titlePct)]);
+    if (t.luck != null) tiles.push(["Luck", (t.luck > 0 ? "+" : t.luck < 0 ? "−" : "") + Math.abs(t.luck) + " W", `${t.expectedWins} expected wins`]);
+    if (t.efficiency != null) tiles.push(["Lineups", t.efficiency.toFixed(1) + "%", `${Number(t.benchLeft).toFixed(0)} pts left on bench`]);
+    const dg = D.draft && D.draft.teams[t.id];
+    if (dg) tiles.push(["Draft grade", dg.grade, `#${dg.rank} in league`]);
+    const glance = `<div class="set-tiles">${tiles.map(([k, v, s]) => `<div class="set-tile"><span class="set-tile-k">${k}</span><span class="set-tile-v">${esc(String(v))}</span>${s ? `<span class="team-mgr">${esc(s)}</span>` : ""}</div>`).join("")}</div>`;
+
+    // this week
+    let week = "";
+    const wkNow = D.weeks.find(w => w.week === L.currentWeek);
+    const g = cur && wkNow && wkNow.games.find(x => x.sides.some(s => s.team === t.id));
+    if (cur && !g) week = section(`Week ${L.currentWeek}`, "", `<div class="panel">No game this week.</div>`);
+    if (g) {
+      const mine = g.sides.find(s => s.team === t.id), opp = g.sides.find(s => s.team !== t.id);
+      if (!opp) week = section(`Week ${wkNow.week}`, "", `<div class="panel">Bye this week.</div>`);
+      else {
+        const o = teamById[opp.team];
+        const wp = mine.winProb != null ? Math.round(mine.winProb * 100) : null;
+        const side = (s, tt) => `<div class="side-row">${logo(tt)}<span style="min-width:0"><div class="team-name">${esc(tt.name)}</div><div class="team-mgr">${esc(tt.manager)} · ${record(tt)}</div></span><span></span>
+          <span class="score">${fmt(s.pts)}${s.proj != null ? `<small>proj ${fmt(s.proj)}</small>` : ""}</span></div>`;
+        const h = IDX.history.h2h[`${ME.member}|${(o.owners || [])[0]}`];
+        week = section(`Week ${wkNow.week}: your matchup`, wp != null ? `ESPN gives you a ${wp}% chance to win.` : "",
+          `<a class="game me-match" href="${href("matchups", { week: wkNow.week, game: g.id })}">${side(mine, t)}${side(opp, o)}
+            ${wp != null ? `<div class="wp-bar" aria-hidden="true"><span style="width:${wp}%"></span></div>` : ""}
+            <div class="game-foot"><span>${h ? `All-time vs ${esc(memberName(o.owners[0]))}: ${h[0]}–${h[1]}${h[2] ? "–" + h[2] : ""}` : "First meeting"}</span><span>Box score →</span></div></a>`);
+      }
+    }
+
+    // NFL games with my players this week
+    let watch = "";
+    const M = cur ? watchModel() : null;
+    if (M) {
+      const gs = M.games.filter(x => x.state !== "final" && x.rows.some(r => r.sides.some(s => s.team === t.id && s.players.length)));
+      const lines = gs.map(x => {
+        const r = x.rows.find(r => r.sides.some(s => s.team === t.id));
+        const ms = r.sides.find(s => s.team === t.id), os = r.sides.find(s => s.team !== t.id);
+        return `<div class="rec"><span class="rec-v me-kick">${esc(kickText(x))}</span><span class="rec-who"><span><b>${esc(x.away)} at ${esc(x.home)}</b>
+          <span class="team-mgr">You: ${plist(ms.players)}${os.players.length ? " · Them: " + plist(os.players) : ""}</span></span></span></div>`;
+      });
+      watch = section("Your games to watch", "Real NFL games still to play with your starters in them.", lines.length ? `<div class="rec-card wrap">${lines.join("")}</div>` : `<div class="panel">All your starters have played.</div>`);
+    }
+
+    // byes ahead
+    let byes = "";
+    if (cur && t.byeCrunch) {
+      const bc = t.byeCrunch.filter(x => x.lost >= 0.5 || x.need.length);
+      byes = section("Byes ahead", "Weeks your best lineup is short-handed, compared with full strength.", bc.length
+        ? `<div class="rec-card wrap">${bc.map(x => `<div class="rec"><span class="rec-v">${x.lost >= 0.5 ? "−" + x.lost.toFixed(1) : "0"}</span><span class="rec-who"><span><b>Week ${x.w}</b>
+            <span class="team-mgr">${esc(x.out.map(p => `${p.name} (${p.pos}${p.bye ? ", bye" : ", out"})`).join(", "))}${x.need.length ? `${x.out.length ? " · " : ""}<b class="neg">No ${esc(x.need.join(" or "))}</b>` : ""}</span></span></span></div>`).join("")}</div>`
+        : `<div class="panel">No bye trouble the rest of the way.</div>`);
+    }
+
+    // schedule
+    const sched = D.weeks.map(w => {
+      const gm = w.games.find(x => x.sides.some(s => s.team === t.id));
+      if (!gm) return "";
+      const mine = gm.sides.find(s => s.team === t.id), opp = gm.sides.find(s => s.team !== t.id);
+      const o = opp && teamById[opp.team];
+      const winnerSide = gm.winner === "HOME" ? gm.sides[0] : gm.winner === "AWAY" ? gm.sides[1] : null;
+      let res = "", cls = "";
+      if (w.final && opp) { cls = winnerSide ? (winnerSide.team === t.id ? "w" : "l") : "t"; res = `${cls.toUpperCase()} ${fmt(mine.pts)}–${fmt(opp.pts)}`; }
+      else if (w.week === L.currentWeek && opp && !L.over) { cls = "now"; res = `${fmt(mine.pts)}–${fmt(opp.pts)}`; }
+      else res = "";
+      return `<a class="me-wk ${cls}" href="${href("matchups", { week: w.week, game: gm.id })}"><span class="me-wk-n">${w.playoffs ? "PO" : "Wk"} ${w.week}</span>
+        <span class="me-wk-o">${o ? `${logo(o)}<span>${esc(o.name)}</span>` : "Bye"}</span><span class="me-wk-r">${res}</span></a>`;
+    }).join("");
+    const later = (D.upcoming || []).filter(u => u.teams.includes(t.id)).sort((a, b) => a.week - b.week).map(u => {
+      const o = teamById[u.teams.find(x => x !== t.id)];
+      const po = u.week > L.regularSeasonWeeks;
+      return `<div class="me-wk later"><span class="me-wk-n">${po ? "PO" : "Wk"} ${u.week}</span>
+        <span class="me-wk-o">${o ? `${logo(o)}<span>${esc(o.name)}</span>` : "Bye"}</span><span class="me-wk-r">${o ? record(o) : ""}</span></div>`;
+    }).join("");
+    const schedule = section("Schedule", later ? "Results so far, then who's left (with their records)." : "", `<div class="me-sched">${sched}${later}</div>`);
+
+    // roster
+    const rank = p => cur ? p.rosRank : p.posRank, pts = p => cur ? p.ros : p.seasonPts;
+    const roster = section("Roster", cur ? "Rest-of-season rank and projected points." : "Where each player finished.", table([
+      { label: "Player", cell: p => `<span class="tcell"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700">${esc(p.slot)}</span><span><span class="tname">${esc(p.name)}</span><span class="team-mgr">${esc(p.pos)} · ${esc(p.team)}${p.injury ? " · " + esc(p.injury.replace(/_/g, " ").toLowerCase()) : ""}</span></span></span>` },
+      { label: cur ? "ROS rank" : "Finish", num: 1, cell: p => rank(p) ? esc(p.pos) + rank(p) : "—" },
+      { label: cur ? "ROS pts" : "Season pts", num: 1, cell: p => pts(p) != null ? Number(pts(p)).toFixed(1) : "—" },
+    ], t.roster));
+
+    main.innerHTML = `<div class="section-head me-head"><div class="me-id">${logo(t)}<div><h1>${esc(t.name)}</h1><p class="sub">${esc(t.manager)} · ${L.season} season</p></div></div>${switchBtn}</div>
+      ${glance}
+      <div class="me-grid"><div>${week}${watch}${byes}</div><div>${schedule}</div></div>
+      ${roster}`;
+  }
+
+  main.addEventListener("submit", async e => {
+    if (e.target.id !== "me-claim") return;
+    e.preventDefault();
+    const member = document.getElementById("me-member").value;
+    const pin = document.getElementById("me-pin").value.trim();
+    ME.pick = member; ME.err = true;
+    if (!member) { ME.msg = "Choose your name."; return renderMyTeam(); }
+    if (!/^\d{4}$/.test(pin)) { ME.msg = "Enter a 4-digit PIN."; return renderMyTeam(); }
+    if (!LIVE_API_BASE()) { ME.msg = "This needs the live worker, which isn't set up."; return renderMyTeam(); }
+    ME.busy = true; ME.msg = ""; renderMyTeam();
+    const r = await pkApi("/pickem/claim", { member, pin }).catch(() => ({ error: "Couldn't reach the server. Try again." }));
+    ME.busy = false;
+    if (r.error) { ME.msg = r.error; return renderMyTeam(); }
+    ME.member = member; ME.msg = ""; ME.err = false;
+    store.set("me", member);
+    PK.member = member; PK.pin = pin; store.set("pk-member", member);
+    route();
+  });
+  document.addEventListener("click", e => {
+    const b = e.target.closest('[data-me="switch"]');
+    if (!b) return;
+    ME.member = ""; ME.pick = ""; store.set("me", "");
+    route();
+  });
 
   // ---------------------------------------------------------------- league settings
   const SCORE_GROUPS = [
@@ -1966,6 +2210,10 @@
       if (lv.week !== cur.league.currentWeek) { poll(); return; } // ESPN moved on to a new week: reload everything
       const wk = cur.weeks.find(w => w.week === lv.week);
       if (!wk || wk.final) return;
+      // the live feed has scores but not ESPN's pre-game projections: carry those over (watch guide uses them)
+      const proj = {};
+      wk.games.forEach(g => g.sides.forEach(sd => sd.lineup.forEach(p => { if (p.proj != null) proj[p.id] = p.proj; })));
+      lv.games.forEach(g => g.sides.forEach(sd => sd.lineup.forEach(p => { if (p.proj == null && proj[p.id] != null) p.proj = proj[p.id]; })));
       wk.games = lv.games;
       window.LIVE_FEED = { week: lv.week, events: lv.feed || [] };
       if (window.LEAGUE_STATS && window.LEAGUE_STATS[IDX.current]) Object.assign(window.LEAGUE_STATS[IDX.current], lv.stats);

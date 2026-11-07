@@ -203,6 +203,12 @@ async function handlePickem(req, env, url) {
     const v = await env.PICKEM.get(`picks:${st.season}:${st.week}:${member}`, "json");
     return json(env, req, { picks: (v && v.picks) || {} });
   }
+  if (url.pathname === "/pickem/claim") {
+    // "My team": check the PIN (setting it on first use, same as pick'em), nothing else
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    return json(env, req, { ok: true });
+  }
   if (url.pathname === "/pickem/submit") {
     if (!st.open) return json(env, req, { error: "Picks for this week are locked." }, 409);
     const picks = {};

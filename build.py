@@ -69,11 +69,31 @@ def fetch(season, path="", params=None, headers=None):
         raise
 
 
+_PRO_SCHEDULE = {}
+
+
+def pro_teams(season):
+    """ESPN's NFL teams for a season, with bye weeks and every game (public, no cookies needed)."""
+    if season not in _PRO_SCHEDULE:
+        url = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/%d?view=proTeamSchedules_wl" % season
+        req = urllib.request.Request(url, headers={"User-Agent": "espn-league-site"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            _PRO_SCHEDULE[season] = json.load(r)["settings"]["proTeams"]
+    return _PRO_SCHEDULE[season]
+
+
 def bye_weeks(season):
-    url = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/%d?view=proTeamSchedules_wl" % season
-    req = urllib.request.Request(url, headers={"User-Agent": "espn-league-site"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return {t["id"]: t.get("byeWeek") for t in json.load(r)["settings"]["proTeams"]}
+    return {t["id"]: t.get("byeWeek") for t in pro_teams(season)}
+
+
+def nfl_games(season, week):
+    """The real NFL games of one week: kickoff time and teams, earliest first."""
+    seen = {}
+    for t in pro_teams(season):
+        for g in (t.get("proGamesByScoringPeriod") or {}).get(str(week), []):
+            seen[g["id"]] = {"id": g["id"], "date": _iso(g.get("date")), "tbd": bool(g.get("startTimeTBD")),
+                             "home": PRO.get(g["homeProTeamId"], ""), "away": PRO.get(g["awayProTeamId"], "")}
+    return sorted(seen.values(), key=lambda g: (g["date"] or "", g["home"]))
 
 
 def stat_line(player, season, source, period=0, split=0):
@@ -326,10 +346,15 @@ def build_season(season, is_current, names):
                 lineup = [player_row(e, season, w) for e in entries]
                 # ESPN's pre-game projection for this lineup: the sum of its starters' weekly projections
                 projected = 0.0
+                week_proj = {}
                 for e in entries:
+                    week_proj[e["playerId"]] = stat_line(e["playerPoolEntry"]["player"], season, 1, w, 1).get("appliedTotal") or 0.0
                     if e["lineupSlotId"] in (20, 21):
                         continue
-                    projected += stat_line(e["playerPoolEntry"]["player"], season, 1, w, 1).get("appliedTotal") or 0.0
+                    projected += week_proj[e["playerId"]]
+                if not over and w == current_week:
+                    for r in lineup:
+                        r["proj"] = round(week_proj.get(r["id"], 0.0), 1)
                 for e in entries:
                     st = week_stats(e, season, w)
                     if st:
@@ -359,6 +384,10 @@ def build_season(season, is_current, names):
         "weeks": weeks,
         "trades": trades,
         "settings": league_settings(settings, teams),
+        "nflGames": nfl_games(season, current_week) if is_current and not over else [],
+        # future matchups already on ESPN's schedule (regular season, plus playoff games once they're set)
+        "upcoming": [{"week": m["matchupPeriodId"], "teams": [m.get("home", {}).get("teamId"), m.get("away", {}).get("teamId")]}
+                     for m in main.get("schedule", []) if not over and m["matchupPeriodId"] > current_week],
         "_stats": player_stats,
     }
 
@@ -425,10 +454,44 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
                 r["starts"] = round(starts[r["id"]], 1)
         # position bars: each position group rated on the same spots for every team (power.group_spots)
         t["posPower"] = {k: round(groups.get(k, 0.0), 1) for k in POWER_POSITIONS}
+    add_bye_crunch(teams, slots, slot_counts, power_weeks, latest, byes)
     rank_positions(teams)
     for i, t in enumerate(sorted(teams.values(), key=lambda t: -t["power"])):
         t["powerRank"] = i + 1
     data["league"]["powerWeeks"] = [power_weeks[0], power_weeks[-1]]
+
+
+def add_bye_crunch(teams, slots, slot_counts, weeks, latest, byes):
+    """For every week still to play: how much weaker each team's best lineup is than its full-strength one,
+    because of byes (and players ESPN expects to miss), and whether it has a kicker / defense that week."""
+    flex = slot_counts.get(23, 0)
+    no_fill = {pos: 0.0 for pos in POWER_POSITIONS}
+    for t in teams.values():
+        players = []
+        for r in t["roster"]:
+            sim = r.get("_sim") or {}
+            bye = byes.get(sim.get("proTeam"))
+            if r["pos"] in POWER_POSITIONS:
+                wk, _ = power.availability(sim, weeks, latest, 18, bye)
+                players.append({"id": r["id"], "name": r["name"], "pos": r["pos"], "wk": wk,
+                                "avg": max(wk.values()) if wk else sim.get("rosAvg") or 0.0, "bye": bye})
+            else:
+                players.append({"id": r["id"], "name": r["name"], "pos": r["pos"], "wk": {}, "avg": 0.0, "bye": bye})
+        core = [p for p in players if p["pos"] in POWER_POSITIONS and p["avg"] > 0]
+        full_pts, full_starters, _ = power.best_lineup([(p["avg"], p["id"], p["pos"]) for p in core], slots, flex, no_fill)
+        full_ids = {k for k, _, _ in full_starters}
+        out = []
+        for w in weeks:
+            avail = [(p["wk"][w], p["id"], p["pos"]) for p in core if w in p["wk"]]
+            pts, starters, _ = power.best_lineup(avail, slots, flex, no_fill)
+            missing = [p for p in core if p["id"] in full_ids and w not in p["wk"]]
+            holes = sum(slots.values()) + flex - len(starters)
+            need = [pos for pos, sid in (("K", 17), ("D/ST", 16)) if slot_counts.get(sid)
+                    and not any(p["pos"] == pos and p["bye"] != w for p in players)]
+            out.append({"w": w, "lost": round(max(0.0, full_pts - pts), 1),
+                        "out": [{"name": p["name"], "pos": p["pos"], "bye": p["bye"] == w} for p in missing],
+                        "holes": holes, "need": need})
+        t["byeCrunch"] = out
 
 
 def add_season_strength(data, teams, regular, slot_counts):
