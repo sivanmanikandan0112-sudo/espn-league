@@ -29,7 +29,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 - **Standings / Power value** (current season) = expected starting-lineup points over the remaining weeks
   (`power.py`): best QB/RB/WR/TE/FLEX each week from available players, replayed 500 times with random injuries,
   so bench players count as often as they'd really play. Roster cards show ROS position rank and expected starts.
-- **Insights**: playoff odds (10,000 simulated finishes of the regular season + reseeded bracket, `stats.py`),
+- **Insights**: playoff odds (10,000 simulated finishes of the regular season + reseeded bracket, `stats.py`;
+  team strengths are shrunk halfway to the league average, `STRENGTH_SHRINK`),
   luck (actual wins vs. all-play expected wins), and manager efficiency (points started vs. best possible lineup).
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
   game, player of the week, most points left on the bench, best bench performance).

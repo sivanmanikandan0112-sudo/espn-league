@@ -129,6 +129,9 @@ def weekly_recaps(season, per_week_eff, team_names):
 
 PLAYOFF_SIMS = 10000
 PLAYOFF_SEED = 7
+# Half a season of scores is a noisy read on how good a team really is, so each team's estimated
+# weekly strength is pulled this far back toward the league average before simulating.
+STRENGTH_SHRINK = 0.5
 
 
 def playoff_odds(season, schedule, team_strength):
@@ -200,7 +203,9 @@ def team_strengths(season, power_by_team, power_weeks, live_week_proj):
             for s in g["sides"]:
                 scores[s["team"]].append(s["pts"])
                 kdst[s["team"]].append(sum(p["pts"] for p in s["lineup"] if is_starter(p) and p["pos"] in ("K", "D/ST")))
-    league_sd = statistics.pstdev([x for v in scores.values() for x in v]) if scores else 25.0
+    all_scores = [x for v in scores.values() for x in v]
+    league_sd = statistics.pstdev(all_scores) if all_scores else 25.0
+    league_avg = statistics.mean(all_scores) if all_scores else 0.0
     out = {}
     for t in season["teams"]:
         tid = t["id"]
@@ -210,6 +215,8 @@ def team_strengths(season, power_by_team, power_weeks, live_week_proj):
         if tid in power_by_team and power_weeks:
             projected = power_by_team[tid] / power_weeks + (sum(kdst[tid]) / len(kdst[tid]) if kdst.get(tid) else 0)
             mean = 0.5 * ppg + 0.5 * projected
+        if all_scores:
+            mean = league_avg + (1 - STRENGTH_SHRINK) * (mean - league_avg)
         sd = statistics.pstdev(hist) if len(hist) > 2 else league_sd
         sd = max(15.0, 0.5 * sd + 0.5 * league_sd)
         out[tid] = {"mean": mean, "sd": sd, "live": {}}

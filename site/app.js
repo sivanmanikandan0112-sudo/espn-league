@@ -143,7 +143,7 @@
         Head-to-head counts regular-season and championship-bracket games; consolation games are left out.</p>`;
     }
     if (state.tab === "insights") {
-      return `<p><strong>Playoff odds</strong> replay the rest of the regular season and the playoff bracket 10,000 times. Each team's weekly score is drawn from a blend of its scoring so far and its projected lineup strength.
+      return `<p><strong>Playoff odds</strong> replay the rest of the regular season and the playoff bracket 10,000 times. Each team's weekly score is drawn from a blend of its scoring so far and its projected lineup strength, pulled halfway back toward the league average because half a season is a small sample.
         <strong>All-play</strong> is the record a team would have playing every other team every week; <strong>luck</strong> is actual wins minus the wins that all-play rate predicts.
         <strong>Efficiency</strong> is points started as a share of the best possible lineup in hindsight.</p>`;
     }
