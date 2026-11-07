@@ -118,7 +118,8 @@ select { background: var(--surface); border: 1px solid var(--line); border-radiu
 .team-body { border-top: 1px solid var(--line); padding: 14px 16px 18px; background: var(--bg); }
 .facts { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13px; color: var(--ink-2); margin-bottom: 14px; }
 .facts b { color: var(--ink); font-variant-numeric: tabular-nums; }
-.roster-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.roster-title { display: flex; flex-wrap: wrap; gap: 2px 12px; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.roster-title h3 { white-space: nowrap; }
 .roster-title h3 { margin: 0; font-size: 15px; }
 .roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .pcard { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
@@ -132,6 +133,7 @@ select { background: var(--surface); border: 1px solid var(--line); border-radiu
 .pname { font-weight: 600; font-size: 14px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pmeta { font-size: 12px; color: var(--ink-2); display: flex; justify-content: space-between; gap: 6px; }
 .inj { color: var(--hot); font-weight: 700; }
+.pstarts { font-size: 11px; color: var(--ink-2); margin-top: 3px; padding-top: 3px; border-top: 1px dashed var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 @media (max-width: 640px) {
   .team-head { grid-template-columns: 28px 36px minmax(0, 1fr) 20px; row-gap: 10px; }

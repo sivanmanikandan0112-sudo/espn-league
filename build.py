@@ -13,6 +13,9 @@ import sys
 import urllib.request
 from collections import defaultdict
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import power  # noqa: E402
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 API = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{season}/segments/0/leagues/{league}"
 
@@ -68,6 +71,22 @@ def proj(player, season, period, split):
     return 0.0
 
 
+def proj_stat(player, season, source, period=0, split=0):
+    """Raw ESPN stat line: source 1 = projection, 0 = actual. period 0 + split 0 = whole (rest of) season."""
+    for s in player.get("stats", []):
+        if (s.get("statSourceId") == source and s.get("seasonId") == season
+                and s.get("scoringPeriodId") == period and s.get("statSplitTypeId") == split):
+            return s
+    return {}
+
+
+def bye_weeks(season):
+    url = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/%d?view=proTeamSchedules_wl" % season
+    req = urllib.request.Request(url, headers={"User-Agent": "espn-league-site"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return {t["id"]: t.get("byeWeek") for t in json.load(r)["settings"]["proTeams"]}
+
+
 def player_row(entry, season, week):
     ppe = entry["playerPoolEntry"]
     p = ppe["player"]
@@ -113,12 +132,16 @@ def build(season):
                                    "sortPercOwned": {"sortPriority": 1, "sortAsc": False}}})
     pool = fetch(season, params=[("view", "kona_player_info")], headers={"X-Fantasy-Filter": filt})
     by_pos = defaultdict(list)
+    best_fa = {}  # pos -> (ros total, per-game) of the best unrostered player: the empty-slot fill-in
     for e in pool.get("players", []):
         p = e["player"]
-        ros = proj(p, season, 0, 0)
+        line = proj_stat(p, season, 1)
+        ros = line.get("appliedTotal") or 0.0
         pos = POS.get(p.get("defaultPositionId"), "?")
         if ros > 0:
             by_pos[pos].append((ros, p["id"]))
+            if not e.get("onTeamId") and ros > best_fa.get(pos, (0, 0))[0]:
+                best_fa[pos] = (ros, line.get("appliedAverage") or 0.0)
     ros_rank = {}
     for pos, rows in by_pos.items():
         for i, (_, pid) in enumerate(sorted(rows, reverse=True)):
@@ -131,7 +154,12 @@ def build(season):
         roster = []
         for e in t["roster"]["entries"]:
             row = player_row(e, season, latest)
-            row["ros"] = round(proj(e["playerPoolEntry"]["player"], season, 0, 0), 1)
+            pl = e["playerPoolEntry"]["player"]
+            line = proj_stat(pl, season, 1)
+            row["ros"] = round(line.get("appliedTotal") or 0.0, 1)
+            row["_sim"] = {"rosTotal": line.get("appliedTotal") or 0.0, "rosAvg": line.get("appliedAverage") or 0.0,
+                           "seasonAvg": proj_stat(pl, season, 0).get("appliedAverage") or 0.0,
+                           "injury": row["injury"], "proTeam": pl.get("proTeamId")}
             row["rosRank"] = ros_rank.get(row["id"])
             del row["pts"]  # season-to-date points per week live on the matchups page
             roster.append(row)
@@ -149,17 +177,31 @@ def build(season):
             "roster": roster,
         }
 
-    # Power value = every QB/RB/WR/TE's ESPN rest-of-season projection, starters and bench alike.
-    #  - Bench counts in full: backup RBs are insurance, and an injured player being held
-    #    can be worth more than a one-week starter (ESPN's projection includes his games after return).
-    #  - K and D/ST are left out: they're close to random week to week.
+    # Power value = expected starting-lineup points for the rest of the fantasy season (see power.py).
+    final_week = status.get("finalScoringPeriod") or 17
+    power_weeks = list(range(latest + 1, final_week + 1)) or [final_week]
+    slot_counts = {int(k): int(v) for k, v in main["settings"]["rosterSettings"]["lineupSlotCounts"].items()}
+    slots = {"QB": slot_counts.get(0, 0), "RB": slot_counts.get(2, 0), "WR": slot_counts.get(4, 0), "TE": slot_counts.get(6, 0)}
+    fallback = {pos: best_fa.get(pos, (0, 0))[1] for pos in POWER_POSITIONS}
+    byes = bye_weeks(season)
+    print("Simulating weeks %d-%d (%d runs per team)..." % (power_weeks[0], power_weeks[-1], power.SIMULATIONS), flush=True)
     for t in teams.values():
+        sim_players = []
+        for r in t["roster"]:
+            if r["pos"] not in POWER_POSITIONS:
+                continue
+            wk, back = power.availability(r["_sim"], power_weeks, latest, 18, byes.get(r["_sim"]["proTeam"]))
+            if back and r["_sim"]["rosTotal"] <= 0:
+                r["returns"] = back  # stash rule applied
+            sim_players.append({"key": r["id"], "pos": r["pos"], "wk": wk})
+        total, credit, starts = power.team_power(sim_players, power_weeks, slots, slot_counts.get(23, 0), fallback)
+        t["power"] = round(total)
         t["posPower"] = {pos: 0.0 for pos in POWER_POSITIONS}
         for r in t["roster"]:
-            if r["pos"] in POWER_POSITIONS:
-                t["posPower"][r["pos"]] += r["ros"]
+            if r["id"] in credit:
+                r["starts"] = round(starts[r["id"]], 1)
+                t["posPower"][r["pos"]] += credit[r["id"]]
         t["posPower"] = {k: round(v, 1) for k, v in t["posPower"].items()}
-        t["power"] = round(sum(t["posPower"].values()))
     for pos in POWER_POSITIONS:
         ranked = sorted(teams.values(), key=lambda t: -t["posPower"][pos])
         for i, t in enumerate(ranked):
@@ -265,6 +307,7 @@ def build(season):
     for t in teams.values():
         for r in t["roster"]:
             r.pop("slotOrder", None)
+            r.pop("_sim", None)
     for w in weeks.values():
         for g in w["games"]:
             for s in g["sides"]:
@@ -275,7 +318,8 @@ def build(season):
         "league": {"id": main["id"], "name": main["settings"]["name"], "season": season,
                    "size": len(teams), "currentWeek": current_week,
                    "regularSeasonWeeks": sched_settings["matchupPeriodCount"],
-                   "playoffTeams": sched_settings.get("playoffTeamCount")},
+                   "playoffTeams": sched_settings.get("playoffTeamCount"),
+                   "powerWeeks": [power_weeks[0], power_weeks[-1]]},
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(),
         "teams": sorted(teams.values(), key=lambda t: t["standing"]),
         "weeks": [weeks[w] for w in sorted(weeks)],

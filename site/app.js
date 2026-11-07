@@ -66,12 +66,22 @@
     return i + 1;
   }
 
+  const PW = L.powerWeeks ? L.powerWeeks[0] + "–" + L.powerWeeks[1] : "";
+  const powerWeekCount = L.powerWeeks ? L.powerWeeks[1] - L.powerWeeks[0] + 1 : 0;
+  function startsText(p) {
+    const s = p.starts;
+    const n = s >= 0.95 ? Math.round(s) : s >= 0.05 ? "<1" : "0";
+    const back = p.returns ? ` · back ~wk ${p.returns}` : "";
+    return `Starts ${n} of ${powerWeekCount} wks${back}`;
+  }
+
   function playerCard(p) {
     const bench = p.slot === "BE" || p.slot === "IR";
     return `<div class="pcard${bench ? " bench" : ""}">
       <div class="pcard-top"><span class="slot ${esc(p.slot === "FLEX" ? p.pos : p.slot)}">${esc(p.slot)}</span><span>${esc(p.pos)}${p.team ? " · " + esc(p.team) : ""}</span></div>
       <div class="pname" title="${esc(p.name)}">${esc(p.name)}</div>
       <div class="pmeta"><span class="num" title="Rest-of-season rank among all ${esc(p.pos)}s, by ESPN projection (${Math.round(p.ros)} pts)">${p.rosRank ? "ROS " + esc(p.pos) + " " + p.rosRank : "ROS —"}</span>${p.injury ? `<span class="inj" title="${esc(p.injury.replace(/_/g, " "))}">${esc(INJ[p.injury] || p.injury.replace(/_/g, " "))}</span>` : ""}</div>
+      ${p.starts != null ? `<div class="pstarts" title="How often this player makes your best lineup in weeks ${PW}, averaged over 500 simulated rest-of-seasons with injuries">${startsText(p)}</div>` : ""}
     </div>`;
   }
 
@@ -79,7 +89,7 @@
     const open = state.open.has(t.id);
     const segs = POS.map(p => {
       const w = (t.posPower[p] / maxPower) * 100;
-      return `<span class="seg ${p}" style="width:${w.toFixed(2)}%" title="${p}: ${Math.round(t.posPower[p])} projected pts · #${t.posRank[p]} in league">${t.posRank[p]}</span>`;
+      return `<span class="seg ${p}" style="width:${w.toFixed(2)}%" title="${p}: ${Math.round(t.posPower[p])} lineup pts · #${t.posRank[p]} in league">${t.posRank[p]}</span>`;
     }).join("");
     const starters = t.roster.filter(p => p.slot !== "BE" && p.slot !== "IR");
     const bench = t.roster.filter(p => p.slot === "BE" || p.slot === "IR");
@@ -91,7 +101,7 @@
         <span class="stats">
           <span class="stat"><div class="stat-k">Record</div><div class="stat-v">${record(t)}</div></span>
           <span class="stat"><div class="stat-k">Points for</div><div class="stat-v">${fmt(t.pf)}</div></span>
-          <span class="stat"><div class="stat-k">Power value</div><div class="stat-v">${t.power.toLocaleString()}</div></span>
+          <span class="stat"><div class="stat-k" title="Expected starting-lineup points, weeks ${PW}">Power value</div><div class="stat-v">${t.power.toLocaleString()}</div></span>
         </span>
         ${chev}
       </button>
@@ -103,7 +113,7 @@
           <span>Points against <b>${fmt(t.pa)}</b></span><span>Streak <b>${esc(t.streak)}</b></span>
           <span><b>${t.roster.length}</b> players</span>
         </div>
-        <div class="roster-title"><h3>Starting lineup</h3><span class="muted" style="font-size:12px">Rest-of-season position rank</span></div>
+        <div class="roster-title"><h3>Starting lineup</h3><span class="muted" style="font-size:12px">ROS position rank · expected starts, weeks ${PW}</span></div>
         <div class="roster">${starters.map(playerCard).join("")}</div>
         <div class="roster-title" style="margin-top:14px"><h3>Bench</h3></div>
         <div class="roster">${bench.map(playerCard).join("") || '<span class="muted">Empty</span>'}</div>
@@ -148,7 +158,7 @@
         <div class="section-head"><h2>Setting the pace</h2></div>
         <div class="panel">
           <div class="leader"><span class="kicker">Power leader</span><span class="crown">01</span>
-            <span><div class="mini-team">${logo(pl)}${esc(pl.name)}</div><div class="val">${pl.power.toLocaleString()} roster value</div></span></div>
+            <span><div class="mini-team">${logo(pl)}${esc(pl.name)}</div><div class="val">${pl.power.toLocaleString()} projected lineup pts</div></span></div>
           <div class="leader"><span class="kicker">Most points scored</span><span class="crown">01</span>
             <span><div class="mini-team">${logo(pf)}${esc(pf.name)}</div><div class="val">${fmt(pf.pf)} season points</div></span></div>
         </div>

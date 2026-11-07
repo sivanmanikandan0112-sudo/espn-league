@@ -23,11 +23,15 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 
 ## Notes
 
-- **Power value** = total ESPN rest-of-season projected points of every QB/RB/WR/TE on the roster.
-  Starters and bench count equally (handcuffs and stashed injured players have real value). K and D/ST are excluded.
-  Bar segments are each position's share; the number is the team's rank at that position.
+- **Power value** = expected starting-lineup points over the remaining fantasy weeks (`power.py`).
+  Each week the best QB/RB/WR/TE/FLEX lineup is started from available players (byes and ESPN's expected
+  missed games removed), and the rest of the season is replayed 500 times with random injuries, so bench
+  players count exactly as often as they'd really play. Players ESPN projects for 0 while OUT/IR are assumed
+  back after 2/4 weeks at 85% of their season average. Empty slots are filled at the best free agent's level.
+  K and D/ST are excluded. Tunables (injury rates, runs, return rule) are at the top of `power.py`.
 - **Roster cards** show each player's rest-of-season rank at their position (e.g. "ROS RB 12"), from ESPN's
-  rest-of-season projections across the 1,000 most-rostered players. "—" means ESPN projects no more points (out/IR).
+  rest-of-season projections across the 1,000 most-rostered players ("—" = ESPN projects no more points),
+  and how many of the remaining weeks he's expected to start.
 - **Trade history** comes from the league activity feed (completed trades only).
 - Standings order: wins, then points for (this league seeds playoffs by total points).
 
