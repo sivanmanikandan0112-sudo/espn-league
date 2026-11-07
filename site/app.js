@@ -463,7 +463,6 @@
     const t = [["race", hasOdds || !L.over ? "Playoff race" : "Final results"]];
     t.push(["luck", "Luck"], ["schedule", "Schedule"], ["efficiency", "Efficiency"]);
     if (D.draft) t.push(["draft", "Draft"]);
-    if (D.trades.length) t.push(["trades", "Trade grades"]);
     return t;
   }
 
@@ -548,37 +547,13 @@
           <div class="picks" style="margin-top:10px">${mine.map(p => pickLine(p)).join("")}</div>`);
     },
 
-    trades() {
-      const cards = D.trades.map(tr => {
-        const early = !tr.weeksSince;
-        const [a, b] = tr.sides;
-        let verdict = "Too early to grade: no completed weeks since the trade.";
-        if (!early && a && b) {
-          const diff = a.started - b.started;
-          verdict = Math.abs(diff) < 5 ? `Even so far: ${a.started.toFixed(1)} to ${b.started.toFixed(1)} started points.`
-            : `<b>${esc(tname(diff > 0 ? a.team : b.team))}</b> ${L.over ? "won" : "is winning"} by ${Math.abs(diff).toFixed(1)} started points over ${tr.weeksSince} week${tr.weeksSince === 1 ? "" : "s"}.`;
-        }
-        const sides = tr.sides.map(s => {
-          const t = teamById[s.team] || { name: "Team " + s.team, manager: "" };
-          const win = !early && a && b && s.started === Math.max(a.started, b.started) && Math.abs(a.started - b.started) >= 5;
-          return `<div class="trade-side${win ? " won" : ""}"><div class="mini-team">${logo(t)}<span><div>${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span></div>
-            <div class="gets">Received · ${early ? "—" : s.started.toFixed(1) + " pts started"}</div>
-            ${s.gets.map(p => `<div class="tplayer"><span class="slot ${esc(p.pos)}" style="font-size:11px;font-weight:700">${esc(p.pos || "—")}</span>${esc(p.name)}<span class="muted" style="font-size:12px;margin-left:auto">${early ? "" : (p.started || 0).toFixed(1) + " · " + (p.starts || 0) + " st"}</span></div>`).join("")}</div>`;
-        });
-        const swap = '<div class="swap"><svg width="22" height="22" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>';
-        const when = tr.date ? new Date(tr.date).toLocaleDateString([], { month: "short", day: "numeric" }) : "";
-        return `<article class="trade"><div class="trade-head"><span>${when}${tr.week ? (when ? " · " : "") + "Week " + tr.week : ""}</span></div>
-          <div class="trade-body">${sides.join(swap)}</div><div class="verdict">${verdict}</div></article>`;
-      }).join("");
-      return section("Trade grades", "Who got more out of each deal: points the received players scored in the new team's starting lineup, for as long as they stayed. Bench points don't count; a trade only pays off if you play them.", `<div class="trades">${cards}</div>`);
-    },
-
   };
 
   function renderInsights() {
+    if (state.sub === "trades") { location.replace(href("trades")); return; } // trade grades moved to the Trades tab
     const tabs = insightTabs();
     const sub = tabs.some(([k]) => k === state.sub) ? state.sub : tabs[0][0];
-    main.innerHTML = `<div class="section-head"><div><h1>Insights</h1><p class="sub">${L.over ? L.season + " season in review." : "Who's in, who's lucky, who drafted well, and who won their trades."}</p></div></div>
+    main.innerHTML = `<div class="section-head"><div><h1>Insights</h1><p class="sub">${L.over ? L.season + " season in review." : "Who's in, who's lucky, who's setting good lineups, and who drafted well."}</p></div></div>
       ${subnav("insights", tabs, sub)}${INSIGHTS[sub]()}`;
     const a = main.querySelector(".subnav .active");
     if (a) a.scrollIntoView({ block: "nearest", inline: "center" });
@@ -586,19 +561,30 @@
 
   // ---------------------------------------------------------------- trades
   function renderTrades() {
+    const swap = '<div class="swap"><svg width="22" height="22" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>';
     const body = D.trades.map(tr => {
+      const early = !tr.weeksSince;
+      const [a, b] = tr.sides;
+      let verdict = "Too early to grade: no completed weeks since the trade.";
+      if (!early && a && b) {
+        const diff = a.started - b.started;
+        verdict = Math.abs(diff) < 5 ? `Even so far: ${a.started.toFixed(1)} to ${b.started.toFixed(1)} started points.`
+          : `<b>${esc(tname(diff > 0 ? a.team : b.team))}</b> ${L.over ? "won" : "is winning"} by ${Math.abs(diff).toFixed(1)} started points over ${tr.weeksSince} week${tr.weeksSince === 1 ? "" : "s"}.`;
+      }
       const sides = tr.sides.map(s => {
         const t = teamById[s.team] || { name: "Team " + s.team, manager: "" };
-        return `<div class="trade-side"><div class="mini-team">${logo(t)}<span><div>${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span></div>
-          <div class="gets">Receives</div>
-          ${s.gets.map(p => `<div class="tplayer"><span class="slot ${esc(p.pos)}" style="font-size:11px;font-weight:700">${esc(p.pos || "—")}</span>${esc(p.name)}<span class="muted" style="font-size:12px">${esc(p.team)}</span></div>`).join("")}</div>`;
+        const win = !early && a && b && s.started === Math.max(a.started, b.started) && Math.abs(a.started - b.started) >= 5;
+        return `<div class="trade-side${win ? " won" : ""}"><div class="mini-team">${logo(t)}<span><div>${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span></div>
+          <div class="gets">Receives${early ? "" : " · " + s.started.toFixed(1) + " pts started"}</div>
+          ${s.gets.map(p => `<div class="tplayer"><span class="slot ${esc(p.pos)}" style="font-size:11px;font-weight:700">${esc(p.pos || "—")}</span>${esc(p.name)}<span class="muted" style="font-size:12px">${esc(p.team)}</span>${early ? "" : `<span class="muted" style="font-size:12px;margin-left:auto" title="Points scored in the starting lineup after the trade · starts">${(p.started || 0).toFixed(1)} · ${p.starts || 0} st</span>`}</div>`).join("")}</div>`;
       });
-      const swap = '<div class="swap"><svg width="22" height="22" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>';
-      const when = tr.date ? new Date(tr.date).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "Week " + tr.week;
+      const date = tr.date ? new Date(tr.date).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
+      const when = [date, tr.week ? "Week " + tr.week : ""].filter(Boolean).join(" · ");
       return `<article class="trade"><div class="trade-head"><span>${when}</span><span>${tr.sides.reduce((n, s) => n + s.gets.length, 0)} players</span></div>
-        <div class="trade-body">${sides.join(swap)}</div></article>`;
+        <div class="trade-body">${sides.join(swap)}</div><div class="verdict">${verdict}</div></article>`;
     }).join("");
-    main.innerHTML = `<div class="section-head"><div><h1>Trade history <span class="pill">${D.trades.length} trades</span></h1><p class="sub">Every deal that went through in ${L.season}, newest first.</p></div></div>
+    main.innerHTML = `<div class="section-head"><div><h1>Trade history <span class="pill">${D.trades.length} trades</span></h1>
+        <p class="sub">Every deal that went through in ${L.season}, newest first, graded by points the received players scored in the new team's starting lineup for as long as they stayed. Bench points don't count: a trade only pays off if you play them.</p></div></div>
       <div class="trades">${body || '<div class="empty">No trades this season.</div>'}</div>`;
   }
 

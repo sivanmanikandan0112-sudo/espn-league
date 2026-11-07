@@ -39,10 +39,10 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   - *Luck* (actual vs. all-play expected wins), *Schedule* (opponent strength so far and remaining),
     *Efficiency* (points started vs. best lineup).
   - *Draft*: each pick vs. players at the same position drafted around the same spot; team grades, steals, busts.
-  - *Trade grades*: points each side's received players scored in its starting lineup after the trade.
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
   game, player of the week, most points left on the bench, best bench performance).
-- **Trades**: the current season comes from the league activity feed (exact). ESPN doesn't keep that feed for past
+- **Trades**: every trade with its grade: points each side's received players scored in its starting lineup after
+  the trade. The current season's trades come from the league activity feed (exact). ESPN doesn't keep that feed for past
   seasons, so those trades are rebuilt from week-to-week roster swaps confirmed against the transaction log.
 - **History** (tabs): champions & all-time standings, head to head, rivalries (most played, closest, most
   one-sided) and a record book (high/low scores, blowouts, closest games, shootouts, best player and bench games),
