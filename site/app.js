@@ -989,7 +989,7 @@
   const BLOCK_POS = ["QB", "RB", "WR", "TE", "K", "D/ST"];
 
   async function renderBlock() {
-    const head = `<div class="section-head"><div><h1>Trade block</h1>${expl("Who's shopping whom, and who needs what.", "Each team lists the players it would move and the positions it's looking for. Matches are pairs of teams where one has what the other needs. Only a team's own manager can change its listing, using the same name and PIN as pick'em.")}</div></div>${subnav("trades", TRADE_TABS, "block")}`;
+    const head = `<div class="section-head"><div><h1>Trade block</h1>${expl("Who's on the block, who's untouchable, and who needs what.", "Every player's trade status comes straight from ESPN (On the block, Normal, Untouchable). Managers can also change statuses here and add the positions they're looking for plus a note; changes made here don't go back to ESPN, and if a player's status is later changed on ESPN, that wins. Possible fits are pairs of teams where one has what the other needs. Editing uses the same name and PIN as pick'em.")}</div></div>${subnav("trades", TRADE_TABS, "block")}`;
     if (state.season !== IDX.current) { main.innerHTML = head + `<div class="empty">The trade block is for the current season. <a href="#/trades/block">Go to ${IDX.current}</a></div>`; return; }
     if (!LIVE_API_BASE()) { main.innerHTML = head + '<div class="empty">The trade block needs the live worker, which isn\'t set up.</div>'; return; }
     if (!TB.data || Date.now() - TB.at > 60000) {
@@ -1007,13 +1007,14 @@
     const cur = window.LEAGUE_DATA[IDX.current];
     const teamOf = id => cur.teams.find(t => String(t.id) === String(id));
     const player = (t, pid) => t.roster.find(p => p.id === pid);
-    // listings, keeping only players still on the team's roster
+    // per team: players on the block / untouchable (ESPN settings merged with changes made here) + needs and note
     const L2 = {};
-    Object.entries(TB.data.listings || {}).forEach(([tid, l]) => {
-      const t = teamOf(tid);
-      if (!t) return;
-      const players = l.players.map(pid => player(t, pid)).filter(Boolean);
-      if (players.length || l.needs.length || l.note) L2[tid] = { t, players, needs: l.needs, note: l.note, at: l.at };
+    cur.teams.forEach(t => {
+      const st = (TB.data.statuses || {})[t.id] || {};
+      const info = (TB.data.listings || {})[t.id] || { needs: [], note: "" };
+      const pick = s => Object.entries(st).filter(([, v]) => v.s === s).map(([pid, v]) => Object.assign({ src: v.src }, player(t, Number(pid)))).filter(p => p.name);
+      const players = pick("ON_THE_BLOCK"), untouchable = pick("UNTOUCHABLE");
+      if (players.length || untouchable.length || info.needs.length || info.note) L2[t.id] = { t, players, untouchable, needs: info.needs, note: info.note, at: info.at };
     });
     // matches: A shops a position B needs, and B shops a position A needs (two-way), or one-way
     const has = (l, pos) => l.players.filter(p => p.pos === pos);
@@ -1025,7 +1026,7 @@
       if (aGives.length || bGives.length) fits.push({ A, B, aGives, bGives, two: aGives.length > 0 && bGives.length > 0 });
     }));
     fits.sort((x, y) => (y.two - x.two) || (y.aGives.length + y.bGives.length) - (x.aGives.length + x.bGives.length));
-    const chip = p => `<span class="tb-chip"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>${esc(p.name)}${p.rosRank ? ` <span class="muted">${esc(p.pos)}${p.rosRank}</span>` : ""}</span>`;
+    const chip = p => `<span class="tb-chip" title="${p.src === "espn" ? "Set on ESPN" : "Set here"}"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>${esc(p.name)}${p.rosRank ? ` <span class="muted">${esc(p.pos)}${p.rosRank}</span>` : ""}<span class="tb-src">${p.src === "espn" ? "ESPN" : "here"}</span></span>`;
     const fitLine = f => {
       const gives = (who, list) => list.length ? `<b>${esc(who.t.name)}</b> has ${list.map(p => esc(p.name) + " (" + esc(p.pos) + ")").join(", ")}` : "";
       const parts = [gives(f.A, f.aGives) && gives(f.A, f.aGives) + ` for ${esc(f.B.t.name)}`, gives(f.B, f.bGives) && gives(f.B, f.bGives) + ` for ${esc(f.A.t.name)}`].filter(Boolean);
@@ -1034,9 +1035,10 @@
     const card = t => {
       const l = L2[t.id];
       if (!l) return `<article class="tb-card empty-card">${logo(t)}<div><b>${esc(t.name)}</b><div class="team-mgr">${esc(t.manager)} · no listing yet</div></div></article>`;
-      const when = l.at ? ago(l.at) : "";
-      return `<article class="tb-card"><div class="tb-head">${logo(t)}<div style="min-width:0"><b>${esc(t.name)}</b><div class="team-mgr">${esc(t.manager)} · updated ${esc(when)}</div></div></div>
-        ${l.players.length ? `<div class="tb-row"><span class="kicker">Shopping</span><div class="tb-chips">${l.players.map(chip).join("")}</div></div>` : ""}
+      const when = l.at ? " · note updated " + ago(l.at) : "";
+      return `<article class="tb-card"><div class="tb-head">${logo(t)}<div style="min-width:0"><b>${esc(t.name)}</b><div class="team-mgr">${esc(t.manager)}${esc(when)}</div></div></div>
+        ${l.players.length ? `<div class="tb-row"><span class="kicker">On the block</span><div class="tb-chips">${l.players.map(chip).join("")}</div></div>` : ""}
+        ${l.untouchable.length ? `<p class="tb-untouch"><span class="kicker">Untouchable</span> ${l.untouchable.map(p => esc(p.name)).join(", ")}</p>` : ""}
         ${l.needs.length ? `<div class="tb-row"><span class="kicker">Looking for</span><div class="tb-chips">${l.needs.map(p => `<span class="tb-chip need"><span class="slot ${esc(p)}">${esc(p)}</span></span>`).join("")}</div></div>` : ""}
         ${l.note ? `<p class="tb-note">“${esc(l.note)}”</p>` : ""}</article>`;
     };
@@ -1049,18 +1051,23 @@
       editor = `<button type="button" class="cta tb-edit-btn" data-tb="edit">Edit my listing</button>`;
     } else {
       const myTeam = PK.member ? cur.teams.find(t => (t.owners || []).includes(PK.member)) : null;
-      const mine = myTeam && TB.data.listings[myTeam.id] || { players: [], needs: [], note: "" };
+      const mine = myTeam && TB.data.listings[myTeam.id] || { needs: [], note: "" };
+      const myStatus = myTeam ? (TB.data.statuses || {})[myTeam.id] || {} : {};
+      const statusOf = pid => (myStatus[pid] || { s: "NORMAL" }).s;
       const roster = myTeam ? myTeam.roster.slice().sort((a, b) => POS.concat(["K", "D/ST"]).indexOf(a.pos) - POS.concat(["K", "D/ST"]).indexOf(b.pos) || (a.rosRank || 999) - (b.rosRank || 999)) : [];
       editor = `<div class="panel tb-editor">
         <div class="pk-who" style="margin:0 0 10px">
           <label class="field">Who are you? <select id="pk-member" data-tb="who"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
           <label class="field">PIN <input id="pk-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="4 digits" value="${esc(PK.pin)}"></label>
           <p class="note">Same PIN as pick'em. First time? The PIN you enter becomes yours for the season.</p></div>
-        ${myTeam ? `<div class="tb-row"><span class="kicker">On the block · ${esc(myTeam.name)}</span>
-            <div class="tb-pick">${roster.map(p => `<label class="tb-opt"><input type="checkbox" name="tb-player" value="${p.id}"${mine.players.includes(p.id) ? " checked" : ""}><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>${esc(p.name)}${p.rosRank ? ` <span class="muted">${esc(p.pos)}${p.rosRank}</span>` : ""}</label>`).join("")}</div></div>
+        ${myTeam ? `<div class="tb-row"><span class="kicker">Trade status · ${esc(myTeam.name)}</span>
+            <p class="note" style="margin:0 0 8px">Starts from your ESPN settings. Changes here show on this site only; they aren't sent to ESPN. If you later change a player on ESPN, that wins.</p>
+            <div class="tb-status-list">${roster.map(p => `<div class="tb-status-row" data-pid="${p.id}"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span><span class="tb-sname">${esc(p.name)}${p.rosRank ? ` <span class="muted">${esc(p.pos)}${p.rosRank}</span>` : ""}</span>
+              <span class="seg3" role="radiogroup" aria-label="${esc(p.name)} trade status">${[["UNTOUCHABLE", "Untouchable"], ["NORMAL", "Normal"], ["ON_THE_BLOCK", "On the block"]].map(([v, lab]) =>
+                `<label><input type="radio" name="tb-s-${p.id}" value="${v}"${statusOf(p.id) === v ? " checked" : ""}><span>${lab}</span></label>`).join("")}</span></div>`).join("")}</div></div>
           <div class="tb-row"><span class="kicker">Looking for</span><div class="tb-pick pos">${BLOCK_POS.map(p => `<label class="tb-opt"><input type="checkbox" name="tb-need" value="${p}"${mine.needs.includes(p) ? " checked" : ""}><span class="slot ${esc(p)}">${esc(p)}</span></label>`).join("")}</div></div>
           <label class="field tb-notefield">Note (optional) <textarea id="tb-note" maxlength="200" rows="2" placeholder="e.g. Want a starting TE, will overpay at RB">${esc(mine.note || "")}</textarea></label>
-          <div class="tb-actions"><button type="button" class="cta" data-tb="save">Save listing</button><button type="button" class="linkbtn" data-tb="clear">Remove my listing</button><button type="button" class="linkbtn" data-tb="cancel">Cancel</button></div>`
+          <div class="tb-actions"><button type="button" class="cta" data-tb="save">Save listing</button><button type="button" class="linkbtn" data-tb="clear">Reset to my ESPN settings</button><button type="button" class="linkbtn" data-tb="cancel">Cancel</button></div>`
         : `<p class="muted">Choose your name to edit your team's listing.</p>`}
       </div>`;
     }
@@ -1074,9 +1081,13 @@
     const member = PK.member;
     const pin = (document.getElementById("pk-pin") || {}).value || "";
     if (!member) { TB.msg = "Choose your name first."; TB.err = true; return blockView(); }
-    const body = clear ? { member, pin, players: [], needs: [], note: "" } : {
-      member, pin,
-      players: [...document.querySelectorAll('input[name="tb-player"]:checked')].map(i => Number(i.value)),
+    const statuses = {};
+    document.querySelectorAll(".tb-status-row").forEach(row => {
+      const on = row.querySelector("input:checked");
+      if (!clear) statuses[row.dataset.pid] = on ? on.value : "NORMAL";
+    });
+    const body = clear ? { member, pin, reset: true, needs: [], note: "" } : {
+      member, pin, statuses,
       needs: [...document.querySelectorAll('input[name="tb-need"]:checked')].map(i => i.value),
       note: (document.getElementById("tb-note") || {}).value || "",
     };
@@ -1084,7 +1095,7 @@
     if (r.error) { TB.msg = r.error; TB.err = true; return blockView(); }
     PK.pin = pin;
     if (store.get("pk-pin", "")) store.set("pk-pin", pin);
-    TB.msg = r.cleared ? "Your listing is removed." : "Saved. Your listing is live for the whole league.";
+    TB.msg = clear ? "Cleared. Your players are back to Normal here (ESPN settings still apply)." : "Saved. Your listing is live for the whole league.";
     TB.err = false; TB.editing = false;
     TB.data = await pkApi("/block"); TB.at = Date.now();
     blockView();

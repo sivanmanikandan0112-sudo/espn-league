@@ -297,22 +297,44 @@ async function updateFeed(env) {
 }
 
 // ---------------------------------------------------------------- trade block
-// One listing per team: players it's shopping, positions it needs, and a short note. Anyone can read them;
-// only that team's manager(s) can change it, using the same PIN as pick'em.
+// Each player's trade status uses ESPN's three settings: ON_THE_BLOCK, NORMAL, UNTOUCHABLE.
+// ESPN's settings are read automatically. Managers can also change a status here (stored in KV, not sent back to
+// ESPN). When the two disagree, the most recent change wins: a site change records what ESPN said at that moment,
+// and if ESPN's setting changes after that, ESPN takes over again.
+// A team's listing also holds the positions it's looking for and a short note (site only).
 const BLOCK_POS = ["QB", "RB", "WR", "TE", "K", "D/ST"];
+const STATUSES = ["ON_THE_BLOCK", "NORMAL", "UNTOUCHABLE"];
 
-async function leagueRosters(env) {
+async function leagueRosters(env, fresh = false) {
   const yr = season();
-  return cached(`rosters-${yr}`, 300, async () => {
+  const load = async () => {
     const d = await espn(env, yr, "view=mTeam&view=mRoster");
-    return { season: yr, teams: (d.teams || []).map(t => ({ id: t.id, owners: t.owners || [], players: ((t.roster || {}).entries || []).map(e => e.playerId) })) };
-  });
+    return { season: yr, teams: (d.teams || []).map(t => ({
+      id: t.id, owners: t.owners || [],
+      players: ((t.roster || {}).entries || []).map(e => e.playerId),
+      espn: ((t.tradeBlock || {}).players) || {},
+    })) };
+  };
+  return fresh ? load() : cached(`rosters-${yr}`, 120, load);
+}
+
+function effectiveStatuses(team, listing) {
+  const out = {};
+  const over = (listing && listing.statuses) || {};
+  for (const pid of team.players) {
+    const espnNow = team.espn[pid] || "NORMAL";
+    const o = over[pid];
+    const site = o && o.espnAt === espnNow; // ESPN hasn't changed since the site toggle: the site's setting stands
+    const s = site ? o.s : espnNow;
+    if (s !== "NORMAL") out[pid] = { s, src: site ? "site" : "espn" };
+  }
+  return out;
 }
 
 async function handleBlock(req, env, url) {
   if (!env.PICKEM) return json(env, req, { error: "Trade block storage isn't set up yet." }, 503);
-  const R = await leagueRosters(env);
   if (req.method === "GET" && url.pathname === "/block") {
+    const R = await leagueRosters(env);
     const listings = {};
     let cursor;
     do {
@@ -323,28 +345,45 @@ async function handleBlock(req, env, url) {
       }
       cursor = page.list_complete ? null : page.cursor;
     } while (cursor);
-    return json(env, req, { season: R.season, listings });
+    const statuses = {}, info = {};
+    for (const t of R.teams) {
+      const l = listings[t.id];
+      statuses[t.id] = effectiveStatuses(t, l);
+      if (l && (l.needs.length || l.note)) info[t.id] = { needs: l.needs, note: l.note, at: l.at, by: l.by };
+    }
+    return json(env, req, { season: R.season, statuses, listings: info });
   }
   if (req.method !== "POST" || url.pathname !== "/block/save") return json(env, req, { error: "Not found" }, 404);
   let body;
   try { body = await req.json(); } catch (_) { return json(env, req, { error: "Bad request" }, 400); }
+  const R = await leagueRosters(env, true); // compare against ESPN as it is right now
   const member = String(body.member || "");
   const team = R.teams.find(t => t.owners.includes(member));
   if (!team) return json(env, req, { error: "That name doesn't manage a team this season." }, 400);
-  const onRoster = new Set(team.players);
-  const players = [...new Set((body.players || []).map(Number))].filter(id => onRoster.has(id)).slice(0, 8);
   const needs = [...new Set((body.needs || []).map(String))].filter(p => BLOCK_POS.includes(p));
   const note = String(body.note || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 200);
   const err = await checkPin(env, R.season, member, body.pin);
   if (err) return json(env, req, { error: err }, 403);
   const key = `block:${R.season}:${team.id}`;
-  if (!players.length && !needs.length && !note) {
-    await env.PICKEM.delete(key);
-    return json(env, req, { ok: true, cleared: true, team: team.id });
+  const prev = (await env.PICKEM.get(key, "json")) || {};
+  const statuses = body.reset ? {} : { ...(prev.statuses || {}) }; // reset: drop every change made here, back to ESPN
+  const asked = body.statuses || {};
+  for (const pid of team.players) {
+    if (!(pid in asked) && !(String(pid) in asked)) continue;
+    const want = String(asked[pid] ?? asked[String(pid)]);
+    if (!STATUSES.includes(want)) continue;
+    const espnNow = team.espn[pid] || "NORMAL";
+    if (want === espnNow) delete statuses[pid];        // same as ESPN: nothing to override
+    else statuses[pid] = { s: want, espnAt: espnNow, at: new Date().toISOString() };
   }
-  const listing = { team: team.id, by: member, players, needs, note, at: new Date().toISOString() };
-  await env.PICKEM.put(key, JSON.stringify(listing));
-  return json(env, req, { ok: true, listing });
+  for (const pid of Object.keys(statuses)) if (!team.players.includes(Number(pid))) delete statuses[pid]; // left the roster
+  if (!Object.keys(statuses).length && !needs.length && !note) {
+    await env.PICKEM.delete(key);
+  } else {
+    await env.PICKEM.put(key, JSON.stringify({ team: team.id, by: member, statuses, needs, note, at: new Date().toISOString() }));
+  }
+  await caches.default.delete(new Request(`https://cache.local/rosters-${R.season}`));
+  return json(env, req, { ok: true, team: team.id, statuses: effectiveStatuses(team, { statuses }) });
 }
 
 function cors(env, req) {

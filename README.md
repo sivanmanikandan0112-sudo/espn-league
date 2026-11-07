@@ -126,7 +126,8 @@ cd worker && npx wrangler kv key delete --remote --binding PICKEM "pin:2026:{MEM
 
 ## Trade block
 
-Trades → Trade block. Each team lists players it would move (from its own roster), positions it's looking for, and
-an optional note; the page points out two-way and one-way fits between teams. Listings live in the worker's KV
-(`block:<season>:<team id>`); only a team's own manager can change its listing, using the same PIN as pick'em.
-Players who leave the roster drop off listings automatically.
+Trades → Trade block. Every player's trade status (On the block / Normal / Untouchable) is read from ESPN's own trade
+block settings. Managers can also change statuses on the site (plus add positions they're looking for and a note);
+those changes are stored in the worker's KV and are **not** sent back to ESPN. When the two disagree, the most recent
+change wins: a site change records ESPN's status at that moment, and if ESPN's status changes later, ESPN takes over.
+"Reset to my ESPN settings" drops a team's site changes. Editing uses the same name + PIN as pick'em.
