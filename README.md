@@ -123,3 +123,10 @@ cd worker && npx wrangler kv key delete --remote --binding PICKEM "pin:2026:{MEM
 
 (Member ids are the `{...}` ids in `site/data/index.js`; local testing can force picks open with
 `PICKEM_FORCE_OPEN=1` in `worker/.dev.vars`.)
+
+## Trade block
+
+Trades → Trade block. Each team lists players it would move (from its own roster), positions it's looking for, and
+an optional note; the page points out two-way and one-way fits between teams. Listings live in the worker's KV
+(`block:<season>:<team id>`); only a team's own manager can change its listing, using the same PIN as pick'em.
+Players who leave the roster drop off listings automatically.

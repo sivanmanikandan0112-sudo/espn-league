@@ -296,6 +296,57 @@ async function updateFeed(env) {
   await env.PICKEM.put(key, JSON.stringify({ snap, events: all, savedAt: Date.now() }), { expirationTtl: 21 * 86400 });
 }
 
+// ---------------------------------------------------------------- trade block
+// One listing per team: players it's shopping, positions it needs, and a short note. Anyone can read them;
+// only that team's manager(s) can change it, using the same PIN as pick'em.
+const BLOCK_POS = ["QB", "RB", "WR", "TE", "K", "D/ST"];
+
+async function leagueRosters(env) {
+  const yr = season();
+  return cached(`rosters-${yr}`, 300, async () => {
+    const d = await espn(env, yr, "view=mTeam&view=mRoster");
+    return { season: yr, teams: (d.teams || []).map(t => ({ id: t.id, owners: t.owners || [], players: ((t.roster || {}).entries || []).map(e => e.playerId) })) };
+  });
+}
+
+async function handleBlock(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Trade block storage isn't set up yet." }, 503);
+  const R = await leagueRosters(env);
+  if (req.method === "GET" && url.pathname === "/block") {
+    const listings = {};
+    let cursor;
+    do {
+      const page = await env.PICKEM.list({ prefix: `block:${R.season}:`, cursor });
+      for (const k of page.keys) {
+        const v = await env.PICKEM.get(k.name, "json");
+        if (v) listings[k.name.split(":")[2]] = v;
+      }
+      cursor = page.list_complete ? null : page.cursor;
+    } while (cursor);
+    return json(env, req, { season: R.season, listings });
+  }
+  if (req.method !== "POST" || url.pathname !== "/block/save") return json(env, req, { error: "Not found" }, 404);
+  let body;
+  try { body = await req.json(); } catch (_) { return json(env, req, { error: "Bad request" }, 400); }
+  const member = String(body.member || "");
+  const team = R.teams.find(t => t.owners.includes(member));
+  if (!team) return json(env, req, { error: "That name doesn't manage a team this season." }, 400);
+  const onRoster = new Set(team.players);
+  const players = [...new Set((body.players || []).map(Number))].filter(id => onRoster.has(id)).slice(0, 8);
+  const needs = [...new Set((body.needs || []).map(String))].filter(p => BLOCK_POS.includes(p));
+  const note = String(body.note || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 200);
+  const err = await checkPin(env, R.season, member, body.pin);
+  if (err) return json(env, req, { error: err }, 403);
+  const key = `block:${R.season}:${team.id}`;
+  if (!players.length && !needs.length && !note) {
+    await env.PICKEM.delete(key);
+    return json(env, req, { ok: true, cleared: true, team: team.id });
+  }
+  const listing = { team: team.id, by: member, players, needs, note, at: new Date().toISOString() };
+  await env.PICKEM.put(key, JSON.stringify(listing));
+  return json(env, req, { ok: true, listing });
+}
+
 function cors(env, req) {
   const origin = req.headers.get("Origin") || "";
   const allowed = [env.SITE_ORIGIN, "http://localhost:8765"].includes(origin) ? origin : env.SITE_ORIGIN;
@@ -307,6 +358,10 @@ export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (req.method === "OPTIONS") return new Response(null, { headers: cors(env, req) });
+    if (url.pathname.startsWith("/block")) {
+      try { return await handleBlock(req, env, url); }
+      catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
+    }
     if (url.pathname.startsWith("/pickem")) {
       try { return await handlePickem(req, env, url); }
       catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }

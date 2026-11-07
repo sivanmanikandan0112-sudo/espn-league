@@ -603,3 +603,31 @@ a.bm-foot:hover { color: var(--accent); }
 .game-plays { padding: 4px 12px 0; border-top: 1px solid var(--line); }
 .game-plays .play { padding: 7px 0; grid-template-columns: 56px minmax(0, 1fr) auto; }
 @media (max-width: 640px) { .play { grid-template-columns: 52px minmax(0, 1fr) auto; padding: 9px 12px; } }
+
+/* ---- trade block ---- */
+.tb-edit-btn { display: inline-block; margin: 0 0 14px; border: 0; cursor: pointer; font: inherit; font-weight: 700; padding: 10px 18px; }
+.tb-editor { margin-bottom: 14px; max-width: 900px; }
+.tb-row { margin: 10px 0; }
+.tb-row .kicker { display: block; margin-bottom: 6px; }
+.tb-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
+.tb-pick.pos { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
+.tb-opt { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); cursor: pointer; font-size: 14px; min-width: 0; }
+.tb-opt:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.tb-opt .slot { font-size: 10px; font-weight: 800; }
+.tb-notefield { flex-direction: column; align-items: stretch; gap: 6px; margin: 10px 0; }
+.tb-notefield textarea { font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); resize: vertical; }
+.tb-actions { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.tb-actions .cta { margin: 0; border: 0; cursor: pointer; font: inherit; font-weight: 700; padding: 10px 18px; }
+.tb-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; }
+.tb-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; min-width: 0; }
+.tb-card.empty-card { display: flex; gap: 10px; align-items: center; opacity: .6; box-shadow: none; }
+.tb-head { display: flex; gap: 10px; align-items: center; }
+.tb-head .logo, .tb-card.empty-card .logo { width: 36px; height: 36px; flex: none; }
+.tb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tb-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px 4px 5px; border-radius: 99px; background: var(--surface-2); font-size: 13px; font-weight: 600; }
+.tb-chip .slot { font-size: 10px; font-weight: 800; }
+.tb-chip.need { padding: 4px 6px; }
+.tb-note { margin: 10px 0 0; font-size: 14px; color: var(--ink-2); font-style: italic; }
+.tb-fits { display: flex; flex-direction: column; gap: 8px; }
+.tb-fit { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; font-size: 14px; }
+.tb-fit.two { border-color: var(--accent); }

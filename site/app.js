@@ -950,7 +950,10 @@
   }
 
   // ---------------------------------------------------------------- trades
+  const TRADE_TABS = [["", "Trade history"], ["block", "Trade block"]];
+
   function renderTrades() {
+    if (state.sub === "block") return renderBlock();
     const swap = '<div class="swap"><svg width="22" height="22" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>';
     const body = D.trades.map(tr => {
       const early = !tr.weeksSince;
@@ -975,8 +978,129 @@
     }).join("");
     main.innerHTML = `<div class="section-head"><div><h1>Trade history <span class="pill">${D.trades.length} trades</span></h1>
         ${expl(`Every ${L.season} deal, graded by points scored in the new team's lineup.`, `Every deal that went through in ${L.season}, newest first, graded by points the received players scored in the new team's starting lineup for as long as they stayed. Bench points don't count: a trade only pays off if you play them.`)}</div></div>
+      ${subnav("trades", TRADE_TABS, "")}
       <div class="trades">${body || '<div class="empty">No trades this season.</div>'}</div>`;
   }
+
+  // ---------------------------------------------------------------- trade block
+  // Each team lists players it's shopping, positions it needs and a note (stored on the live worker; editing uses
+  // the same name + PIN as pick'em). The page points out teams whose block and needs line up with each other.
+  const TB = { data: null, at: 0, editing: false, msg: "", err: false };
+  const BLOCK_POS = ["QB", "RB", "WR", "TE", "K", "D/ST"];
+
+  async function renderBlock() {
+    const head = `<div class="section-head"><div><h1>Trade block</h1>${expl("Who's shopping whom, and who needs what.", "Each team lists the players it would move and the positions it's looking for. Matches are pairs of teams where one has what the other needs. Only a team's own manager can change its listing, using the same name and PIN as pick'em.")}</div></div>${subnav("trades", TRADE_TABS, "block")}`;
+    if (state.season !== IDX.current) { main.innerHTML = head + `<div class="empty">The trade block is for the current season. <a href="#/trades/block">Go to ${IDX.current}</a></div>`; return; }
+    if (!LIVE_API_BASE()) { main.innerHTML = head + '<div class="empty">The trade block needs the live worker, which isn\'t set up.</div>'; return; }
+    if (!TB.data || Date.now() - TB.at > 60000) {
+      if (!TB.data) main.innerHTML = head + '<div class="empty">Loading the trade block…</div>';
+      TB.data = await pkApi("/block");
+      TB.at = Date.now();
+      if (state.tab !== "trades" || state.sub !== "block") return;
+    }
+    blockView(head);
+  }
+
+  function blockView(head) {
+    head = head || main.querySelector(".section-head").outerHTML + subnav("trades", TRADE_TABS, "block");
+    if (!TB.data || TB.data.error) { main.innerHTML = head + `<div class="empty">${esc((TB.data && TB.data.error) || "Couldn't load the trade block.")}</div>`; return; }
+    const cur = window.LEAGUE_DATA[IDX.current];
+    const teamOf = id => cur.teams.find(t => String(t.id) === String(id));
+    const player = (t, pid) => t.roster.find(p => p.id === pid);
+    // listings, keeping only players still on the team's roster
+    const L2 = {};
+    Object.entries(TB.data.listings || {}).forEach(([tid, l]) => {
+      const t = teamOf(tid);
+      if (!t) return;
+      const players = l.players.map(pid => player(t, pid)).filter(Boolean);
+      if (players.length || l.needs.length || l.note) L2[tid] = { t, players, needs: l.needs, note: l.note, at: l.at };
+    });
+    // matches: A shops a position B needs, and B shops a position A needs (two-way), or one-way
+    const has = (l, pos) => l.players.filter(p => p.pos === pos);
+    const fits = [];
+    const ids = Object.keys(L2);
+    ids.forEach((a, i) => ids.slice(i + 1).forEach(b => {
+      const A = L2[a], B = L2[b];
+      const aGives = B.needs.flatMap(pos => has(A, pos)), bGives = A.needs.flatMap(pos => has(B, pos));
+      if (aGives.length || bGives.length) fits.push({ A, B, aGives, bGives, two: aGives.length > 0 && bGives.length > 0 });
+    }));
+    fits.sort((x, y) => (y.two - x.two) || (y.aGives.length + y.bGives.length) - (x.aGives.length + x.bGives.length));
+    const chip = p => `<span class="tb-chip"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>${esc(p.name)}${p.rosRank ? ` <span class="muted">${esc(p.pos)}${p.rosRank}</span>` : ""}</span>`;
+    const fitLine = f => {
+      const gives = (who, list) => list.length ? `<b>${esc(who.t.name)}</b> has ${list.map(p => esc(p.name) + " (" + esc(p.pos) + ")").join(", ")}` : "";
+      const parts = [gives(f.A, f.aGives) && gives(f.A, f.aGives) + ` for ${esc(f.B.t.name)}`, gives(f.B, f.bGives) && gives(f.B, f.bGives) + ` for ${esc(f.A.t.name)}`].filter(Boolean);
+      return `<div class="tb-fit${f.two ? " two" : ""}"><span class="badge${f.two ? " new" : ""}">${f.two ? "Two-way fit" : "One-way fit"}</span> ${parts.join(" · ")}</div>`;
+    };
+    const card = t => {
+      const l = L2[t.id];
+      if (!l) return `<article class="tb-card empty-card">${logo(t)}<div><b>${esc(t.name)}</b><div class="team-mgr">${esc(t.manager)} · no listing yet</div></div></article>`;
+      const when = l.at ? ago(l.at) : "";
+      return `<article class="tb-card"><div class="tb-head">${logo(t)}<div style="min-width:0"><b>${esc(t.name)}</b><div class="team-mgr">${esc(t.manager)} · updated ${esc(when)}</div></div></div>
+        ${l.players.length ? `<div class="tb-row"><span class="kicker">Shopping</span><div class="tb-chips">${l.players.map(chip).join("")}</div></div>` : ""}
+        ${l.needs.length ? `<div class="tb-row"><span class="kicker">Looking for</span><div class="tb-chips">${l.needs.map(p => `<span class="tb-chip need"><span class="slot ${esc(p)}">${esc(p)}</span></span>`).join("")}</div></div>` : ""}
+        ${l.note ? `<p class="tb-note">“${esc(l.note)}”</p>` : ""}</article>`;
+    };
+    const order = cur.teams.slice().sort((a, b) => (L2[b.id] ? 1 : 0) - (L2[a.id] ? 1 : 0) || a.standing - b.standing);
+
+    // editor
+    let editor;
+    const members = pkMembers();
+    if (!TB.editing) {
+      editor = `<button type="button" class="cta tb-edit-btn" data-tb="edit">Edit my listing</button>`;
+    } else {
+      const myTeam = PK.member ? cur.teams.find(t => (t.owners || []).includes(PK.member)) : null;
+      const mine = myTeam && TB.data.listings[myTeam.id] || { players: [], needs: [], note: "" };
+      const roster = myTeam ? myTeam.roster.slice().sort((a, b) => POS.concat(["K", "D/ST"]).indexOf(a.pos) - POS.concat(["K", "D/ST"]).indexOf(b.pos) || (a.rosRank || 999) - (b.rosRank || 999)) : [];
+      editor = `<div class="panel tb-editor">
+        <div class="pk-who" style="margin:0 0 10px">
+          <label class="field">Who are you? <select id="pk-member" data-tb="who"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
+          <label class="field">PIN <input id="pk-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="4 digits" value="${esc(PK.pin)}"></label>
+          <p class="note">Same PIN as pick'em. First time? The PIN you enter becomes yours for the season.</p></div>
+        ${myTeam ? `<div class="tb-row"><span class="kicker">On the block · ${esc(myTeam.name)}</span>
+            <div class="tb-pick">${roster.map(p => `<label class="tb-opt"><input type="checkbox" name="tb-player" value="${p.id}"${mine.players.includes(p.id) ? " checked" : ""}><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>${esc(p.name)}${p.rosRank ? ` <span class="muted">${esc(p.pos)}${p.rosRank}</span>` : ""}</label>`).join("")}</div></div>
+          <div class="tb-row"><span class="kicker">Looking for</span><div class="tb-pick pos">${BLOCK_POS.map(p => `<label class="tb-opt"><input type="checkbox" name="tb-need" value="${p}"${mine.needs.includes(p) ? " checked" : ""}><span class="slot ${esc(p)}">${esc(p)}</span></label>`).join("")}</div></div>
+          <label class="field tb-notefield">Note (optional) <textarea id="tb-note" maxlength="200" rows="2" placeholder="e.g. Want a starting TE, will overpay at RB">${esc(mine.note || "")}</textarea></label>
+          <div class="tb-actions"><button type="button" class="cta" data-tb="save">Save listing</button><button type="button" class="linkbtn" data-tb="clear">Remove my listing</button><button type="button" class="linkbtn" data-tb="cancel">Cancel</button></div>`
+        : `<p class="muted">Choose your name to edit your team's listing.</p>`}
+      </div>`;
+    }
+    const msg = TB.msg ? `<p class="note${TB.err ? " live" : ""}">${esc(TB.msg)}</p>` : "";
+    main.innerHTML = head + editor + msg +
+      (fits.length ? section("Possible fits", "Pairs where one team is shopping a position the other is looking for.", `<div class="tb-fits">${fits.slice(0, 12).map(fitLine).join("")}</div>`) : "") +
+      section("Listings", "", `<div class="tb-cards">${order.map(card).join("")}</div>`);
+  }
+
+  async function blockSave(clear) {
+    const member = PK.member;
+    const pin = (document.getElementById("pk-pin") || {}).value || "";
+    if (!member) { TB.msg = "Choose your name first."; TB.err = true; return blockView(); }
+    const body = clear ? { member, pin, players: [], needs: [], note: "" } : {
+      member, pin,
+      players: [...document.querySelectorAll('input[name="tb-player"]:checked')].map(i => Number(i.value)),
+      needs: [...document.querySelectorAll('input[name="tb-need"]:checked')].map(i => i.value),
+      note: (document.getElementById("tb-note") || {}).value || "",
+    };
+    const r = await pkApi("/block/save", body);
+    if (r.error) { TB.msg = r.error; TB.err = true; return blockView(); }
+    PK.pin = pin;
+    if (store.get("pk-pin", "")) store.set("pk-pin", pin);
+    TB.msg = r.cleared ? "Your listing is removed." : "Saved. Your listing is live for the whole league.";
+    TB.err = false; TB.editing = false;
+    TB.data = await pkApi("/block"); TB.at = Date.now();
+    blockView();
+  }
+
+  main.addEventListener("click", e => {
+    const b = e.target.closest("[data-tb]");
+    if (!b || b.tagName === "SELECT") return;
+    if (b.dataset.tb === "edit") { TB.editing = true; TB.msg = ""; blockView(); }
+    if (b.dataset.tb === "cancel") { TB.editing = false; TB.msg = ""; blockView(); }
+    if (b.dataset.tb === "save") blockSave(false);
+    if (b.dataset.tb === "clear") blockSave(true);
+  });
+  main.addEventListener("change", e => {
+    if (e.target.matches('[data-tb="who"]')) { PK.member = e.target.value; store.set("pk-member", PK.member); PK.pin = (document.getElementById("pk-pin") || {}).value || PK.pin; blockView(); }
+  });
 
   // ---------------------------------------------------------------- history
   const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Head to head"], ["rivalries", "Rivalries"], ["records", "Record book"]];
