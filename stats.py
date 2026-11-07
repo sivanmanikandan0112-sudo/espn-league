@@ -138,7 +138,9 @@ def playoff_odds(season, schedule, team_strength):
     """Monte Carlo the rest of the regular season and the playoff bracket.
 
     schedule: [(week, home, away)] for every regular-season game not yet final.
-    team_strength: team -> {"mean": weekly mean, "sd": weekly sd, "live": {week: (mean, sd)}}
+    team_strength: team -> {"mean": weekly mean, "sd": weekly sd, "live": {week: (mean, sd, win_prob)}}
+    For the week in progress, the winner is drawn from ESPN's live win probability (which knows how much of
+    each lineup has already played); points for the tiebreaker come from the live projection.
     """
     lg = season["league"]
     teams = {t["id"]: t for t in season["teams"]}
@@ -150,13 +152,17 @@ def playoff_odds(season, schedule, team_strength):
     games_left = defaultdict(int)
     for _, h, a in schedule:
         games_left[h] += 1; games_left[a] += 1
-    by_wins = {tid: defaultdict(lambda: [0, 0]) for tid in teams}  # remaining wins -> [sims, made playoffs]
-    seeds = {tid: [0] * len(teams) for tid in teams}
 
     def draw(tid, week):
         st = team_strength[tid]
-        mean, sd = st["live"].get(week, (st["mean"], st["sd"]))
+        mean, sd = st["live"].get(week, (st["mean"], st["sd"], None))[:2]
         return rng.gauss(mean, sd)
+
+    def live_win_prob(home, away, week):
+        h, a = team_strength[home]["live"].get(week), team_strength[away]["live"].get(week)
+        if h and a and h[2] is not None and a[2] is not None and h[2] + a[2] > 0:
+            return h[2] / (h[2] + a[2])
+        return None
 
     def play(a, b):
         sa, sb = rng.gauss(team_strength[a]["mean"], team_strength[a]["sd"]), rng.gauss(team_strength[b]["mean"], team_strength[b]["sd"])
@@ -165,21 +171,19 @@ def playoff_odds(season, schedule, team_strength):
     for _ in range(PLAYOFF_SIMS):
         wins = {tid: t["wins"] + t["ties"] / 2 for tid, t in teams.items()}
         pf = {tid: t["pf"] for tid, t in teams.items()}
-        won = defaultdict(int)
         for week, home, away in schedule:
             sh, sa = draw(home, week), draw(away, week)
             pf[home] += sh; pf[away] += sa
-            winner = home if sh > sa else away
+            wp = live_win_prob(home, away, week)
+            if wp is not None:
+                winner = home if rng.random() < wp else away
+            else:
+                winner = home if sh > sa else away
             wins[winner] += 1
-            won[winner] += 1
         order = sorted(teams, key=lambda tid: (-wins[tid], -pf[tid]))
         for i, tid in enumerate(order):
             tally[tid]["wins"] += wins[tid]
             tally[tid]["seed"] += i + 1
-            seeds[tid][i] += 1
-            b = by_wins[tid][won[tid]]
-            b[0] += 1
-            b[1] += 1 if i < playoff_teams else 0
         field = order[:playoff_teams]
         for i, tid in enumerate(field):
             tally[tid]["playoffs"] += 1
@@ -197,18 +201,10 @@ def playoff_odds(season, schedule, team_strength):
         tally[alive[0]]["title"] += 1
 
     n = float(PLAYOFF_SIMS)
-    out = {}
-    for tid, v in tally.items():
-        cond = {}
-        for k in range(games_left[tid] + 1):
-            sims, made = by_wins[tid].get(k, [0, 0])
-            # how often this team wins exactly k more games, and its playoff odds when it does
-            cond[k] = {"chance": round(100 * sims / n, 1), "playoffPct": round(100 * made / sims, 1) if sims >= 30 else None}
-        out[tid] = {"playoffPct": round(100 * v["playoffs"] / n, 1), "byePct": round(100 * v["bye"] / n, 1),
-                    "titlePct": round(100 * v["title"] / n, 1), "projWins": round(v["wins"] / n, 1),
-                    "avgSeed": round(v["seed"] / n, 1), "gamesLeft": games_left[tid], "byWins": cond,
-                    "seeds": [round(100 * c / n, 1) for c in seeds[tid]]}
-    return out
+    return {tid: {"playoffPct": round(100 * v["playoffs"] / n, 1), "byePct": round(100 * v["bye"] / n, 1),
+                  "titlePct": round(100 * v["title"] / n, 1), "projWins": round(v["wins"] / n, 1),
+                  "avgSeed": round(v["seed"] / n, 1), "gamesLeft": games_left[tid]}
+            for tid, v in tally.items()}
 
 
 def team_strengths(season, power_by_team, power_weeks, live_week_proj):
@@ -238,8 +234,10 @@ def team_strengths(season, power_by_team, power_weeks, live_week_proj):
         sd = max(15.0, 0.5 * sd + 0.5 * league_sd)
         out[tid] = {"mean": mean, "sd": sd, "live": {}}
         if tid in live_week_proj:
-            week, proj = live_week_proj[tid]
-            out[tid]["live"][week] = (proj, 12.0)
+            week, proj, scored, win_prob = live_week_proj[tid]
+            # spread shrinks as the week is played out: only the unplayed share of the projection is uncertain
+            unplayed = max(0.1, 1 - scored / proj) if proj else 1.0
+            out[tid]["live"][week] = (proj, max(6.0, league_sd * unplayed ** 0.5), win_prob)
     return out
 
 
@@ -274,28 +272,6 @@ def _stint(own, weeks, pid, team, start):
         if x[1]:
             started += x[2]; starts += 1
     return round(started, 1), starts, round(total, 1)
-
-
-# ---------------------------------------------------------------- waiver MVPs
-
-def waiver_pickups(season):
-    """A pickup = a player on a team this week who wasn't on anyone's roster the week before.
-    Credit = points he scored in that team's starting lineup until he left it."""
-    rs = season["league"]["regularSeasonWeeks"]
-    own = ownership(season)
-    weeks = sorted(w for w in own if w <= rs)
-    picks = []
-    for prev, w in zip(weeks, weeks[1:]):
-        for pid, (team, _, _) in own[w].items():
-            if pid in own[prev]:
-                continue
-            started, starts, total = _stint(own, weeks, pid, team, w)
-            picks.append({"id": pid, "team": team, "week": w, "started": started, "starts": starts, "total": total})
-    by_team = defaultdict(lambda: {"started": 0.0, "pickups": 0})
-    for p in picks:
-        by_team[p["team"]]["started"] += p["started"]
-        by_team[p["team"]]["pickups"] += 1
-    return picks, {t: {"started": round(v["started"], 1), "pickups": v["pickups"]} for t, v in by_team.items()}
 
 
 # ---------------------------------------------------------------- trade grades
@@ -377,22 +353,6 @@ def schedule_strength(season, remaining=None, strength=None):
         ranked = sorted((t for t in out if key in out[t]), key=lambda t: -out[t][key])
         for i, t in enumerate(ranked):
             out[t][key + "Rank"] = i + 1  # 1 = toughest
-    return out
-
-
-def consistency(season, close=10.0):
-    sc = team_scores(season)
-    out = {}
-    for t, games in sc.items():
-        pts = [g[1] for g in games]
-        if not pts:
-            continue
-        cw = sum(1 for g in games if abs(g[1] - g[3]) < close and g[1] > g[3])
-        cl = sum(1 for g in games if abs(g[1] - g[3]) < close and g[1] < g[3])
-        out[t] = {"avg": round(statistics.mean(pts), 1), "median": round(statistics.median(pts), 1),
-                  "floor": round(min(pts), 1), "ceiling": round(max(pts), 1),
-                  "sd": round(statistics.pstdev(pts), 1) if len(pts) > 1 else 0.0,
-                  "closeW": cw, "closeL": cl}
     return out
 
 

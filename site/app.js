@@ -425,11 +425,9 @@
   function insightTabs() {
     const hasOdds = D.teams.some(t => t.odds);
     const t = [["race", hasOdds || !L.over ? "Playoff race" : "Final results"]];
-    if (hasOdds) t.push(["scenarios", "Scenarios"]);
-    t.push(["luck", "Luck"], ["schedule", "Schedule"], ["consistency", "Consistency"], ["efficiency", "Efficiency"]);
+    t.push(["luck", "Luck"], ["schedule", "Schedule"], ["efficiency", "Efficiency"]);
     if (D.draft) t.push(["draft", "Draft"]);
     if (D.trades.length) t.push(["trades", "Trade grades"]);
-    if (D.waivers && D.waivers.top.length) t.push(["waivers", "Waiver MVPs"]);
     return t;
   }
 
@@ -437,7 +435,7 @@
     race() {
       if (D.teams.some(t => t.odds)) {
         const rows = D.teams.slice().sort((a, b) => b.odds.playoffPct - a.odds.playoffPct || b.odds.titlePct - a.odds.titlePct);
-        return section("Playoff race", `Top ${L.playoffTeams} make the playoffs${L.playoffTeams < 2 ** L.playoffRounds ? `; top ${2 ** L.playoffRounds - L.playoffTeams} get a first-round bye` : ""}. Odds from 10,000 simulated finishes. <a href="${href("insights", {}, "scenarios")}">What each team needs →</a>`,
+        return section("Playoff race", `Top ${L.playoffTeams} make the playoffs${L.playoffTeams < 2 ** L.playoffRounds ? `; top ${2 ** L.playoffRounds - L.playoffTeams} get a first-round bye` : ""}. Odds from 10,000 simulated finishes.`,
           table([
             { label: "Team", cell: teamCell },
             { label: "Record", num: 1, cell: t => record(t) },
@@ -456,37 +454,6 @@
         { label: "Seed", num: 1, cell: t => (t.seed && t.seed <= L.playoffTeams ? "#" + t.seed : "—") },
         { label: "Points for", num: 1, cell: t => fmt(t.pf) },
       ], rows));
-    },
-
-    scenarios() {
-      const teams = D.teams.filter(t => t.odds).sort((a, b) => b.odds.playoffPct - a.odds.playoffPct);
-      const cards = teams.map(t => {
-        const o = t.odds, n = o.gamesLeft;
-        const ks = Object.keys(o.byWins).map(Number).sort((a, b) => b - a);
-        const at = k => (o.byWins[k] || {}).playoffPct;
-        const needFor = th => { for (let k = 0; k <= n; k++) { const v = at(k); if (v != null && v >= th) return k; } return null; };
-        const lines = [];
-        if (o.playoffPct >= 99.5) lines.push("Basically locked in. The question is seeding.");
-        else if (o.playoffPct < 0.5 && (at(n) == null || at(n) < 1)) lines.push(`Needs a miracle: even going ${n}-0 ${at(n) == null ? "rarely happens" : "only gets in " + pct(at(n)) + " of the time"}.`);
-        else {
-          const lock = needFor(99), even = needFor(50);
-          if (even != null) lines.push(even === 0 ? `Already a favorite even if it loses out (${pct(at(0))}).` : `Needs <b>${even} of ${n}</b> wins to be a favorite (${pct(at(even))}).`);
-          else lines.push(`Even ${n}-0 is only ${pct(at(n))}. Needs help from other results.`);
-          if (lock != null && lock !== even) lines.push(`Win <b>${lock}</b> and it's essentially clinched.`);
-          if (even != null && even > 0 && at(even - 1) != null) lines.push(`One fewer win (${even - 1}) drops it to ${pct(at(even - 1))}.`);
-        }
-        const best = o.seeds.indexOf(Math.max(...o.seeds));
-        const seedLine = best < L.playoffTeams ? `Most likely finish: <b>${ordinal(best + 1)} seed</b> (${pct(o.seeds[best])})` : `Most likely finish: <b>${ordinal(best + 1)} place</b> (${pct(o.seeds[best])})`;
-        const chips = ks.map(k => {
-          const v = at(k), c = o.byWins[k].chance;
-          const cls = v == null ? "na" : v >= 90 ? "hi" : v >= 50 ? "mid" : v >= 10 ? "lo" : "out";
-          return `<div class="chip ${cls}" title="${c}% chance of going ${k}-${n - k}"><span class="chip-rec">${k}-${n - k}</span><span class="chip-v">${v == null ? "rare" : pct(v)}</span></div>`;
-        }).join("");
-        return `<article class="scn"><div class="scn-head">${logo(t)}<span style="min-width:0"><div class="team-name">${esc(t.name)}</div><div class="team-mgr">${record(t)} · ${pct(o.playoffPct)} to make it · ${n} games left</div></span></div>
-          <p class="scn-text">${lines.join(" ")}</p><p class="scn-text muted">${seedLine}</p>
-          <div class="chips" aria-label="Playoff odds by remaining record">${chips}</div></article>`;
-      }).join("");
-      return section("Playoff scenarios", "Playoff odds for every possible finishing record. Each box is a remaining record (wins-losses) and how often that record gets the team in, from the same 10,000 simulations.", `<div class="scns">${cards}</div>`);
     },
 
     luck() {
@@ -511,21 +478,6 @@
       ];
       if (hasLeft) cols.push({ label: "Opponents left", num: 1, cell: t => t.sos.remainingVsAvg == null ? "—" : `${signed(t.sos.remainingVsAvg)} <span class="muted">#${t.sos.remainingVsAvgRank}</span>` });
       return section("Strength of schedule", `<b>Opponents so far</b>: how much the teams you've faced score per week compared with the league average (#1 = toughest). <b>They scored vs you</b>: how those opponents actually played against you; high means you kept running into hot weeks.${hasLeft ? " <b>Opponents left</b>: projected strength of the rest of your schedule." : ""}`, table(cols, rows));
-    },
-
-    consistency() {
-      const rows = D.teams.filter(t => t.consistency).sort((a, b) => a.consistency.sd - b.consistency.sd);
-      const steady = rows[0], wild = rows[rows.length - 1];
-      const callouts = steady && wild ? `<div class="callouts"><div class="callout"><div class="kicker">Steadiest</div><div class="mini-team">${logo(steady)}${esc(steady.name)}</div><div class="note">Usually within ${steady.consistency.sd.toFixed(0)} pts of its ${steady.consistency.avg.toFixed(0)} average</div></div>
-        <div class="callout"><div class="kicker">Most boom-or-bust</div><div class="mini-team">${logo(wild)}${esc(wild.name)}</div><div class="note">Anywhere from ${wild.consistency.floor.toFixed(0)} to ${wild.consistency.ceiling.toFixed(0)}</div></div></div>` : "";
-      return section("Consistency", "Weekly scoring in the regular season, steadiest first. Swing is the typical distance from a team's average. Close games were decided by under 10 points.", callouts + table([
-        { label: "Team", cell: teamCell },
-        { label: "Average", num: 1, cell: t => t.consistency.avg.toFixed(1) },
-        { label: "Floor", num: 1, cell: t => t.consistency.floor.toFixed(1) },
-        { label: "Ceiling", num: 1, cell: t => t.consistency.ceiling.toFixed(1) },
-        { label: "Swing", num: 1, cell: t => "±" + t.consistency.sd.toFixed(1) },
-        { label: "Close games", num: 1, cell: t => `${t.consistency.closeW}–${t.consistency.closeL}` },
-      ], rows));
     },
 
     efficiency() {
@@ -585,25 +537,12 @@
       return section("Trade grades", "Who got more out of each deal: points the received players scored in the new team's starting lineup, for as long as they stayed. Bench points don't count; a trade only pays off if you play them.", `<div class="trades">${cards}</div>`);
     },
 
-    waivers() {
-      const w = D.waivers;
-      const totals = Object.entries(w.teams).map(([tid, v]) => Object.assign({ t: teamById[tid] }, v)).filter(r => r.t).sort((a, b) => b.started - a.started);
-      const top = w.top.slice(0, 15).map((p, i) => `<div class="pick"><span class="pick-no">${pad(i + 1)}</span><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>
-        <span class="pick-name"><b>${esc(p.name)}</b><span class="team-mgr">${esc(tname(p.team))} · added week ${p.week} · ${p.starts} start${p.starts === 1 ? "" : "s"}</span></span>
-        <span class="pick-v"><b>${p.started.toFixed(1)}</b></span></div>`).join("");
-      return `<div class="two-col">${section("Best pickups", "Free-agent and waiver adds, ranked by points they scored in the starting lineup for the team that added them.", `<div class="picks">${top}</div>`)}
-        ${section("Waiver wire leaders", "Started points from pickups, by team.", table([
-          { label: "Team", cell: r => teamCell(r.t) },
-          { label: "Pickups", num: 1, cell: r => r.pickups },
-          { label: "Pts started", num: 1, cell: r => r.started.toFixed(1) },
-        ], totals))}</div>`;
-    },
   };
 
   function renderInsights() {
     const tabs = insightTabs();
     const sub = tabs.some(([k]) => k === state.sub) ? state.sub : tabs[0][0];
-    main.innerHTML = `<div class="section-head"><div><h1>Insights</h1><p class="sub">${L.over ? L.season + " season in review." : "Who's in, who's lucky, who drafted well, and who's working the wire."}</p></div></div>
+    main.innerHTML = `<div class="section-head"><div><h1>Insights</h1><p class="sub">${L.over ? L.season + " season in review." : "Who's in, who's lucky, who drafted well, and who won their trades."}</p></div></div>
       ${subnav("insights", tabs, sub)}${INSIGHTS[sub]()}`;
     const a = main.querySelector(".subnav .active");
     if (a) a.scrollIntoView({ block: "nearest", inline: "center" });

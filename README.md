@@ -31,13 +31,12 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   so bench players count as often as they'd really play. Roster cards show ROS position rank and expected starts.
 - **Insights** (its own tabs, each linkable as `#/insights/<name>`, code in `stats.py`):
   - *Playoff race*: playoff / bye / title odds from 10,000 simulated finishes (team strengths shrunk halfway to
-    the league average, `STRENGTH_SHRINK`). Past seasons show final results.
-  - *Scenarios*: playoff odds for every possible remaining record, plain-language targets, most likely seed.
+    the league average, `STRENGTH_SHRINK`; the week in progress uses ESPN's live win probabilities).
+    Past seasons show final results.
   - *Luck* (actual vs. all-play expected wins), *Schedule* (opponent strength so far and remaining),
-    *Consistency* (floor, ceiling, swing, close-game record), *Efficiency* (points started vs. best lineup).
+    *Efficiency* (points started vs. best lineup).
   - *Draft*: each pick vs. players at the same position drafted around the same spot; team grades, steals, busts.
   - *Trade grades*: points each side's received players scored in its starting lineup after the trade.
-  - *Waiver MVPs*: pickups ranked by started points for the team that added them.
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
   game, player of the week, most points left on the bench, best bench performance).
 - **Trades**: the current season comes from the league activity feed (exact). ESPN doesn't keep that feed for past

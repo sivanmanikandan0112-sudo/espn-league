@@ -304,12 +304,9 @@ def build_season(season, is_current, names):
     if is_current and not over and current_week <= regular:
         remaining, strength = add_playoff_odds(data, main, teams, regular, current_week)
     sos = stats.schedule_strength(data, remaining, strength)
-    cons = stats.consistency(data)
     for tid, t in teams.items():
         t["sos"] = sos.get(tid)
-        t["consistency"] = cons.get(tid)
     data["trades"] = stats.grade_trades(data, data["trades"])
-    add_waivers(data, teams, names_seen, season)
     add_draft(data, season, actual)
 
     for t in teams.values():
@@ -392,7 +389,7 @@ def add_playoff_odds(data, main, teams, regular, current_week):
         for g in cur["games"]:
             for s in g["sides"]:
                 if s.get("proj"):
-                    live[s["team"]] = (current_week, s["proj"])
+                    live[s["team"]] = (current_week, s["proj"], s["pts"], s.get("winProb"))
     pw = data["league"].get("powerWeeks")
     n_power_weeks = (pw[1] - pw[0] + 1) if pw else 0
     strength = stats.team_strengths(data, {tid: t.get("power", 0) for tid, t in teams.items()}, n_power_weeks, live)
@@ -400,17 +397,6 @@ def add_playoff_odds(data, main, teams, regular, current_week):
     for tid, o in odds.items():
         teams[tid]["odds"] = o
     return schedule, strength
-
-
-def add_waivers(data, teams, names_seen, season):
-    picks, by_team = stats.waiver_pickups(data)
-    info = dict(names_seen)
-    info.update(player_info(season, {p["id"] for p in picks if p["id"] not in info}))
-    for p in picks:
-        x = info.get(p["id"], {})
-        p.update({"name": x.get("name", "Player #%s" % p["id"]), "pos": x.get("pos", "?"), "nfl": x.get("team", "")})
-    picks.sort(key=lambda p: -p["started"])
-    data["waivers"] = {"top": [p for p in picks if p["started"] > 0][:30], "teams": by_team}
 
 
 def add_draft(data, season, actual):
