@@ -423,3 +423,11 @@ b.neg, .neg { color: var(--hot); }
   .game-foot { padding: 12px 16px; }
   .h2h-pick select { flex-basis: 100%; }
 }
+@media (max-width: 380px) {
+  .side-row { grid-template-columns: 30px minmax(0, 1fr) auto auto; gap: 8px; padding: 10px 12px; }
+  .side-row .logo { width: 30px; height: 30px; }
+  .side-row .team-mgr { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wp { min-width: 40px; padding: 3px 6px; font-size: 14px; }
+  .wp small { display: none; }
+  .score { font-size: 20px; }
+}
