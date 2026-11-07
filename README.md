@@ -67,6 +67,10 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   and `site/icons/`.
 - **Live updates**: while the current season is in progress, open pages re-check for new data every 2 minutes.
   If the data is more than 8 hours old in-season, a banner warns that the refresh (usually the cookies) may be broken.
+- **Works offline** (`site/sw.js`): a service worker saves the pages, code and every season you've opened as you
+  browse (newest copy first when online). With no signal the site still opens with the last saved scores and an
+  "You're offline" banner; it refreshes itself when the connection comes back. Each deploy stamps `SW_BUILD`, so
+  old saved copies are cleared automatically.
 
 ## Auto-refresh (GitHub Pages)
 

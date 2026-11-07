@@ -179,6 +179,10 @@
 
   function renderBanner() {
     const el = document.getElementById("banner");
+    if (!navigator.onLine) {
+      el.innerHTML = `<div class="banner offline" role="status"><strong>You're offline.</strong> Showing the last saved scores (updated ${esc(ago(IDX.updated))}). They'll refresh when you're back online.</div>`;
+      return;
+    }
     const hours = (Date.now() - new Date(IDX.updated).getTime()) / 3600000;
     const cur = window.LEAGUE_DATA[IDX.current];
     const inSeason = cur ? !cur.league.over : true;
@@ -1866,6 +1870,13 @@
     updateLiveChip();
     document.addEventListener("visibilitychange", () => { if (!document.hidden) { poll(); liveTick(); } });
   }
+
+  // offline support (sw.js): keeps a saved copy of the site and its data on this device
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+  window.addEventListener("offline", () => renderBanner());
+  window.addEventListener("online", () => { renderBanner(); poll(); liveTick(); });
 
   route().then(startLive);
 })();

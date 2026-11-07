@@ -686,3 +686,5 @@ a.bm-foot:hover { color: var(--accent); }
 .since ul { margin: 8px 0 4px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .since .note { margin: 6px 0 0; }
 .since-who select { padding: 4px 8px; font-size: 13px; min-height: 0; }
+
+.banner.offline { background: color-mix(in srgb, var(--qb) 14%, var(--surface)); border-color: color-mix(in srgb, var(--qb) 40%, transparent); }
