@@ -823,7 +823,7 @@
   // ---------------------------------------------------------------- insights
   function table(cols, rows) {
     return `<div class="table-wrap"><table class="tbl"><thead><tr>${cols.map(c => `<th class="${c.num ? "n" : ""}">${c.label}</th>`).join("")}</tr></thead>
-      <tbody>${rows.map(r => `<tr>${cols.map((c, i) => `<td class="${c.num ? "n" : ""}${i === 0 ? " lead" : ""}" data-label="${c.label}">${c.cell(r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      <tbody>${rows.map(r => `<tr>${cols.map((c, i) => `<td class="${c.num ? "n" : ""}${i === 0 ? " lead" : ""}${c.wide ? " wide" : ""}" data-label="${c.label}">${c.cell(r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
   }
   const teamCell = t => `<span class="tcell">${logo(t)}<span><span class="tname">${esc(t.name)}</span><span class="team-mgr">${esc(t.manager)}</span></span></span>`;
   const barCell = (v, cls) => `<span class="pbar"><span class="pbar-fill ${cls || ""}" style="width:${Math.min(100, v || 0)}%"></span><span class="pbar-v">${pct(v)}</span></span>`;
@@ -843,7 +843,7 @@
   function insightTabs() {
     const hasOdds = D.teams.some(t => t.odds);
     const t = [["race", hasOdds || !L.over ? "Playoff race" : "Final results"]];
-    t.push(["luck", "Luck"]);
+    t.push(["luck", "Luck"], ["close", "Close games"]);
     if (D.teams.some(x => x.form)) t.push(["form", "Hot & cold"]);
     t.push(["schedule", "Schedule"]);
     if (D.scheduleSwap && D.scheduleSwap.weeks) t.push(["swap", "Schedule swap"]);
@@ -900,6 +900,36 @@
       ];
       if (hasLeft) cols.push({ label: "Opponents left", num: 1, cell: t => t.sos.remainingVsAvg == null ? "—" : `${signed(t.sos.remainingVsAvg)} <span class="muted">#${t.sos.remainingVsAvgRank}</span>` });
       return section("Strength of schedule", { short: "How tough each team's opponents have been (#1 = toughest).", full: `<b>Opponents so far</b>: how much the teams you've faced score per week compared with the league average (#1 = toughest). <b>They scored vs you</b>: how those opponents actually played against you; high means you kept running into hot weeks.${hasLeft ? " <b>Opponents left</b>: projected strength of the rest of your schedule." : ""}` }, table(cols, rows));
+    },
+
+    close() {
+      const LIMIT = 10;
+      const rs = L.regularSeasonWeeks;
+      const rec = {};
+      D.teams.forEach(t => { rec[t.id] = { t, w: 0, l: 0, games: 0, bestW: null, worstL: null }; });
+      D.weeks.filter(w => w.final && w.week <= rs).forEach(w => w.games.forEach(g => {
+        if (g.sides.length !== 2) return;
+        g.sides.forEach((me, i) => {
+          const opp = g.sides[1 - i], r = rec[me.team];
+          if (!r) return;
+          r.games++;
+          const m = me.pts - opp.pts;
+          if (Math.abs(m) >= LIMIT || m === 0) return;
+          const game = { m: Math.abs(m), week: w.week, opp: opp.team, game: g.id };
+          if (m > 0) { r.w++; if (!r.bestW || game.m < r.bestW.m) r.bestW = game; }
+          else { r.l++; if (!r.worstL || game.m < r.worstL.m) r.worstL = game; }
+        });
+      }));
+      const rows = Object.values(rec).filter(r => r.games).sort((a, b) => (b.w - b.l) - (a.w - a.l) || b.w - a.w);
+      const total = rows.reduce((n, r) => n + r.w, 0);
+      const gameLink = (g, verb) => g ? `${verb} by <b>${g.m.toFixed(2)}</b> <span class="muted">vs ${esc(tname(g.opp))}, <a class="wk-link" href="${href("matchups", { week: g.week, game: g.game })}">wk ${g.week}</a></span>` : '<span class="muted">—</span>';
+      return section("Close games", { short: `Records in games decided by under ${LIMIT} points.`, full: `Every regular-season game decided by less than ${LIMIT} points (${total} so far this season). These usually come down to one play, so a team well above or below .500 here has been getting, or missing, the breaks.` }, table([
+        { label: "Team", cell: r => teamCell(r.t) },
+        { label: "Close record", num: 1, cell: r => `<b>${r.w}–${r.l}</b>` },
+        { label: "Of all games", num: 1, cell: r => `${r.w + r.l} of ${r.games}` },
+        { label: "Closest win", wide: 1, cell: r => gameLink(r.bestW, "won") },
+        { label: "Closest loss", wide: 1, cell: r => gameLink(r.worstL, "lost") },
+      ], rows));
     },
 
     form() {

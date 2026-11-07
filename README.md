@@ -38,7 +38,7 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   - *Playoff race*: playoff / bye / title odds from 10,000 simulated finishes (team strengths shrunk halfway to
     the league average, `STRENGTH_SHRINK`; the week in progress uses ESPN's live win probabilities).
     Past seasons show final results.
-  - *Luck* (actual vs. all-play expected wins), *Schedule* (opponent strength so far and remaining),
+  - *Luck* (actual vs. all-play expected wins), *Close games* (record in games decided by under 10 points), *Schedule* (opponent strength so far and remaining),
     *Schedule swap* (every team's record on every other team's schedule, best and worst),
     *Hot & cold* (last 3 weeks vs. season average, adjusted for the league-wide swing),
     *Vs. projection* (points scored vs. ESPN's pre-game projection for the lineup started),

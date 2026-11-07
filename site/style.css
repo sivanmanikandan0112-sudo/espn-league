@@ -669,3 +669,12 @@ a.bm-foot:hover { color: var(--accent); }
 .sl-team.on .sl-line { stroke: var(--accent); stroke-width: 3; }
 .sl-team.on .sl-dot { display: inline; }
 .sl-team.on .sl-label { fill: var(--ink); font-weight: 800; }
+
+.wk-link { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; }
+.wk-link:hover { color: var(--accent); }
+
+@media (max-width: 640px) { .tbl td.wide { grid-column: 1 / -1; } }
+@media (max-width: 640px) {
+  .tbl tbody tr td.wide { display: block; }
+  .tbl tbody tr td.wide::before { display: block; margin-bottom: 2px; }
+}
