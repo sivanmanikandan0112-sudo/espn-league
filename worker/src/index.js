@@ -234,6 +234,19 @@ const PLAY = [
   [[95], "interception", 7], [[96], "fumble recovery", 7], [[98], "safety", 7], [[97], "blocked kick", 7], [[99], "sack", 4],
 ];
 
+// Yardage gained since the last check: [raw stat id, label, minimum yards to count as a play]
+const YARDS = [[42, "receiving yards", 30], [24, "rushing yards", 30], [3, "passing yards", 50]];
+
+function yardagePlay(oldY, newY) {
+  if (!oldY) return null; // first snapshot with yardage
+  let best = null;
+  for (const [id, label, min] of YARDS) {
+    const gained = Math.round((newY[id] || 0) - (oldY[id] || 0));
+    if (gained >= min && (!best || gained / min > best.ratio)) best = { label: `+${gained} ${label}`, ratio: gained / min };
+  }
+  return best;
+}
+
 function describePlay(oldA, newA) {
   let best = null;
   for (const [ids, label, pri] of PLAY) {
@@ -257,17 +270,20 @@ async function updateFeed(env) {
     for (const [i, side] of g.sides.entries()) {
       const opp = g.sides[1 - i];
       for (const p of side.lineup) {
-        const a = (lv.stats[`${lv.week}|${p.id}`] || {}).a || {};
-        snap[p.id] = { p: p.pts, a };
+        const line = lv.stats[`${lv.week}|${p.id}`] || {};
+        const a = line.a || {}, r = line.r || {};
+        const y = { 3: r[3] || 0, 24: r[24] || 0, 42: r[42] || 0 };
+        snap[p.id] = { p: p.pts, a, y };
         const old = prev.snap[p.id];
         if (!old) continue;
         const delta = Math.round((p.pts - old.p) * 100) / 100;
         if (Math.abs(delta) < 0.05) continue;
-        const play = describePlay(old.a, a);
-        if (!play && Math.abs(delta) < 4) continue; // ordinary yardage ticks aren't plays
+        const play = describePlay(old.a, a) || yardagePlay(old.y, y);
+        if (!play && delta > -4) continue;                  // small yardage ticks aren't plays
+        // (a 4+ point drop with no play behind it is almost always an official stat correction)
         events.push({
           t: Date.now(), game: g.id, team: side.team, opp: opp.team, pid: p.id, name: p.name, pos: p.pos, nfl: p.team,
-          starter: !["BE", "IR"].includes(p.slot), label: play ? play.label : delta > 0 ? "big gain" : "lost points",
+          starter: !["BE", "IR"].includes(p.slot), label: play ? play.label : "stat correction",
           delta, pts: p.pts, score: [side.pts, opp.pts],
         });
       }

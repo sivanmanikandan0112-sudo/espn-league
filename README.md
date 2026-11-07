@@ -91,7 +91,8 @@ GitHub pauses scheduled workflows after 60 days with no commits; re-enable it fr
 player stat lines straight from ESPN, cached for 60 seconds; open pages fetch it every minute during the week.
 Its cron (every 30 min) also triggers the GitHub rebuild, since GitHub's own scheduler skips runs when busy.
 A second cron runs every minute during NFL game windows and turns each player's scoring changes into a
-**big-play feed** (TDs, field goals, turnovers, defensive plays, big gains) shown on Matchups; it writes to KV only
+**big-play feed** (TDs, field goals, turnovers, defensive plays, and yardage: 30+ rushing/receiving or 50+
+passing yards since the last check) shown on Matchups; it writes to KV only
 when a play happens, to stay inside the free plan's daily write limit. `FEED_FORCE=1` in `.dev.vars` runs it off-hours
 for local testing (`npx wrangler dev --test-scheduled`, then `curl "localhost:8787/__scheduled?cron=*+*+*+*+*"`).
 The ESPN cookies live only in the Worker's secrets.
