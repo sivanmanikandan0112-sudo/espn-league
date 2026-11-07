@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=dev">
 </head>
 <body>
   <a class="skip" href="#main">Skip to league content</a>
@@ -76,6 +76,6 @@
 
   <!-- cache-bust the data index so every visit gets the latest ESPN refresh -->
   <script>document.write('<script src="data/index.js?t=' + Date.now() + '"><\/script>');</script>
-  <script src="app.js"></script>
+  <script src="app.js?v=dev"></script>
 </body>
 </html>

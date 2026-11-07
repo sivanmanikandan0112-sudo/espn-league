@@ -40,6 +40,15 @@ jobs:
           ESPN_SWID: ${{ secrets.ESPN_SWID }}
         run: python3 build.py
 
+      - name: Stamp this deploy's version on the code files
+        # index.html loads style.css/app.js with ?v=<commit>, so browsers fetch new code right away,
+        # and app.js reloads itself if the data says a newer deploy is out.
+        run: |
+          V=${GITHUB_SHA::7}
+          sed -i "s/?v=dev/?v=$V/g" site/index.html
+          sed -i "s/const APP_BUILD = \"dev\";/const APP_BUILD = \"$V\";/" site/app.js
+          grep -q "?v=$V" site/index.html && grep -q "APP_BUILD = \"$V\"" site/app.js
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3

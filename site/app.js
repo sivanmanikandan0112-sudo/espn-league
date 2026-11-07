@@ -1,6 +1,19 @@
 (function () {
   "use strict";
   const IDX = window.LEAGUE_INDEX;
+  const APP_BUILD = "dev"; // replaced with the commit id at deploy time
+  // A browser can keep serving an older copy of this file for a few minutes after a deploy. The data index is
+  // always fetched fresh, so if it says a newer version is live, reload once to pick up the new code.
+  function newerBuildLive(build) {
+    if (!build || APP_BUILD === "dev" || build === "dev" || build === APP_BUILD) return false;
+    try {
+      if (sessionStorage.getItem("lhq:reloaded-for") === build) return false;
+      sessionStorage.setItem("lhq:reloaded-for", build);
+    } catch (_) { /* storage blocked: reload anyway, once per page load */ }
+    location.reload();
+    return true;
+  }
+  if (IDX && newerBuildLive(IDX.build)) return;
   const main = document.getElementById("main");
   if (!IDX) {
     main.innerHTML = '<div class="empty">No league data yet. Run <code>python3 build.py</code>.</div>';
@@ -749,6 +762,7 @@
     try {
       const idxText = await (await fetch("data/index.js?t=" + Date.now(), { cache: "no-store" })).text();
       const fresh = parseAssigned(idxText);
+      if (newerBuildLive(fresh.build)) return;
       if (fresh.updated === IDX.updated) { renderBanner(); return; }
       const seasonText = await (await fetch("data/" + fresh.current + ".js?t=" + Date.now(), { cache: "no-store" })).text();
       window.LEAGUE_DATA[fresh.current] = parseAssigned(seasonText);

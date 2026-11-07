@@ -653,7 +653,8 @@ def main():
     current = next(d for d in built if d["league"]["season"] == args.season)
     current_members = {o for t in current["teams"] for o in t["owners"]}
     index = {"seasons": seasons, "current": args.season, "name": current["league"]["name"],
-             "updated": current["updated"], "history": build_history(built, names, current_members)}
+             "updated": current["updated"], "build": (os.environ.get("GITHUB_SHA") or "dev")[:7],
+             "history": build_history(built, names, current_members)}
     with open(os.path.join(DATA_DIR, "index.js"), "w") as f:
         f.write("window.LEAGUE_INDEX=")
         json.dump(index, f, separators=(",", ":"))
