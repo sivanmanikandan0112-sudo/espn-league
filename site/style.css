@@ -585,3 +585,21 @@ a.bm-foot:hover { color: var(--accent); }
   .pk-vs { justify-self: center; }
   .pk-who .cta { flex: 1; }
 }
+
+.badge.hot { background: color-mix(in srgb, var(--hot) 18%, transparent); color: var(--hot); }
+.badge.cold { background: color-mix(in srgb, var(--qb) 18%, transparent); color: var(--qb); }
+.badge:not(.hot):not(.cold):not(.former):not(.new) { background: var(--surface-2); color: var(--ink-2); }
+
+/* ---- big-play feed ---- */
+.feed { margin-bottom: 18px; }
+.plays { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.play { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 14px; border-top: 1px solid var(--line); font-size: 14px; }
+.play:first-child { border-top: 0; }
+.play.bench { opacity: .65; }
+.play-t { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.play-what { min-width: 0; }
+.play-what .team-mgr { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.play-d { font-family: Archivo, sans-serif; font-weight: 800; font-size: 16px; font-variant-numeric: tabular-nums; }
+.game-plays { padding: 4px 12px 0; border-top: 1px solid var(--line); }
+.game-plays .play { padding: 7px 0; grid-template-columns: 56px minmax(0, 1fr) auto; }
+@media (max-width: 640px) { .play { grid-template-columns: 52px minmax(0, 1fr) auto; padding: 9px 12px; } }

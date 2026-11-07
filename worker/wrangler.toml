@@ -10,7 +10,7 @@ GITHUB_WORKFLOW = "refresh.yml"
 
 # Rebuild the full site every 30 minutes (only if a GITHUB_TOKEN secret is set).
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/30 * * * *", "* * * * *"]  # site rebuild; live big-play feed (only works during NFL games)
 
 # Weekly pick'em: PINs and picks
 [[kv_namespaces]]

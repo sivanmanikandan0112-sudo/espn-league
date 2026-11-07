@@ -436,3 +436,55 @@ def schedule_swap(season):
                     t_ += 1
             grid[A][B] = [w_, l_, t_]
     return {"teams": teams, "weeks": len(weeks), "grid": {str(a): {str(b): v for b, v in row.items()} for a, row in grid.items()}}
+
+
+# ---------------------------------------------------------------- hot & cold, vs. projection
+
+def hot_and_cold(season, recent=3):
+    """Each team's last few completed regular-season weeks against its own season average, adjusted for the
+    league-wide change over those same weeks (byes and injuries move everyone's scoring together)."""
+    sc = team_scores(season)
+    all_weeks = sorted({g[0] for games in sc.values() for g in games})
+    if len(all_weeks) < recent + 1:
+        return {}
+    last_weeks = set(all_weeks[-recent:])
+    every = [g[1] for games in sc.values() for g in games]
+    league_season = sum(every) / len(every)
+    recent_pts = [g[1] for games in sc.values() for g in games if g[0] in last_weeks]
+    league_last = sum(recent_pts) / len(recent_pts)
+    out = {}
+    for t, games in sc.items():
+        games = sorted(games)
+        last = [g for g in games if g[0] in last_weeks]
+        if len(last) < recent:
+            continue
+        season_avg = sum(g[1] for g in games) / len(games)
+        last_avg = sum(g[1] for g in last) / len(last)
+        out[t] = {"seasonAvg": round(season_avg, 1), "lastAvg": round(last_avg, 1),
+                  "change": round(last_avg - season_avg, 1),
+                  "diff": round((last_avg - season_avg) - (league_last - league_season), 1),  # vs. the league's own swing
+                  "leagueChange": round(league_last - league_season, 1),
+                  "lastW": sum(1 for g in last if g[1] > g[3]), "lastL": sum(1 for g in last if g[1] < g[3]),
+                  "weeks": [g[0] for g in last], "lastPts": [round(g[1], 1) for g in last]}
+    return out
+
+
+def vs_projection(season):
+    """Actual points vs. ESPN's pre-game projection for the lineup each team started, regular season."""
+    agg = {}
+    for w in regular_weeks(season):
+        for g in w["games"]:
+            for s in g["sides"]:
+                if not s.get("projected"):
+                    continue
+                a = agg.setdefault(s["team"], {"actual": 0.0, "proj": 0.0, "weeks": 0, "beat": 0, "best": None, "worst": None})
+                d = s["pts"] - s["projected"]
+                a["actual"] += s["pts"]; a["proj"] += s["projected"]; a["weeks"] += 1
+                a["beat"] += 1 if d > 0 else 0
+                if a["best"] is None or d > a["best"][1]:
+                    a["best"] = [w["week"], round(d, 1)]
+                if a["worst"] is None or d < a["worst"][1]:
+                    a["worst"] = [w["week"], round(d, 1)]
+    return {t: {"actual": round(a["actual"], 1), "proj": round(a["proj"], 1), "diff": round(a["actual"] - a["proj"], 1),
+                "perWeek": round((a["actual"] - a["proj"]) / a["weeks"], 1), "weeks": a["weeks"], "beat": a["beat"],
+                "best": a["best"], "worst": a["worst"]} for t, a in agg.items()}

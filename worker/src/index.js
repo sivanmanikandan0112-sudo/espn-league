@@ -100,19 +100,30 @@ async function cached(key, seconds, make) {
   return val;
 }
 
-async function firstKickoff(yr, week) {
-  const all = await cached(`pro-schedule-${yr}`, 6 * 3600, async () => {
+async function kickoffs(yr) {
+  // week -> sorted kickoff times (ms) of every NFL game that week
+  return cached(`pro-kickoffs-${yr}`, 6 * 3600, async () => {
     const r = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${yr}?view=proTeamSchedules_wl`);
     const d = await r.json();
-    const first = {};
+    const byWeek = {};
     for (const t of d.settings.proTeams) {
       for (const [wk, games] of Object.entries(t.proGamesByScoringPeriod || {})) {
-        for (const g of games) if (!first[wk] || g.date < first[wk]) first[wk] = g.date;
+        for (const g of games) (byWeek[wk] = byWeek[wk] || new Set()).add(g.date);
       }
     }
-    return first;
+    return Object.fromEntries(Object.entries(byWeek).map(([wk, set]) => [wk, [...set].sort((a, b) => a - b)]));
   });
-  return all[String(week)] || null;
+}
+
+async function firstKickoff(yr, week) {
+  const k = (await kickoffs(yr))[String(week)];
+  return k && k.length ? k[0] : null;
+}
+
+// true while any NFL game this week could be in progress (kickoff to ~4h15m later)
+async function gamesOn(yr, week, now = Date.now()) {
+  const k = (await kickoffs(yr))[String(week)] || [];
+  return k.some(t => now >= t - 5 * 60e3 && now <= t + 255 * 60e3);
 }
 
 async function pickemWeek(env) {
@@ -208,6 +219,67 @@ async function handlePickem(req, env, url) {
   return json(env, req, { error: "Not found" }, 404);
 }
 
+// ---------------------------------------------------------------- live big-play feed
+// Every minute during NFL games, compare each rostered player's scoring with the last snapshot and turn the
+// changes into plays (TDs, field goals, turnovers, defensive plays, big gains). Stored in KV only when a play
+// happens (or every 10 minutes), to stay well inside the free plan's daily write limit.
+
+const PLAY = [
+  // [stat ids, label, priority]
+  [[4], "passing TD", 9], [[25], "rushing TD", 9], [[43], "receiving TD", 9], [[63], "fumble-return TD", 9],
+  [[93, 101, 102, 103, 104], "return TD", 9], [[19, 26, 44], "2-pt conversion", 6],
+  [[20], "interception thrown", 8], [[72], "fumble lost", 8],
+  [[201], "60+ yd field goal", 7], [[198, 74], "50+ yd field goal", 7], [[77], "40-49 yd field goal", 7], [[80], "field goal", 7],
+  [[85], "missed field goal", 6], [[88], "missed extra point", 5],
+  [[95], "interception", 7], [[96], "fumble recovery", 7], [[98], "safety", 7], [[97], "blocked kick", 7], [[99], "sack", 4],
+];
+
+function describePlay(oldA, newA) {
+  let best = null;
+  for (const [ids, label, pri] of PLAY) {
+    const changed = ids.some(id => (newA[id] || 0) !== (oldA[id] || 0));
+    if (changed && (!best || pri > best.pri)) best = { label, pri };
+  }
+  return best;
+}
+
+async function updateFeed(env) {
+  const yr = season();
+  const st = (await espn(env, yr, "view=mStatus")).status;
+  if (env.FEED_FORCE !== "1" && !(await gamesOn(yr, st.currentMatchupPeriod))) return; // FEED_FORCE: local testing
+  const lv = await liveWeek(env);
+  const key = `feed:${lv.season}:${lv.week}`;
+  const prev = (await env.PICKEM.get(key, "json")) || { snap: {}, events: [], savedAt: 0 };
+  const snap = {};
+  const events = [];
+  for (const g of lv.games) {
+    if (g.sides.length !== 2) continue;
+    for (const [i, side] of g.sides.entries()) {
+      const opp = g.sides[1 - i];
+      for (const p of side.lineup) {
+        const a = (lv.stats[`${lv.week}|${p.id}`] || {}).a || {};
+        snap[p.id] = { p: p.pts, a };
+        const old = prev.snap[p.id];
+        if (!old) continue;
+        const delta = Math.round((p.pts - old.p) * 100) / 100;
+        if (Math.abs(delta) < 0.05) continue;
+        const play = describePlay(old.a, a);
+        if (!play && Math.abs(delta) < 4) continue; // ordinary yardage ticks aren't plays
+        events.push({
+          t: Date.now(), game: g.id, team: side.team, opp: opp.team, pid: p.id, name: p.name, pos: p.pos, nfl: p.team,
+          starter: !["BE", "IR"].includes(p.slot), label: play ? play.label : delta > 0 ? "big gain" : "lost points",
+          delta, pts: p.pts, score: [side.pts, opp.pts],
+        });
+      }
+    }
+  }
+  const stale = Date.now() - (prev.savedAt || 0) > 10 * 60e3;
+  if (!events.length && !stale && Object.keys(prev.snap).length) return; // nothing worth a write this minute
+  events.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
+  const all = events.concat(prev.events || []).slice(0, 200);
+  await env.PICKEM.put(key, JSON.stringify({ snap, events: all, savedAt: Date.now() }), { expirationTtl: 21 * 86400 });
+}
+
 function cors(env, req) {
   const origin = req.headers.get("Origin") || "";
   const allowed = [env.SITE_ORIGIN, "http://localhost:8765"].includes(origin) ? origin : env.SITE_ORIGIN;
@@ -230,7 +302,12 @@ export default {
     let res = await cache.match(key);
     if (!res) {
       try {
-        const body = JSON.stringify(await liveWeek(env));
+        const lv = await liveWeek(env);
+        if (env.PICKEM) {
+          const f = await env.PICKEM.get(`feed:${lv.season}:${lv.week}`, "json");
+          lv.feed = f ? f.events.slice(0, 80) : [];
+        }
+        const body = JSON.stringify(lv);
         res = new Response(body, { headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${CACHE_SECONDS}` } });
         ctx.waitUntil(cache.put(key, res.clone()));
       } catch (e) {
@@ -245,6 +322,10 @@ export default {
 
   // Reliable scheduled rebuild of the whole site (GitHub's own scheduler skips runs when it's busy).
   async scheduled(event, env, ctx) {
+    if (event.cron === "* * * * *") {
+      if (env.PICKEM) ctx.waitUntil(updateFeed(env).catch(e => console.log("feed update failed", String(e))));
+      return;
+    }
     if (!env.GITHUB_TOKEN) return;
     const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${env.GITHUB_WORKFLOW}/dispatches`, {
       method: "POST",

@@ -279,6 +279,12 @@ def build_season(season, is_current, names):
                 pts = s.get("totalPointsLive") if live and s.get("totalPointsLive") is not None else s.get("totalPoints", 0)
                 entries = (s.get("rosterForCurrentScoringPeriod") or {}).get("entries", [])
                 lineup = [player_row(e, season, w) for e in entries]
+                # ESPN's pre-game projection for this lineup: the sum of its starters' weekly projections
+                projected = 0.0
+                for e in entries:
+                    if e["lineupSlotId"] in (20, 21):
+                        continue
+                    projected += stat_line(e["playerPoolEntry"]["player"], season, 1, w, 1).get("appliedTotal") or 0.0
                 for e in entries:
                     st = week_stats(e, season, w)
                     if st:
@@ -287,7 +293,7 @@ def build_season(season, is_current, names):
                 for r in lineup:
                     names_seen[r["id"]] = r
                 g["sides"].append({
-                    "team": s["teamId"], "pts": round(pts or 0, 2),
+                    "team": s["teamId"], "pts": round(pts or 0, 2), "projected": round(projected, 2),
                     "proj": round(s.get("totalProjectedPointsLive") or 0, 2) if live else None,
                     "winProb": s.get("winProbability") if live else None,
                     "lineup": lineup,
@@ -331,6 +337,11 @@ def build_season(season, is_current, names):
         t["sos"] = sos.get(tid)
     data["trades"] = stats.grade_trades(data, data["trades"])
     data["scheduleSwap"] = stats.schedule_swap(data)
+    form = stats.hot_and_cold(data)
+    vsproj = stats.vs_projection(data)
+    for tid, t in teams.items():
+        t["form"] = form.get(tid)
+        t["vsProj"] = vsproj.get(tid)
     add_draft(data, season, actual)
 
     for t in teams.values():

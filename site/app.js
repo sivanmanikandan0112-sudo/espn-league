@@ -418,6 +418,31 @@
 
   const MATCHUP_TABS = [["", "Weekly"], ["bracket", "Playoff bracket"], ["pickem", "Pick'em"]];
 
+  // Big plays from the live worker (TDs, field goals, turnovers, defensive plays, big gains), newest first.
+  function feedFor(week, gameId) {
+    const f = window.LIVE_FEED;
+    if (!f || f.week !== week || state.season !== IDX.current) return [];
+    return f.events.filter(e => gameId == null || String(e.game) === String(gameId)).sort((a, b) => b.t - a.t);
+  }
+  function playLine(e) {
+    const t = teamById[e.team] || { name: "Team " + e.team }, o = teamById[e.opp] || { name: "opponent" };
+    const lead = e.score[0] - e.score[1];
+    const status = Math.abs(lead) < 0.005 ? `ties ${esc(o.name)}` : `${lead > 0 ? "leads" : "trails"} ${esc(o.name)} by ${Math.abs(lead).toFixed(2)}`;
+    const when = new Date(e.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `<div class="play${e.starter ? "" : " bench"}"><span class="play-t">${when}</span>
+      <span class="play-what"><b>${esc(e.name)}</b> <span class="muted">${esc(e.pos)}${e.nfl ? " · " + esc(e.nfl) : ""}</span> · ${esc(e.label)}${e.starter ? "" : ' <span class="muted">(bench)</span>'}
+      <span class="team-mgr">${esc(t.name)} ${status}</span></span>
+      <span class="play-d ${e.delta >= 0 ? "pos" : "neg"}">${e.delta >= 0 ? "+" : ""}${e.delta.toFixed(2)}</span></div>`;
+  }
+  function feedPanel(week) {
+    const ev = feedFor(week);
+    if (!ev.length) return "";
+    const open = state.feedAll ? ev.length : 8;
+    return `<section class="feed"><div class="section-head"><div><h2>Big plays</h2><p class="sub">Touchdowns, kicks, turnovers and big gains as they happen, updated every minute during games.</p></div></div>
+      <div class="plays">${ev.slice(0, open).map(playLine).join("")}</div>
+      ${ev.length > 8 ? `<button type="button" class="linkbtn" data-feed-toggle>${state.feedAll ? "Show fewer" : `Show all ${ev.length}`}</button>` : ""}</section>`;
+  }
+
   function renderMatchups() {
     if (state.sub === "bracket") return renderBracket();
     if (state.sub === "pickem") return renderPickem();
@@ -455,7 +480,9 @@
         </button>
         ${isOpen && a && b ? (() => {
           const showB = focusTeam != null && b.team === focusTeam ? 1 : 0;
-          return `<div class="box-actions"><button type="button" class="share-btn" data-share="game" data-week="${w}" data-game="${g.id}">${SHARE_ICON}Share ${wk.final ? "result" : "score"}</button></div>
+          const gp = feedFor(w, g.id);
+          const plays = gp.length ? `<div class="game-plays"><div class="box-sep">BIG PLAYS IN THIS GAME</div>${gp.slice(0, 6).map(playLine).join("")}</div>` : "";
+          return `${plays}<div class="box-actions"><button type="button" class="share-btn" data-share="game" data-week="${w}" data-game="${g.id}">${SHARE_ICON}Share ${wk.final ? "result" : "score"}</button></div>
           <div class="box-toggle" role="tablist" aria-label="Show lineup">
             <button type="button" role="tab" data-boxside="0" aria-selected="${!showB}" class="${showB ? "" : "active"}">${esc(teamById[a.team].name)}</button>
             <button type="button" role="tab" data-boxside="1" aria-selected="${!!showB}" class="${showB ? "active" : ""}">${esc(teamById[b.team].name)}</button></div>
@@ -468,6 +495,7 @@
       ${subnav("matchups", MATCHUP_TABS, "")}
       <div class="week-strip" role="tablist">${D.weeks.map(x => `<button data-week="${x.week}" class="${x.week === w ? "active" : ""}${x.playoffs ? " po" : ""}" role="tab" aria-selected="${x.week === w}">${x.playoffs ? "PO " : "Wk "}${x.week}</button>`).join("")}</div>
       ${wk.final ? recapCard(w) : ""}
+      ${feedPanel(w)}
       <div class="games">${games}</div>`;
     const active = main.querySelector(".week-strip .active");
     if (active) active.scrollIntoView({ block: "nearest", inline: "center" });
@@ -755,8 +783,11 @@
   function insightTabs() {
     const hasOdds = D.teams.some(t => t.odds);
     const t = [["race", hasOdds || !L.over ? "Playoff race" : "Final results"]];
-    t.push(["luck", "Luck"], ["schedule", "Schedule"]);
+    t.push(["luck", "Luck"]);
+    if (D.teams.some(x => x.form)) t.push(["form", "Hot & cold"]);
+    t.push(["schedule", "Schedule"]);
     if (D.scheduleSwap && D.scheduleSwap.weeks) t.push(["swap", "Schedule swap"]);
+    if (D.teams.some(x => x.vsProj)) t.push(["projection", "Vs. projection"]);
     t.push(["efficiency", "Efficiency"]);
     if (D.draft) t.push(["draft", "Draft"]);
     return t;
@@ -809,6 +840,35 @@
       ];
       if (hasLeft) cols.push({ label: "Opponents left", num: 1, cell: t => t.sos.remainingVsAvg == null ? "—" : `${signed(t.sos.remainingVsAvg)} <span class="muted">#${t.sos.remainingVsAvgRank}</span>` });
       return section("Strength of schedule", { short: "How tough each team's opponents have been (#1 = toughest).", full: `<b>Opponents so far</b>: how much the teams you've faced score per week compared with the league average (#1 = toughest). <b>They scored vs you</b>: how those opponents actually played against you; high means you kept running into hot weeks.${hasLeft ? " <b>Opponents left</b>: projected strength of the rest of your schedule." : ""}` }, table(cols, rows));
+    },
+
+    form() {
+      const rows = D.teams.filter(t => t.form).sort((a, b) => b.form.diff - a.form.diff);
+      const lc = rows.length ? rows[0].form.leagueChange : 0;
+      const tag = d => d >= 8 ? '<span class="badge hot">Hot</span>' : d <= -8 ? '<span class="badge cold">Cold</span>' : '<span class="badge">Steady</span>';
+      const wks = rows.length ? rows[0].form.weeks : [];
+      return section("Hot & cold", { short: `Last ${wks.length} weeks vs. each team's season average.`, full: `Each team's average over the last ${wks.length} completed weeks (weeks ${wks.join(", ")}) compared with its season average. Scoring across the whole league moved ${signed(lc)} a week over that stretch (byes and injuries hit everyone), so <b>Trend</b> takes that out: it's how much better or worse a team is doing than the league's own swing.` }, table([
+        { label: "Team", cell: teamCell },
+        { label: `Last ${wks.length} weeks`, num: 1, cell: t => `<span class="muted">${t.form.lastPts.map(x => x.toFixed(0)).join(" · ")}</span>` },
+        { label: "Recent avg", num: 1, cell: t => t.form.lastAvg.toFixed(1) },
+        { label: "Season avg", num: 1, cell: t => t.form.seasonAvg.toFixed(1) },
+        { label: "Trend", num: 1, cell: t => `${signedPts(t.form.diff, true)} ${tag(t.form.diff)}` },
+        { label: "Recent record", num: 1, cell: t => `${t.form.lastW}–${t.form.lastL}` },
+      ], rows));
+    },
+
+    projection() {
+      const rows = D.teams.filter(t => t.vsProj).sort((a, b) => b.vsProj.diff - a.vsProj.diff);
+      return section("Vs. projection", { short: "Points scored vs. what ESPN projected for the lineup each week.", full: "Each week, the points a team's starters actually scored compared with ESPN's pre-game projection for that same lineup. Positive means its players beat their projections; it's about how the players performed, not lineup choices (that's Efficiency) or opponents (that's Luck). Regular season." }, table([
+        { label: "Team", cell: teamCell },
+        { label: "Projected", num: 1, cell: t => t.vsProj.proj.toFixed(1) },
+        { label: "Actual", num: 1, cell: t => t.vsProj.actual.toFixed(1) },
+        { label: "Difference", num: 1, cell: t => signedPts(t.vsProj.diff, true) },
+        { label: "Per week", num: 1, cell: t => signedPts(t.vsProj.perWeek, true) },
+        { label: "Beat it", num: 1, cell: t => `${t.vsProj.beat} of ${t.vsProj.weeks} wks` },
+        { label: "Best week", num: 1, cell: t => t.vsProj.best ? `${signed(t.vsProj.best[1])} <span class="muted">wk ${t.vsProj.best[0]}</span>` : "—" },
+        { label: "Worst week", num: 1, cell: t => t.vsProj.worst ? `${signed(t.vsProj.worst[1])} <span class="muted">wk ${t.vsProj.worst[0]}</span>` : "—" },
+      ], rows));
     },
 
     swap() {
@@ -1043,6 +1103,7 @@
       renderStandings();
       return;
     }
+    if (e.target.closest("[data-feed-toggle]")) { state.feedAll = !state.feedAll; renderKeepScroll(renderMatchups); return; }
     const wkBtn = e.target.closest("[data-week]");
     if (wkBtn) { location.hash = href("matchups", { week: wkBtn.dataset.week }); return; }
     const side = e.target.closest("[data-boxside]");
@@ -1432,6 +1493,7 @@
       const wk = cur.weeks.find(w => w.week === lv.week);
       if (!wk || wk.final) return;
       wk.games = lv.games;
+      window.LIVE_FEED = { week: lv.week, events: lv.feed || [] };
       if (window.LEAGUE_STATS && window.LEAGUE_STATS[IDX.current]) Object.assign(window.LEAGUE_STATS[IDX.current], lv.stats);
       liveAsOf = lv.updated;
       updateLiveChip();

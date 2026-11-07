@@ -38,6 +38,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
     Past seasons show final results.
   - *Luck* (actual vs. all-play expected wins), *Schedule* (opponent strength so far and remaining),
     *Schedule swap* (every team's record on every other team's schedule, best and worst),
+    *Hot & cold* (last 3 weeks vs. season average, adjusted for the league-wide swing),
+    *Vs. projection* (points scored vs. ESPN's pre-game projection for the lineup started),
     *Efficiency* (points started vs. best lineup).
   - *Draft*: each pick vs. players at the same position drafted around the same spot; team grades, steals, busts.
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
@@ -88,6 +90,10 @@ GitHub pauses scheduled workflows after 60 days with no commits; re-enable it fr
 `worker/` is a small Cloudflare Worker (free plan). `GET /live` returns the current week's matchups, lineups and
 player stat lines straight from ESPN, cached for 60 seconds; open pages fetch it every minute during the week.
 Its cron (every 30 min) also triggers the GitHub rebuild, since GitHub's own scheduler skips runs when busy.
+A second cron runs every minute during NFL game windows and turns each player's scoring changes into a
+**big-play feed** (TDs, field goals, turnovers, defensive plays, big gains) shown on Matchups; it writes to KV only
+when a play happens, to stay inside the free plan's daily write limit. `FEED_FORCE=1` in `.dev.vars` runs it off-hours
+for local testing (`npx wrangler dev --test-scheduled`, then `curl "localhost:8787/__scheduled?cron=*+*+*+*+*"`).
 The ESPN cookies live only in the Worker's secrets.
 
 ```bash
