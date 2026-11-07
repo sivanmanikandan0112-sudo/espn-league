@@ -71,7 +71,7 @@
     return `<div class="pcard${bench ? " bench" : ""}">
       <div class="pcard-top"><span class="slot ${esc(p.slot === "FLEX" ? p.pos : p.slot)}">${esc(p.slot)}</span><span>${esc(p.pos)}${p.team ? " · " + esc(p.team) : ""}</span></div>
       <div class="pname" title="${esc(p.name)}">${esc(p.name)}</div>
-      <div class="pmeta"><span class="num" title="Rest-of-season rank among all ${esc(p.pos)}s, by ESPN projection (${Math.round(p.ros)} pts${p.vor != null ? ", " + Math.round(p.vor) + " over best free agent" : ""})">${p.rosRank ? "ROS " + esc(p.pos) + " " + p.rosRank : "ROS —"}</span>${p.injury ? `<span class="inj" title="${esc(p.injury.replace(/_/g, " "))}">${esc(INJ[p.injury] || p.injury.replace(/_/g, " "))}</span>` : ""}</div>
+      <div class="pmeta"><span class="num" title="Rest-of-season rank among all ${esc(p.pos)}s, by ESPN projection (${Math.round(p.ros)} pts)">${p.rosRank ? "ROS " + esc(p.pos) + " " + p.rosRank : "ROS —"}</span>${p.injury ? `<span class="inj" title="${esc(p.injury.replace(/_/g, " "))}">${esc(INJ[p.injury] || p.injury.replace(/_/g, " "))}</span>` : ""}</div>
     </div>`;
   }
 
@@ -79,7 +79,7 @@
     const open = state.open.has(t.id);
     const segs = POS.map(p => {
       const w = (t.posPower[p] / maxPower) * 100;
-      return `<span class="seg ${p}" style="width:${w.toFixed(2)}%" title="${p}: ${Math.round(t.posPower[p])} pts over replacement · #${t.posRank[p]} in league">${t.posRank[p]}</span>`;
+      return `<span class="seg ${p}" style="width:${w.toFixed(2)}%" title="${p}: ${Math.round(t.posPower[p])} projected pts · #${t.posRank[p]} in league">${t.posRank[p]}</span>`;
     }).join("");
     const starters = t.roster.filter(p => p.slot !== "BE" && p.slot !== "IR");
     const bench = t.roster.filter(p => p.slot === "BE" || p.slot === "IR");
