@@ -26,6 +26,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 - **Season switcher** (top right of the tabs): every season back to the league's first, each with standings,
   matchups, insights and trades as they stood. Past seasons show final finishes, end-of-season rosters with each
   player's final position rank, and position bars built from points actually started.
+- **Season storyline** (Standings, below the teams): every team's standings position after each completed week;
+  tap a team to follow its path.
 - **Standings / Power value** (current season) = expected starting-lineup points over the remaining weeks
   (`power.py`): best QB/RB/WR/TE/FLEX each week from available players, replayed 500 times with random injuries,
   so bench players count as often as they'd really play. Roster cards show ROS position rank and expected starts.
@@ -40,7 +42,7 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
     *Schedule swap* (every team's record on every other team's schedule, best and worst),
     *Hot & cold* (last 3 weeks vs. season average, adjusted for the league-wide swing),
     *Vs. projection* (points scored vs. ESPN's pre-game projection for the lineup started),
-    *Efficiency* (points started vs. best lineup).
+    *Lineups* (efficiency: points started vs. best lineup; bench cost: losses the best lineup would have won).
   - *Draft*: each pick vs. players at the same position drafted around the same spot; team grades, steals, busts.
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
   game, player of the week, most points left on the bench, best bench performance).

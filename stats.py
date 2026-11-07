@@ -84,10 +84,25 @@ def efficiency(season, slot_counts):
                 agg[s["team"]]["actual"] += actual
                 agg[s["team"]]["optimal"] += best
                 per_week[(w["week"], s["team"])] = (actual, best)
+    # bench cost in wins: losses the team would have won with its best possible lineup (opponent as they played)
+    lost = defaultdict(list)
+    for w in regular_weeks(season):
+        for g in w["games"]:
+            if len(g["sides"]) != 2:
+                continue
+            for me, opp in (g["sides"], g["sides"][::-1]):
+                act_best = per_week.get((w["week"], me["team"]))
+                if not act_best or me["pts"] >= opp["pts"]:
+                    continue
+                with_best = me["pts"] + (act_best[1] - act_best[0])
+                if with_best > opp["pts"]:
+                    lost[me["team"]].append({"week": w["week"], "opp": opp["team"], "pts": me["pts"],
+                                             "best": round(with_best, 2), "oppPts": opp["pts"]})
     result = {}
     for team, a in agg.items():
         result[team] = {"efficiency": round(100 * a["actual"] / a["optimal"], 1) if a["optimal"] else None,
-                        "benchLeft": round(a["optimal"] - a["actual"], 1)}
+                        "benchLeft": round(a["optimal"] - a["actual"], 1),
+                        "winsLost": len(lost[team]), "lostWeeks": lost[team]}
     return result, per_week
 
 

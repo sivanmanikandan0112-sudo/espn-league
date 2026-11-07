@@ -82,7 +82,7 @@
   const state = {
     season: IDX.current, tab: "standings", params: new URLSearchParams(),
     sort: store.get("sort", "standing"), q: "", open: new Set(), sideWeek: null,
-    h2hA: null, h2hB: null, openMember: null,
+    h2hA: null, h2hB: null, openMember: null, storyTeam: store.get("story-team", null),
   };
   let D = null, L = null, teamById = {};
 
@@ -361,6 +361,63 @@
     return `<div class="tiles" aria-label="This week's highlights">${items.join("")}</div>`;
   }
 
+  // ---- season storyline: every team's place in the standings after each completed regular-season week
+  function weeklyRanks() {
+    const rs = L.regularSeasonWeeks;
+    const weeks = D.weeks.filter(w => w.final && w.week <= rs).map(w => w.week).sort((a, b) => a - b);
+    const acc = {};
+    D.teams.forEach(t => { acc[t.id] = { w: 0, l: 0, t: 0, pf: 0 }; });
+    const out = {};
+    weeks.forEach(wk => {
+      D.weeks.find(x => x.week === wk).games.forEach(g => {
+        if (g.sides.length !== 2) return;
+        const [a, b] = g.sides;
+        if (!acc[a.team] || !acc[b.team]) return;
+        acc[a.team].pf += a.pts; acc[b.team].pf += b.pts;
+        if (a.pts > b.pts) { acc[a.team].w++; acc[b.team].l++; }
+        else if (b.pts > a.pts) { acc[b.team].w++; acc[a.team].l++; }
+        else { acc[a.team].t++; acc[b.team].t++; }
+      });
+      Object.keys(acc).sort((x, y) => (acc[y].w + acc[y].t / 2) - (acc[x].w + acc[x].t / 2) || acc[y].pf - acc[x].pf)
+        .forEach((tid, i) => (out[tid] = out[tid] || []).push({ week: wk, rank: i + 1, rec: `${acc[tid].w}–${acc[tid].l}${acc[tid].t ? "–" + acc[tid].t : ""}` }));
+    });
+    return { weeks, ranks: out };
+  }
+
+  function storyline() {
+    const { weeks, ranks } = weeklyRanks();
+    if (weeks.length < 2) return "";
+    const n = D.teams.length, W = 760, left = 34, right = 190, top = 14, row = 26, bottom = 30;
+    const H = top + n * row + bottom, plotW = W - left - right;
+    const x = i => left + (weeks.length === 1 ? 0 : i * plotW / (weeks.length - 1));
+    const y = r => top + (r - 1) * row + row / 2;
+    const sel = state.storyTeam != null ? String(state.storyTeam) : "";
+    const grid = Array.from({ length: n }, (_, i) => `<text class="sl-axis" x="${left - 12}" y="${y(i + 1) + 4}" text-anchor="end">${i + 1}</text>`).join("")
+      + weeks.map((wk, i) => `<line class="sl-grid" x1="${x(i)}" x2="${x(i)}" y1="${top}" y2="${top + n * row}"/><text class="sl-axis" x="${x(i)}" y="${H - 10}" text-anchor="middle">${wk}</text>`).join("")
+      + `<text class="sl-axis" x="${left - 12}" y="${H - 10}" text-anchor="end">Wk</text>`;
+    const lines = D.teams.map(t => {
+      const pts = ranks[t.id] || [];
+      const on = sel === String(t.id) ? " on" : "";
+      const path = pts.map((p, i) => `${x(i).toFixed(1)},${y(p.rank).toFixed(1)}`).join(" ");
+      const last = pts[pts.length - 1];
+      const dots = pts.map((p, i) => `<circle class="sl-dot" data-team="${t.id}" cx="${x(i).toFixed(1)}" cy="${y(p.rank).toFixed(1)}" r="5"><title>${esc(t.name)} · week ${p.week}: ${ordinal(p.rank)} (${p.rec})</title></circle>`).join("");
+      const name = t.name.length > 22 ? t.name.slice(0, 21) + "…" : t.name;
+      return `<g class="sl-team${on}" data-team="${t.id}" data-sl="${t.id}">
+        <polyline class="sl-hit" points="${path}"/><polyline class="sl-line" points="${path}"/>${dots}
+        <text class="sl-label" x="${W - right + 12}" y="${y(last.rank) + 4}">${last.rank}. ${esc(name)}</text></g>`;
+    }).join("");
+    return `<section class="insight storyline-sec"><div class="section-head"><div><h2>Season storyline</h2>
+      ${expl("Where every team stood after each week. Tap a team to follow it.", "Each line is a team's place in the standings after every completed regular-season week (wins first, then points for). Hover or tap a line or name to highlight a team's path; hover a dot for its record that week.")}</div></div>
+      <div class="sl-wrap"><svg class="storyline${sel ? " has-on" : ""}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Standings position by week for every team">${grid}${lines}</svg></div></section>`;
+  }
+
+  function slHighlight(id) {
+    const svg = main.querySelector("svg.storyline");
+    if (!svg) return;
+    svg.querySelectorAll(".sl-team").forEach(g => g.classList.toggle("on", id != null && g.dataset.team === String(id)));
+    svg.classList.toggle("has-on", id != null);
+  }
+
   function renderStandings() {
     const S = sorts();
     if (!S[state.sort]) state.sort = "standing";
@@ -384,9 +441,12 @@
         </div>
         <div class="legend"><span>Team / ${esc(S[state.sort][0])}</span>${SEGS().map(p => `<span><i class="dot ${p}"></i>${p}</span>`).join("")}<span class="right">Bar numbers = position rank</span></div>
         <div class="teams" id="teams">${shown.length ? shown.map(([t, i]) => teamCard(t, i, maxPos)).join("") : '<div class="empty">No team, manager or player matches that.</div>'}</div>
+        ${storyline()}
       </section>
       ${sidebar()}
     </div>`;
+    const sl = main.querySelector(".sl-wrap");
+    if (sl) sl.scrollLeft = sl.scrollWidth; // phones: open on the latest weeks, where the team names are
   }
 
   // ---------------------------------------------------------------- matchups
@@ -788,7 +848,7 @@
     t.push(["schedule", "Schedule"]);
     if (D.scheduleSwap && D.scheduleSwap.weeks) t.push(["swap", "Schedule swap"]);
     if (D.teams.some(x => x.vsProj)) t.push(["projection", "Vs. projection"]);
-    t.push(["efficiency", "Efficiency"]);
+    t.push(["efficiency", "Lineups"]);
     if (D.draft) t.push(["draft", "Draft"]);
     return t;
   }
@@ -907,12 +967,26 @@
 
     efficiency() {
       const rows = D.teams.filter(t => t.efficiency != null).sort((a, b) => b.efficiency - a.efficiency);
-      return section("Manager efficiency", { short: "Points started vs. the best possible lineup.", full: "Points started as a share of the best possible lineup each week, in hindsight. Regular season." }, table([
+      const effTable = section("Lineup efficiency", { short: "Points started vs. the best possible lineup.", full: "Points started as a share of the best possible lineup each week, in hindsight. Regular season." }, table([
         { label: "Team", cell: teamCell },
         { label: "Efficiency", num: 1, cell: t => `<span class="pbar"><span class="pbar-fill eff" style="width:${Math.max(0, (t.efficiency - 70) / 30 * 100)}%"></span><span class="pbar-v">${t.efficiency.toFixed(1)}%</span></span>` },
         { label: "Bench pts left", num: 1, cell: t => Number(t.benchLeft).toFixed(1) },
         { label: "Points for", num: 1, cell: t => fmt(t.pf) },
       ], rows));
+      // bench cost in wins: losses the best possible lineup would have won (opponent's score as it was)
+      const costRows = D.teams.filter(t => t.winsLost != null).sort((a, b) => b.winsLost - a.winsLost || b.benchLeft - a.benchLeft);
+      const total = costRows.reduce((n, t) => n + t.winsLost, 0);
+      const costTable = section("What the bench cost", { short: "Losses each team's best lineup would have won.", full: `For every loss, we replay it with the team's best possible lineup that week (in hindsight) against the opponent's actual score. Each loss that flips is a win the bench cost them. ${total} win${total === 1 ? "" : "s"} across the league so far.` }, table([
+        { label: "Team", cell: teamCell },
+        { label: "Record", num: 1, cell: t => record(t) },
+        { label: "Wins lost", num: 1, cell: t => t.winsLost ? `<b class="neg">${t.winsLost}</b>` : "0" },
+        { label: "Best-lineup record", num: 1, cell: t => `${t.wins + t.winsLost}–${t.losses - t.winsLost}${t.ties ? "–" + t.ties : ""}` },
+      ], costRows));
+      const flips = costRows.flatMap(t => (t.lostWeeks || []).map(l => Object.assign({ t }, l))).sort((a, b) => b.week - a.week || (b.best - b.oppPts) - (a.best - a.oppPts));
+      const flipList = flips.length ? section("Games the bench lost", "", `<div class="picks">${flips.map(f => `<div class="pick"><span class="pick-no">Wk ${f.week}</span>${logo(f.t)}
+        <span class="pick-name"><b>${esc(f.t.name)}</b><span class="team-mgr">lost ${fmt(f.pts)}–${fmt(f.oppPts)} to ${esc(tname(f.opp))} · best lineup: ${fmt(f.best)}</span></span>
+        <a class="pick-v when" href="${href("matchups", { week: f.week, game: (D.weeks.find(w => w.week === f.week) || { games: [] }).games.find(g => g.sides.some(s => s.team === f.t.id) && g.sides.some(s => s.team === f.opp))?.id ?? "" })}">Box score →</a></div>`).join("")}</div>`) : "";
+      return costTable + flipList + effTable;
     },
 
     draft() {
@@ -1224,7 +1298,22 @@
     p.classList.toggle("open", open);
     btn.setAttribute("aria-expanded", open);
   });
+  main.addEventListener("mouseover", e => {
+    const g = e.target.closest && e.target.closest("[data-sl]");
+    if (g) slHighlight(g.dataset.sl);
+  });
+  main.addEventListener("mouseout", e => {
+    const g = e.target.closest && e.target.closest("[data-sl]");
+    if (g && !(e.relatedTarget && g.contains(e.relatedTarget))) slHighlight(state.storyTeam);
+  });
   main.addEventListener("click", e => {
+    const sl = e.target.closest("[data-sl]");
+    if (sl) {
+      state.storyTeam = String(state.storyTeam) === sl.dataset.sl ? null : sl.dataset.sl;
+      store.set("story-team", state.storyTeam);
+      slHighlight(state.storyTeam);
+      return;
+    }
     const toggle = e.target.closest("[data-toggle]");
     if (toggle) {
       const id = Number(toggle.dataset.toggle);
