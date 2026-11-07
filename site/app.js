@@ -72,11 +72,11 @@
   };
   let D = null, L = null, teamById = {};
 
-  function href(tab, extra) {
+  function href(tab, extra, sub) {
     const p = new URLSearchParams(extra || {});
     if (state.season !== IDX.current) p.set("season", state.season);
     const qs = p.toString();
-    return "#/" + (tab === "standings" ? "" : tab) + (qs ? "?" + qs : "");
+    return "#/" + (tab === "standings" ? "" : tab) + (sub ? "/" + sub : "") + (qs ? "?" + qs : "");
   }
 
   async function route() {
@@ -86,6 +86,7 @@
     const tab = ["matchups", "insights", "trades", "history"].find(t => path.startsWith("/" + t)) || "standings";
     const season = Number(params.get("season")) || IDX.current;
     state.tab = tab;
+    state.sub = path.split("/")[2] || "";
     state.params = params;
     if (!IDX.seasons.includes(season)) state.season = IDX.current;
     else if (season !== state.season || !D) {
@@ -143,9 +144,7 @@
         Head-to-head counts regular-season and championship-bracket games; consolation games are left out.</p>`;
     }
     if (state.tab === "insights") {
-      return `<p><strong>Playoff odds</strong> replay the rest of the regular season and the playoff bracket 10,000 times. Each team's weekly score is drawn from a blend of its scoring so far and its projected lineup strength, pulled halfway back toward the league average because half a season is a small sample.
-        <strong>All-play</strong> is the record a team would have playing every other team every week; <strong>luck</strong> is actual wins minus the wins that all-play rate predicts.
-        <strong>Efficiency</strong> is points started as a share of the best possible lineup in hindsight.</p>`;
+      return `<p>Each insight explains its method at the top. Unless noted, stats use regular-season games only${L.over ? "" : ", and update with every refresh"}.</p>`;
     }
     if (state.tab === "trades" && !L.isCurrent) {
       return `<p>ESPN doesn't keep the league activity feed for past seasons, so ${L.season} trades are rebuilt from week-to-week roster swaps confirmed against the transaction log.
@@ -290,7 +289,7 @@
     let oddsLead = "";
     if (D.teams.some(t => t.odds)) {
       const fav = D.teams.slice().sort((a, b) => b.odds.titlePct - a.odds.titlePct)[0];
-      oddsLead = `<div class="leader"><span class="kicker">Title favorite</span><span class="crown">01</span><span><div class="mini-team">${logo(fav)}${esc(fav.name)}</div><div class="val">${pct(fav.odds.titlePct)} to win it all · <a href="${href("insights")}">all odds</a></div></span></div>`;
+      oddsLead = `<div class="leader"><span class="kicker">Title favorite</span><span class="crown">01</span><span><div class="mini-team">${logo(fav)}${esc(fav.name)}</div><div class="val">${pct(fav.odds.titlePct)} to win it all · <a href="${href("insights", {}, "race")}">all odds</a></div></span></div>`;
     }
     return `<aside class="side">
       <section>
@@ -414,59 +413,200 @@
   }
   const teamCell = t => `<span class="tcell">${logo(t)}<span><span class="tname">${esc(t.name)}</span><span class="team-mgr">${esc(t.manager)}</span></span></span>`;
   const barCell = (v, cls) => `<span class="pbar"><span class="pbar-fill ${cls || ""}" style="width:${Math.min(100, v || 0)}%"></span><span class="pbar-v">${pct(v)}</span></span>`;
+  const signedPts = (n, goodHigh) => `<b class="${(goodHigh ? n > 0.05 : n < -0.05) ? "pos" : (goodHigh ? n < -0.05 : n > 0.05) ? "neg" : ""}">${signed(n)}</b>`;
+  const tname = id => (teamById[id] || { name: "Team " + id }).name;
+  const section = (title, sub, body) => `<section class="insight"><div class="section-head"><div><h2>${title}</h2>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${body}</section>`;
+
+  function subnav(tab, items, cur) {
+    return `<nav class="subnav" aria-label="${tab === "insights" ? "Insights" : "History"} sections">${items.map(([k, label]) =>
+      `<a href="${href(tab, {}, k)}" class="${k === cur ? "active" : ""}"${k === cur ? ' aria-current="page"' : ""}>${label}</a>`).join("")}</nav>`;
+  }
+
+  function insightTabs() {
+    const hasOdds = D.teams.some(t => t.odds);
+    const t = [["race", hasOdds || !L.over ? "Playoff race" : "Final results"]];
+    if (hasOdds) t.push(["scenarios", "Scenarios"]);
+    t.push(["luck", "Luck"], ["schedule", "Schedule"], ["consistency", "Consistency"], ["efficiency", "Efficiency"]);
+    if (D.draft) t.push(["draft", "Draft"]);
+    if (D.trades.length) t.push(["trades", "Trade grades"]);
+    if (D.waivers && D.waivers.top.length) t.push(["waivers", "Waiver MVPs"]);
+    return t;
+  }
+
+  const INSIGHTS = {
+    race() {
+      if (D.teams.some(t => t.odds)) {
+        const rows = D.teams.slice().sort((a, b) => b.odds.playoffPct - a.odds.playoffPct || b.odds.titlePct - a.odds.titlePct);
+        return section("Playoff race", `Top ${L.playoffTeams} make the playoffs${L.playoffTeams < 2 ** L.playoffRounds ? `; top ${2 ** L.playoffRounds - L.playoffTeams} get a first-round bye` : ""}. Odds from 10,000 simulated finishes. <a href="${href("insights", {}, "scenarios")}">What each team needs →</a>`,
+          table([
+            { label: "Team", cell: teamCell },
+            { label: "Record", num: 1, cell: t => record(t) },
+            { label: "Proj. wins", num: 1, cell: t => t.odds.projWins.toFixed(1) },
+            { label: "Playoffs", num: 1, cell: t => barCell(t.odds.playoffPct) },
+            { label: "Bye", num: 1, cell: t => barCell(t.odds.byePct, "bye") },
+            { label: "Title", num: 1, cell: t => barCell(t.odds.titlePct, "title") },
+          ], rows));
+      }
+      if (!L.over) return `<div class="empty">Playoff odds appear during the regular season. The bracket is set; follow it on the Matchups tab.</div>`;
+      const rows = D.teams.slice().sort((a, b) => (a.finalRank || 99) - (b.finalRank || 99));
+      return section("Final results", `How the ${L.season} season ended.`, table([
+        { label: "Finish", num: 1, cell: t => `<b class="${t.finalRank === 1 ? "champ" : ""}">${finishText(t.finalRank)}</b>` },
+        { label: "Team", cell: teamCell },
+        { label: "Record", num: 1, cell: t => record(t) },
+        { label: "Seed", num: 1, cell: t => (t.seed && t.seed <= L.playoffTeams ? "#" + t.seed : "—") },
+        { label: "Points for", num: 1, cell: t => fmt(t.pf) },
+      ], rows));
+    },
+
+    scenarios() {
+      const teams = D.teams.filter(t => t.odds).sort((a, b) => b.odds.playoffPct - a.odds.playoffPct);
+      const cards = teams.map(t => {
+        const o = t.odds, n = o.gamesLeft;
+        const ks = Object.keys(o.byWins).map(Number).sort((a, b) => b - a);
+        const at = k => (o.byWins[k] || {}).playoffPct;
+        const needFor = th => { for (let k = 0; k <= n; k++) { const v = at(k); if (v != null && v >= th) return k; } return null; };
+        const lines = [];
+        if (o.playoffPct >= 99.5) lines.push("Basically locked in. The question is seeding.");
+        else if (o.playoffPct < 0.5 && (at(n) == null || at(n) < 1)) lines.push(`Needs a miracle: even going ${n}-0 ${at(n) == null ? "rarely happens" : "only gets in " + pct(at(n)) + " of the time"}.`);
+        else {
+          const lock = needFor(99), even = needFor(50);
+          if (even != null) lines.push(even === 0 ? `Already a favorite even if it loses out (${pct(at(0))}).` : `Needs <b>${even} of ${n}</b> wins to be a favorite (${pct(at(even))}).`);
+          else lines.push(`Even ${n}-0 is only ${pct(at(n))}. Needs help from other results.`);
+          if (lock != null && lock !== even) lines.push(`Win <b>${lock}</b> and it's essentially clinched.`);
+          if (even != null && even > 0 && at(even - 1) != null) lines.push(`One fewer win (${even - 1}) drops it to ${pct(at(even - 1))}.`);
+        }
+        const best = o.seeds.indexOf(Math.max(...o.seeds));
+        const seedLine = best < L.playoffTeams ? `Most likely finish: <b>${ordinal(best + 1)} seed</b> (${pct(o.seeds[best])})` : `Most likely finish: <b>${ordinal(best + 1)} place</b> (${pct(o.seeds[best])})`;
+        const chips = ks.map(k => {
+          const v = at(k), c = o.byWins[k].chance;
+          const cls = v == null ? "na" : v >= 90 ? "hi" : v >= 50 ? "mid" : v >= 10 ? "lo" : "out";
+          return `<div class="chip ${cls}" title="${c}% chance of going ${k}-${n - k}"><span class="chip-rec">${k}-${n - k}</span><span class="chip-v">${v == null ? "rare" : pct(v)}</span></div>`;
+        }).join("");
+        return `<article class="scn"><div class="scn-head">${logo(t)}<span style="min-width:0"><div class="team-name">${esc(t.name)}</div><div class="team-mgr">${record(t)} · ${pct(o.playoffPct)} to make it · ${n} games left</div></span></div>
+          <p class="scn-text">${lines.join(" ")}</p><p class="scn-text muted">${seedLine}</p>
+          <div class="chips" aria-label="Playoff odds by remaining record">${chips}</div></article>`;
+      }).join("");
+      return section("Playoff scenarios", "Playoff odds for every possible finishing record. Each box is a remaining record (wins-losses) and how often that record gets the team in, from the same 10,000 simulations.", `<div class="scns">${cards}</div>`);
+    },
+
+    luck() {
+      const rows = D.teams.filter(t => t.allPlayW != null).sort((a, b) => b.luck - a.luck);
+      return section("Luck", "All-play is the record you'd have playing every team every week. Luck = actual wins minus the wins that rate predicts.", table([
+        { label: "Team", cell: teamCell },
+        { label: "Record", num: 1, cell: t => record(t) },
+        { label: "All-play", num: 1, cell: t => `${t.allPlayW}–${t.allPlayL} <span class="muted">(${(t.allPlayPct * 100).toFixed(0)}%)</span>` },
+        { label: "Expected wins", num: 1, cell: t => t.expectedWins.toFixed(1) },
+        { label: "Luck", num: 1, cell: t => signedPts(t.luck, true) },
+      ], rows));
+    },
+
+    schedule() {
+      const rows = D.teams.filter(t => t.sos).sort((a, b) => b.sos.oppVsAvg - a.sos.oppVsAvg);
+      const hasLeft = rows.some(t => t.sos.remainingVsAvg != null);
+      const cols = [
+        { label: "Team", cell: teamCell },
+        { label: "Record", num: 1, cell: t => record(t) },
+        { label: "Opponents so far", num: 1, cell: t => `${signed(t.sos.oppVsAvg)} <span class="muted">#${t.sos.oppVsAvgRank}</span>` },
+        { label: "They scored vs you", num: 1, cell: t => signedPts(t.sos.facedVsAvg, false) },
+      ];
+      if (hasLeft) cols.push({ label: "Opponents left", num: 1, cell: t => t.sos.remainingVsAvg == null ? "—" : `${signed(t.sos.remainingVsAvg)} <span class="muted">#${t.sos.remainingVsAvgRank}</span>` });
+      return section("Strength of schedule", `<b>Opponents so far</b>: how much the teams you've faced score per week compared with the league average (#1 = toughest). <b>They scored vs you</b>: how those opponents actually played against you; high means you kept running into hot weeks.${hasLeft ? " <b>Opponents left</b>: projected strength of the rest of your schedule." : ""}`, table(cols, rows));
+    },
+
+    consistency() {
+      const rows = D.teams.filter(t => t.consistency).sort((a, b) => a.consistency.sd - b.consistency.sd);
+      const steady = rows[0], wild = rows[rows.length - 1];
+      const callouts = steady && wild ? `<div class="callouts"><div class="callout"><div class="kicker">Steadiest</div><div class="mini-team">${logo(steady)}${esc(steady.name)}</div><div class="note">Usually within ${steady.consistency.sd.toFixed(0)} pts of its ${steady.consistency.avg.toFixed(0)} average</div></div>
+        <div class="callout"><div class="kicker">Most boom-or-bust</div><div class="mini-team">${logo(wild)}${esc(wild.name)}</div><div class="note">Anywhere from ${wild.consistency.floor.toFixed(0)} to ${wild.consistency.ceiling.toFixed(0)}</div></div></div>` : "";
+      return section("Consistency", "Weekly scoring in the regular season, steadiest first. Swing is the typical distance from a team's average. Close games were decided by under 10 points.", callouts + table([
+        { label: "Team", cell: teamCell },
+        { label: "Average", num: 1, cell: t => t.consistency.avg.toFixed(1) },
+        { label: "Floor", num: 1, cell: t => t.consistency.floor.toFixed(1) },
+        { label: "Ceiling", num: 1, cell: t => t.consistency.ceiling.toFixed(1) },
+        { label: "Swing", num: 1, cell: t => "±" + t.consistency.sd.toFixed(1) },
+        { label: "Close games", num: 1, cell: t => `${t.consistency.closeW}–${t.consistency.closeL}` },
+      ], rows));
+    },
+
+    efficiency() {
+      const rows = D.teams.filter(t => t.efficiency != null).sort((a, b) => b.efficiency - a.efficiency);
+      return section("Manager efficiency", "Points started as a share of the best possible lineup each week, in hindsight. Regular season.", table([
+        { label: "Team", cell: teamCell },
+        { label: "Efficiency", num: 1, cell: t => `<span class="pbar"><span class="pbar-fill eff" style="width:${Math.max(0, (t.efficiency - 70) / 30 * 100)}%"></span><span class="pbar-v">${t.efficiency.toFixed(1)}%</span></span>` },
+        { label: "Bench pts left", num: 1, cell: t => Number(t.benchLeft).toFixed(1) },
+        { label: "Points for", num: 1, cell: t => fmt(t.pf) },
+      ], rows));
+    },
+
+    draft() {
+      const dr = D.draft;
+      const byPick = Object.fromEntries(dr.picks.map(p => [p.pick, p]));
+      const sofar = L.over ? "" : " so far";
+      const grades = Object.entries(dr.teams).map(([tid, g]) => Object.assign({ t: teamById[tid] }, g)).filter(r => r.t).sort((a, b) => a.rank - b.rank);
+      const pickLine = p => `<div class="pick"><span class="pick-no">R${p.round}.${p.roundPick}</span><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>
+        <span class="pick-name"><b>${esc(p.name)}</b>${p.keeper ? ' <span class="badge former">Keeper</span>' : ""}<span class="team-mgr">${esc(tname(p.team))} · drafted ${esc(p.pos)}${p.draftPosRank} · ${L.over ? "finished" : "now"} ${esc(p.pos)}${p.finishPosRank}</span></span>
+        <span class="pick-v">${signedPts(p.value, true)}</span></div>`;
+      if (!state.draftTeam || !dr.teams[state.draftTeam]) state.draftTeam = String((grades[0] || {}).t ? grades[0].t.id : "");
+      const mine = dr.picks.filter(p => String(p.team) === state.draftTeam);
+      return section("Draft grades", `Each pick is compared with players at the same position drafted around the same spot (a QB18 against QBs 16–20), using points scored${sofar}. Kickers and defenses aren't graded.`, table([
+          { label: "Grade", num: 1, cell: r => `<b class="grade g${r.grade[0]}">${r.grade}</b>` },
+          { label: "Team", cell: r => teamCell(r.t) },
+          { label: "Vs. expected", num: 1, cell: r => signedPts(r.value, true) },
+          { label: "Points from picks", num: 1, cell: r => r.pts.toFixed(1) },
+        ], grades)) +
+        `<div class="two-col">${section("Steals", "Biggest gains over draft slot.", `<div class="picks">${dr.steals.map(p => pickLine(byPick[p])).join("")}</div>`)}
+          ${section("Busts", "Biggest shortfalls, rounds 1–8.", `<div class="picks">${dr.busts.map(p => pickLine(byPick[p])).join("")}</div>`)}</div>` +
+        section("Draft board", "", `<label class="field">Team <select id="draft-team">${grades.map(r => `<option value="${r.t.id}"${String(r.t.id) === state.draftTeam ? " selected" : ""}>${esc(r.t.name)}</option>`).join("")}</select></label>
+          <div class="picks" style="margin-top:10px">${mine.map(p => pickLine(p)).join("")}</div>`);
+    },
+
+    trades() {
+      const cards = D.trades.map(tr => {
+        const early = !tr.weeksSince;
+        const [a, b] = tr.sides;
+        let verdict = "Too early to grade: no completed weeks since the trade.";
+        if (!early && a && b) {
+          const diff = a.started - b.started;
+          verdict = Math.abs(diff) < 5 ? `Even so far: ${a.started.toFixed(1)} to ${b.started.toFixed(1)} started points.`
+            : `<b>${esc(tname(diff > 0 ? a.team : b.team))}</b> ${L.over ? "won" : "is winning"} by ${Math.abs(diff).toFixed(1)} started points over ${tr.weeksSince} week${tr.weeksSince === 1 ? "" : "s"}.`;
+        }
+        const sides = tr.sides.map(s => {
+          const t = teamById[s.team] || { name: "Team " + s.team, manager: "" };
+          const win = !early && a && b && s.started === Math.max(a.started, b.started) && Math.abs(a.started - b.started) >= 5;
+          return `<div class="trade-side${win ? " won" : ""}"><div class="mini-team">${logo(t)}<span><div>${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span></div>
+            <div class="gets">Received · ${early ? "—" : s.started.toFixed(1) + " pts started"}</div>
+            ${s.gets.map(p => `<div class="tplayer"><span class="slot ${esc(p.pos)}" style="font-size:11px;font-weight:700">${esc(p.pos || "—")}</span>${esc(p.name)}<span class="muted" style="font-size:12px;margin-left:auto">${early ? "" : (p.started || 0).toFixed(1) + " · " + (p.starts || 0) + " st"}</span></div>`).join("")}</div>`;
+        });
+        const swap = '<div class="swap"><svg width="22" height="22" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>';
+        const when = tr.date ? new Date(tr.date).toLocaleDateString([], { month: "short", day: "numeric" }) : "";
+        return `<article class="trade"><div class="trade-head"><span>${when}${tr.week ? (when ? " · " : "") + "Week " + tr.week : ""}</span></div>
+          <div class="trade-body">${sides.join(swap)}</div><div class="verdict">${verdict}</div></article>`;
+      }).join("");
+      return section("Trade grades", "Who got more out of each deal: points the received players scored in the new team's starting lineup, for as long as they stayed. Bench points don't count; a trade only pays off if you play them.", `<div class="trades">${cards}</div>`);
+    },
+
+    waivers() {
+      const w = D.waivers;
+      const totals = Object.entries(w.teams).map(([tid, v]) => Object.assign({ t: teamById[tid] }, v)).filter(r => r.t).sort((a, b) => b.started - a.started);
+      const top = w.top.slice(0, 15).map((p, i) => `<div class="pick"><span class="pick-no">${pad(i + 1)}</span><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>
+        <span class="pick-name"><b>${esc(p.name)}</b><span class="team-mgr">${esc(tname(p.team))} · added week ${p.week} · ${p.starts} start${p.starts === 1 ? "" : "s"}</span></span>
+        <span class="pick-v"><b>${p.started.toFixed(1)}</b></span></div>`).join("");
+      return `<div class="two-col">${section("Best pickups", "Free-agent and waiver adds, ranked by points they scored in the starting lineup for the team that added them.", `<div class="picks">${top}</div>`)}
+        ${section("Waiver wire leaders", "Started points from pickups, by team.", table([
+          { label: "Team", cell: r => teamCell(r.t) },
+          { label: "Pickups", num: 1, cell: r => r.pickups },
+          { label: "Pts started", num: 1, cell: r => r.started.toFixed(1) },
+        ], totals))}</div>`;
+    },
+  };
 
   function renderInsights() {
-    let html = "";
-    const hasOdds = D.teams.some(t => t.odds);
-    if (hasOdds) {
-      const rows = D.teams.slice().sort((a, b) => b.odds.playoffPct - a.odds.playoffPct || b.odds.titlePct - a.odds.titlePct);
-      html += `<section class="insight"><div class="section-head"><div><h2>Playoff race</h2>
-        <p class="sub">Top ${L.playoffTeams} make the playoffs${L.playoffTeams < 2 ** L.playoffRounds ? `; top ${2 ** L.playoffRounds - L.playoffTeams} get a first-round bye` : ""}. Odds from 10,000 simulated finishes.</p></div></div>
-        ${table([
-          { label: "Team", cell: teamCell },
-          { label: "Record", num: 1, cell: t => record(t) },
-          { label: "Proj. wins", num: 1, cell: t => t.odds.projWins.toFixed(1) },
-          { label: "Playoffs", num: 1, cell: t => barCell(t.odds.playoffPct) },
-          { label: "Bye", num: 1, cell: t => barCell(t.odds.byePct, "bye") },
-          { label: "Title", num: 1, cell: t => barCell(t.odds.titlePct, "title") },
-        ], rows)}</section>`;
-    } else if (!L.over) {
-      html += `<section class="insight"><div class="empty">Playoff odds appear during the regular season. The bracket is set; follow it on the Matchups tab.</div></section>`;
-    } else {
-      const rows = D.teams.slice().sort((a, b) => (a.finalRank || 99) - (b.finalRank || 99));
-      html += `<section class="insight"><div class="section-head"><div><h2>Final results</h2><p class="sub">How the ${L.season} season ended.</p></div></div>
-        ${table([
-          { label: "Finish", num: 1, cell: t => `<b class="${t.finalRank === 1 ? "champ" : ""}">${finishText(t.finalRank)}</b>` },
-          { label: "Team", cell: teamCell },
-          { label: "Record", num: 1, cell: t => record(t) },
-          { label: "Seed", num: 1, cell: t => (t.seed && t.seed <= L.playoffTeams ? "#" + t.seed : "—") },
-          { label: "Points for", num: 1, cell: t => fmt(t.pf) },
-        ], rows)}</section>`;
-    }
-    const luckRows = D.teams.filter(t => t.allPlayW != null).sort((a, b) => b.luck - a.luck);
-    if (luckRows.length) {
-      html += `<section class="insight"><div class="section-head"><div><h2>Luck</h2>
-        <p class="sub">All-play is the record you'd have playing every team every week. Luck = actual wins minus the wins that rate predicts.</p></div></div>
-        ${table([
-          { label: "Team", cell: teamCell },
-          { label: "Record", num: 1, cell: t => record(t) },
-          { label: "All-play", num: 1, cell: t => `${t.allPlayW}–${t.allPlayL} <span class="muted">(${(t.allPlayPct * 100).toFixed(0)}%)</span>` },
-          { label: "Expected wins", num: 1, cell: t => t.expectedWins.toFixed(1) },
-          { label: "Luck", num: 1, cell: t => `<b class="${t.luck > 0.05 ? "pos" : t.luck < -0.05 ? "neg" : ""}">${signed(t.luck)}</b>` },
-        ], luckRows)}</section>`;
-    }
-    const effRows = D.teams.filter(t => t.efficiency != null).sort((a, b) => b.efficiency - a.efficiency);
-    if (effRows.length) {
-      html += `<section class="insight"><div class="section-head"><div><h2>Manager efficiency</h2>
-        <p class="sub">Points started as a share of the best possible lineup each week, in hindsight. Regular season.</p></div></div>
-        ${table([
-          { label: "Team", cell: teamCell },
-          { label: "Efficiency", num: 1, cell: t => `<span class="pbar"><span class="pbar-fill eff" style="width:${Math.max(0, (t.efficiency - 70) / 30 * 100)}%"></span><span class="pbar-v">${t.efficiency.toFixed(1)}%</span></span>` },
-          { label: "Bench pts left", num: 1, cell: t => Number(t.benchLeft).toFixed(1) },
-          { label: "Points for", num: 1, cell: t => fmt(t.pf) },
-        ], effRows)}</section>`;
-    }
-    main.innerHTML = `<div class="section-head"><div><h1>Insights</h1><p class="sub">${L.over ? L.season + " season in review." : "Who's in, who's lucky, and who's setting bad lineups."}</p></div></div>${html}`;
+    const tabs = insightTabs();
+    const sub = tabs.some(([k]) => k === state.sub) ? state.sub : tabs[0][0];
+    main.innerHTML = `<div class="section-head"><div><h1>Insights</h1><p class="sub">${L.over ? L.season + " season in review." : "Who's in, who's lucky, who drafted well, and who's working the wire."}</p></div></div>
+      ${subnav("insights", tabs, sub)}${INSIGHTS[sub]()}`;
+    const a = main.querySelector(".subnav .active");
+    if (a) a.scrollIntoView({ block: "nearest", inline: "center" });
   }
 
   // ---------------------------------------------------------------- trades
@@ -488,46 +628,89 @@
   }
 
   // ---------------------------------------------------------------- history
+  const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Head to head"], ["rivalries", "Rivalries"], ["records", "Record book"]];
+  const owners = ids => esc((ids || []).map(memberName).join(" & "));
+  const whenLink = r => `<a class="when" href="#/matchups?week=${r.week}${r.season === IDX.current ? "" : "&season=" + r.season}">${r.season} · ${r.playoff ? "Playoffs" : "Wk"} ${r.week}</a>`;
+
+  const HISTORY = {
+    overview(H) {
+      const champs = H.champions.map(c => `<article class="champ-card">
+        ${logoImg(c.logo, c.team, "lg")}
+        <div><div class="kicker">${c.season} champion</div><div class="champ-team">${esc(c.team)}</div>
+        <div class="team-mgr">${owners(c.owners)} · ${esc(c.record)}</div>
+        ${c.runnerUp ? `<div class="team-mgr">Runner-up: ${esc(c.runnerUp.team)} (${owners(c.runnerUp.owners)})</div>` : ""}</div>
+      </article>`).join("");
+      const rows = H.members.map(x => {
+        const open = state.openMember === x.id;
+        const seasons = open ? `<tr class="sub-row"><td colspan="9"><div class="member-seasons">${x.seasons.slice().reverse().map(s => `
+          <a class="ms" href="#/?season=${s.season}">${logoImg(s.logo, s.team)}<span><b>${s.season}</b> · ${esc(s.team)}<br><span class="team-mgr">${s.w}–${s.l}${s.t ? "–" + s.t : ""} · ${s.finish ? finishText(s.finish) : "in progress (#" + s.standing + ")"}</span></span></a>`).join("")}</div></td></tr>` : "";
+        return `<tr class="member-row${open ? " open" : ""}" data-member="${esc(x.id)}" tabindex="0" aria-expanded="${open}">
+          <td><span class="mname">${esc(x.name)}</span>${x.active ? (x.seasons.length === 1 ? ' <span class="badge new">New</span>' : "") : ' <span class="badge former">Former</span>'}</td>
+          <td class="n">${x.seasons.length}</td><td class="n">${x.w}–${x.l}${x.t ? "–" + x.t : ""}</td><td class="n">${(x.pct * 100).toFixed(1)}%</td>
+          <td class="n">${x.ppg.toFixed(1)}</td><td class="n">${x.titles ? `<b class="champ">${x.titles}</b>` : "0"}</td>
+          <td class="n">${x.finals}</td><td class="n">${x.playoffs}</td><td class="n">${x.best ? finishText(x.best) : "—"}</td></tr>${seasons}`;
+      }).join("");
+      return section("Champions", "", `<div class="champs">${champs || '<div class="empty">No completed seasons yet.</div>'}</div>`) +
+        section("All-time standings", "By member, across every season they played. Tap a row for their seasons.",
+          `<div class="table-wrap"><table class="tbl members"><thead><tr><th>Manager</th><th class="n">Seasons</th><th class="n">Record</th><th class="n">Win %</th><th class="n">Pts/game</th><th class="n">Titles</th><th class="n">Finals</th><th class="n">Playoffs</th><th class="n">Best</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+    },
+
+    h2h(H) {
+      const m = H.members, active = m.filter(x => x.active);
+      if (!state.h2hA) state.h2hA = (active[0] || m[0]).id;
+      if (!state.h2hB) state.h2hB = (active[1] || m[1] || m[0]).id;
+      const opt = sel => m.map(x => `<option value="${esc(x.id)}"${x.id === sel ? " selected" : ""}>${esc(x.name)}${x.active ? "" : " (former)"}</option>`).join("");
+      const h = H.h2h[state.h2hA + "|" + state.h2hB];
+      const a = m.find(x => x.id === state.h2hA), b = m.find(x => x.id === state.h2hB);
+      let body;
+      if (state.h2hA === state.h2hB) body = '<p class="muted">Pick two different members.</p>';
+      else if (!h || h[0] + h[1] + h[2] === 0) body = `<p class="muted">${esc(a.name)} and ${esc(b.name)} have never played each other.</p>`;
+      else {
+        const g = h[0] + h[1] + h[2];
+        const lead = h[0] > h[1] ? a.name + " leads" : h[1] > h[0] ? b.name + " leads" : "All square";
+        body = `<div class="h2h-score"><div><div class="big">${h[0]}</div><div class="kicker">${esc(a.name)}</div></div><div class="h2h-dash">–</div><div><div class="big">${h[1]}</div><div class="kicker">${esc(b.name)}</div></div></div>
+          <p class="note">${esc(lead)}${h[2] ? " · " + h[2] + " tie" + (h[2] > 1 ? "s" : "") : ""} · Points ${h[3].toFixed(1)} – ${h[4].toFixed(1)} · ${(h[3] / g).toFixed(1)} vs ${(h[4] / g).toFixed(1)} per game</p>`;
+      }
+      return section("Head to head", `Every regular-season and playoff meeting since ${IDX.seasons[IDX.seasons.length - 1]}.`,
+        `<div class="panel h2h"><div class="h2h-pick"><select id="h2h-a" aria-label="First manager">${opt(state.h2hA)}</select><span class="muted">vs</span><select id="h2h-b" aria-label="Second manager">${opt(state.h2hB)}</select></div>${body}</div>`);
+    },
+
+    rivalries(H) {
+      const R = H.rivalries;
+      const row = p => {
+        const lead = p.aW > p.bW ? memberName(p.a) + " leads" : p.bW > p.aW ? memberName(p.b) + " leads" : "Dead even";
+        return `<div class="rival"><div class="rival-names"><b>${esc(memberName(p.a))}</b> <span class="muted">vs</span> <b>${esc(memberName(p.b))}</b></div>
+          <div class="rival-rec"><span class="big-sm">${p.aW}–${p.bW}${p.t ? "–" + p.t : ""}</span><span class="team-mgr">${esc(lead)} · ${p.games} games · ${p.diffPerGame.toFixed(1)} pts/game apart</span></div></div>`;
+      };
+      const list = (title, sub, rows) => section(title, sub, `<div class="rivals">${rows.map(row).join("") || '<p class="muted">Not enough games yet.</p>'}</div>`);
+      return list("Most played", "The pairs that keep meeting.", R.mostPlayed) +
+        list("Closest", "Three or more meetings, nearly even records and scores.", R.closest) +
+        list("Most one-sided", "Three or more meetings, one member keeps winning.", R.lopsided);
+    },
+
+    records(H) {
+      const R = H.records;
+      const teamLine = (r, val) => `<div class="rec"><span class="rec-v">${val}</span><span class="rec-who">${logoImg(r.logo, r.team)}<span><b>${esc(r.team)}</b><span class="team-mgr">${owners(r.owners)}</span></span></span>${whenLink(r)}</div>`;
+      const gameLine = (r, val) => `<div class="rec"><span class="rec-v">${val}</span><span class="rec-who"><span><b>${esc(r.winner.team)}</b> ${fmt(r.winPts)} – ${fmt(r.losePts)} <b>${esc(r.loser.team)}</b><span class="team-mgr">${owners(r.winner.owners)} over ${owners(r.loser.owners)}</span></span></span>${whenLink(r)}</div>`;
+      const playerLine = r => `<div class="rec"><span class="rec-v">${fmt(r.pts)}</span><span class="rec-who"><span class="slot ${esc(r.pos)}">${esc(r.pos)}</span><span><b>${esc(r.name)}</b><span class="team-mgr">${esc(r.team)} · ${owners(r.owners)}</span></span></span>${whenLink(r)}</div>`;
+      const card = (title, rows) => `<section class="rec-card"><h3>${title}</h3>${rows}</section>`;
+      return `<div class="rec-grid">
+        ${card("Highest scores", R.highScores.map(r => teamLine(r, fmt(r.pts))).join(""))}
+        ${card("Lowest scores", R.lowScores.map(r => teamLine(r, fmt(r.pts))).join(""))}
+        ${card("Biggest blowouts", R.blowouts.map(r => gameLine(r, "+" + r.margin.toFixed(1))).join(""))}
+        ${card("Closest games", R.closest.map(r => gameLine(r, r.margin.toFixed(2))).join(""))}
+        ${card("Highest-scoring games", R.shootouts.map(r => gameLine(r, r.combined.toFixed(1))).join(""))}
+        ${card("Best player games", R.playerGames.map(playerLine).join(""))}
+        ${card("Best games on the bench", R.benchGames.map(playerLine).join(""))}
+      </div>`;
+    },
+  };
+
   function renderHistory() {
     const H = IDX.history;
-    const champs = H.champions.map(c => `<article class="champ-card">
-      ${logoImg(c.logo, c.team, "lg")}
-      <div><div class="kicker">${c.season} champion</div><div class="champ-team">${esc(c.team)}</div>
-      <div class="team-mgr">${esc(c.owners.map(memberName).join(" & "))} · ${esc(c.record)}</div>
-      ${c.runnerUp ? `<div class="team-mgr">Runner-up: ${esc(c.runnerUp.team)} (${esc(c.runnerUp.owners.map(memberName).join(" & "))})</div>` : ""}</div>
-    </article>`).join("");
-    const m = H.members;
-    const rows = m.map(x => {
-      const open = state.openMember === x.id;
-      const seasons = open ? `<tr class="sub-row"><td colspan="9"><div class="member-seasons">${x.seasons.slice().reverse().map(s => `
-        <a class="ms" href="#/?season=${s.season}">${logoImg(s.logo, s.team)}<span><b>${s.season}</b> · ${esc(s.team)}<br><span class="team-mgr">${s.w}–${s.l}${s.t ? "–" + s.t : ""} · ${s.finish ? finishText(s.finish) : "in progress (#" + s.standing + ")"}</span></span></a>`).join("")}</div></td></tr>` : "";
-      return `<tr class="member-row${open ? " open" : ""}" data-member="${esc(x.id)}" tabindex="0" aria-expanded="${open}">
-        <td><span class="mname">${esc(x.name)}</span>${x.active ? (x.seasons.length === 1 ? ' <span class="badge new">New</span>' : "") : ' <span class="badge former">Former</span>'}</td>
-        <td class="n">${x.seasons.length}</td><td class="n">${x.w}–${x.l}${x.t ? "–" + x.t : ""}</td><td class="n">${(x.pct * 100).toFixed(1)}%</td>
-        <td class="n">${x.ppg.toFixed(1)}</td><td class="n">${x.titles ? `<b class="champ">${x.titles}</b>` : "0"}</td>
-        <td class="n">${x.finals}</td><td class="n">${x.playoffs}</td><td class="n">${x.best ? finishText(x.best) : "—"}</td></tr>${seasons}`;
-    }).join("");
-    const active = m.filter(x => x.active);
-    if (!state.h2hA) state.h2hA = (active[0] || m[0]).id;
-    if (!state.h2hB) state.h2hB = (active[1] || m[1] || m[0]).id;
-    const opt = sel => m.map(x => `<option value="${esc(x.id)}"${x.id === sel ? " selected" : ""}>${esc(x.name)}${x.active ? "" : " (former)"}</option>`).join("");
-    const h = H.h2h[state.h2hA + "|" + state.h2hB];
-    const a = m.find(x => x.id === state.h2hA), b = m.find(x => x.id === state.h2hB);
-    let h2hBody;
-    if (state.h2hA === state.h2hB) h2hBody = '<p class="muted">Pick two different members.</p>';
-    else if (!h || h[0] + h[1] + h[2] === 0) h2hBody = `<p class="muted">${esc(a.name)} and ${esc(b.name)} have never played each other.</p>`;
-    else {
-      const lead = h[0] > h[1] ? a.name + " leads" : h[1] > h[0] ? b.name + " leads" : "All square";
-      h2hBody = `<div class="h2h-score"><div><div class="big">${h[0]}</div><div class="kicker">${esc(a.name)}</div></div><div class="h2h-dash">–</div><div><div class="big">${h[1]}</div><div class="kicker">${esc(b.name)}</div></div></div>
-        <p class="note">${esc(lead)}${h[2] ? " · " + h[2] + " tie" + (h[2] > 1 ? "s" : "") : ""} · Points ${h[3].toFixed(1)} – ${h[4].toFixed(1)} · ${(h[3] / (h[0] + h[1] + h[2])).toFixed(1)} vs ${(h[4] / (h[0] + h[1] + h[2])).toFixed(1)} per game</p>`;
-    }
-    main.innerHTML = `<div class="section-head"><div><h1>League history</h1><p class="sub">${IDX.seasons.length} seasons · ${m.length} members all-time</p></div></div>
-      <section class="insight"><div class="section-head"><h2>Champions</h2></div><div class="champs">${champs || '<div class="empty">No completed seasons yet.</div>'}</div></section>
-      <section class="insight"><div class="section-head"><div><h2>All-time standings</h2><p class="sub">By member, across every season they played. Tap a row for their seasons.</p></div></div>
-        <div class="table-wrap"><table class="tbl members"><thead><tr><th>Manager</th><th class="n">Seasons</th><th class="n">Record</th><th class="n">Win %</th><th class="n">Pts/game</th><th class="n">Titles</th><th class="n">Finals</th><th class="n">Playoffs</th><th class="n">Best</th></tr></thead>
-        <tbody>${rows}</tbody></table></div></section>
-      <section class="insight"><div class="section-head"><div><h2>Head to head</h2><p class="sub">Every regular-season and playoff meeting since ${IDX.seasons[IDX.seasons.length - 1]}.</p></div></div>
-        <div class="panel h2h"><div class="h2h-pick"><select id="h2h-a" aria-label="First manager">${opt(state.h2hA)}</select><span class="muted">vs</span><select id="h2h-b" aria-label="Second manager">${opt(state.h2hB)}</select></div>${h2hBody}</div></section>`;
+    const sub = HISTORY_TABS.some(([k]) => k === state.sub) ? state.sub : "overview";
+    main.innerHTML = `<div class="section-head"><div><h1>League history</h1><p class="sub">${IDX.seasons.length} seasons · ${H.members.length} members all-time</p></div></div>
+      ${subnav("history", HISTORY_TABS, sub)}${HISTORY[sub](H)}`;
   }
 
   // ---------------------------------------------------------------- events
@@ -587,6 +770,7 @@
   main.addEventListener("change", e => {
     if (e.target.id === "sort") { state.sort = e.target.value; store.set("sort", state.sort); renderStandings(); }
     if (e.target.id === "side-week") { state.sideWeek = Number(e.target.value); document.querySelector(".side").outerHTML = sidebar(); }
+    if (e.target.id === "draft-team") { state.draftTeam = e.target.value; renderKeepScroll(renderInsights); }
     if (e.target.id === "h2h-a") { state.h2hA = e.target.value; renderKeepScroll(renderHistory); }
     if (e.target.id === "h2h-b") { state.h2hB = e.target.value; renderKeepScroll(renderHistory); }
   });

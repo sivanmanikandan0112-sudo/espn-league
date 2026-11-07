@@ -147,6 +147,11 @@ def playoff_odds(season, schedule, team_strength):
     byes = max(0, 2 ** rounds - playoff_teams)
     rng = random.Random(PLAYOFF_SEED)
     tally = {tid: {"playoffs": 0, "bye": 0, "title": 0, "wins": 0.0, "seed": 0.0} for tid in teams}
+    games_left = defaultdict(int)
+    for _, h, a in schedule:
+        games_left[h] += 1; games_left[a] += 1
+    by_wins = {tid: defaultdict(lambda: [0, 0]) for tid in teams}  # remaining wins -> [sims, made playoffs]
+    seeds = {tid: [0] * len(teams) for tid in teams}
 
     def draw(tid, week):
         st = team_strength[tid]
@@ -160,17 +165,21 @@ def playoff_odds(season, schedule, team_strength):
     for _ in range(PLAYOFF_SIMS):
         wins = {tid: t["wins"] + t["ties"] / 2 for tid, t in teams.items()}
         pf = {tid: t["pf"] for tid, t in teams.items()}
+        won = defaultdict(int)
         for week, home, away in schedule:
             sh, sa = draw(home, week), draw(away, week)
             pf[home] += sh; pf[away] += sa
-            if sh > sa:
-                wins[home] += 1
-            else:
-                wins[away] += 1
+            winner = home if sh > sa else away
+            wins[winner] += 1
+            won[winner] += 1
         order = sorted(teams, key=lambda tid: (-wins[tid], -pf[tid]))
         for i, tid in enumerate(order):
             tally[tid]["wins"] += wins[tid]
             tally[tid]["seed"] += i + 1
+            seeds[tid][i] += 1
+            b = by_wins[tid][won[tid]]
+            b[0] += 1
+            b[1] += 1 if i < playoff_teams else 0
         field = order[:playoff_teams]
         for i, tid in enumerate(field):
             tally[tid]["playoffs"] += 1
@@ -188,10 +197,18 @@ def playoff_odds(season, schedule, team_strength):
         tally[alive[0]]["title"] += 1
 
     n = float(PLAYOFF_SIMS)
-    return {tid: {"playoffPct": round(100 * v["playoffs"] / n, 1), "byePct": round(100 * v["bye"] / n, 1),
-                  "titlePct": round(100 * v["title"] / n, 1), "projWins": round(v["wins"] / n, 1),
-                  "avgSeed": round(v["seed"] / n, 1)}
-            for tid, v in tally.items()}
+    out = {}
+    for tid, v in tally.items():
+        cond = {}
+        for k in range(games_left[tid] + 1):
+            sims, made = by_wins[tid].get(k, [0, 0])
+            # how often this team wins exactly k more games, and its playoff odds when it does
+            cond[k] = {"chance": round(100 * sims / n, 1), "playoffPct": round(100 * made / sims, 1) if sims >= 30 else None}
+        out[tid] = {"playoffPct": round(100 * v["playoffs"] / n, 1), "byePct": round(100 * v["bye"] / n, 1),
+                    "titlePct": round(100 * v["title"] / n, 1), "projWins": round(v["wins"] / n, 1),
+                    "avgSeed": round(v["seed"] / n, 1), "gamesLeft": games_left[tid], "byWins": cond,
+                    "seeds": [round(100 * c / n, 1) for c in seeds[tid]]}
+    return out
 
 
 def team_strengths(season, power_by_team, power_weeks, live_week_proj):
@@ -224,3 +241,199 @@ def team_strengths(season, power_by_team, power_weeks, live_week_proj):
             week, proj = live_week_proj[tid]
             out[tid]["live"][week] = (proj, 12.0)
     return out
+
+
+# ---------------------------------------------------------------- roster movement helpers
+
+def ownership(season, final_only=True):
+    """week -> {player id: (team, started, pts)} from the weekly box scores."""
+    own = {}
+    for w in season["weeks"]:
+        if final_only and not w["final"]:
+            continue
+        m = {}
+        for g in w["games"]:
+            for s in g["sides"]:
+                for p in s["lineup"]:
+                    m[p["id"]] = (s["team"], is_starter(p), p["pts"])
+        own[w["week"]] = m
+    return own
+
+
+def _stint(own, weeks, pid, team, start):
+    """Started points / starts / total points for a player from `start` while he stays on `team`."""
+    started = total = 0.0
+    starts = 0
+    for w in weeks:
+        if w < start:
+            continue
+        x = own[w].get(pid)
+        if not x or x[0] != team:
+            break
+        total += x[2]
+        if x[1]:
+            started += x[2]; starts += 1
+    return round(started, 1), starts, round(total, 1)
+
+
+# ---------------------------------------------------------------- waiver MVPs
+
+def waiver_pickups(season):
+    """A pickup = a player on a team this week who wasn't on anyone's roster the week before.
+    Credit = points he scored in that team's starting lineup until he left it."""
+    rs = season["league"]["regularSeasonWeeks"]
+    own = ownership(season)
+    weeks = sorted(w for w in own if w <= rs)
+    picks = []
+    for prev, w in zip(weeks, weeks[1:]):
+        for pid, (team, _, _) in own[w].items():
+            if pid in own[prev]:
+                continue
+            started, starts, total = _stint(own, weeks, pid, team, w)
+            picks.append({"id": pid, "team": team, "week": w, "started": started, "starts": starts, "total": total})
+    by_team = defaultdict(lambda: {"started": 0.0, "pickups": 0})
+    for p in picks:
+        by_team[p["team"]]["started"] += p["started"]
+        by_team[p["team"]]["pickups"] += 1
+    return picks, {t: {"started": round(v["started"], 1), "pickups": v["pickups"]} for t, v in by_team.items()}
+
+
+# ---------------------------------------------------------------- trade grades
+
+def grade_trades(season, trades):
+    """Points each side got from the players it received, while they stayed on that team.
+    'Started' counts only weeks the player was in the starting lineup."""
+    own = ownership(season)
+    weeks = sorted(own)
+
+    def arrival(pid, to, frm, not_before):
+        """First week the player shows up on `to` (preferably straight from `frm`) at or after not_before."""
+        moves = [(prev, w) for prev, w in zip(weeks, weeks[1:])
+                 if w >= not_before and own[w].get(pid, (None,))[0] == to and own[prev].get(pid, (None,))[0] != to]
+        direct = [w for prev, w in moves if own[prev].get(pid, (None,))[0] == frm]
+        return (direct or [w for _, w in moves] or [None])[0]
+
+    for tr in trades:
+        known = tr.get("week")
+        starts = []
+        for side in tr["sides"]:
+            for p in side["gets"]:
+                p["_start"] = arrival(p.get("id"), side["team"], p.get("from"), (known - 1) if known else 0)
+                if p["_start"]:
+                    starts.append(p["_start"])
+        tr["week"] = known or (min(starts) if starts else None)
+        for side in tr["sides"]:
+            side["started"] = side["total"] = 0.0
+            for p in side["gets"]:
+                start = p.pop("_start")
+                if start is None:
+                    p["started"], p["starts"], p["total"] = 0.0, 0, 0.0
+                    continue
+                p["started"], p["starts"], p["total"] = _stint(own, weeks, p["id"], side["team"], start)
+                side["started"] = round(side["started"] + p["started"], 1)
+                side["total"] = round(side["total"] + p["total"], 1)
+        tr["weeksSince"] = len([w for w in weeks if tr["week"] and w >= tr["week"]])
+    return trades
+
+
+# ---------------------------------------------------------------- schedule & consistency
+
+def team_scores(season):
+    out = defaultdict(list)  # team -> [(week, pts, opp_team, opp_pts)]
+    for w in regular_weeks(season):
+        for g in w["games"]:
+            if len(g["sides"]) != 2:
+                continue
+            a, b = g["sides"]
+            out[a["team"]].append((w["week"], a["pts"], b["team"], b["pts"]))
+            out[b["team"]].append((w["week"], b["pts"], a["team"], a["pts"]))
+    return out
+
+
+def schedule_strength(season, remaining=None, strength=None):
+    """Past SOS = average scoring (ppg) of the opponents a team has faced; 'faced' = how much those
+    opponents actually scored against them. Remaining SOS = average projected strength of opponents left."""
+    sc = team_scores(season)
+    ppg = {t: sum(x[1] for x in v) / len(v) for t, v in sc.items() if v}
+    league = sum(ppg.values()) / len(ppg) if ppg else 0
+    out = {}
+    for t, games in sc.items():
+        if not games:
+            continue
+        opp_ppg = sum(ppg.get(o, league) for _, _, o, _ in games) / len(games)
+        faced = sum(op for _, _, _, op in games) / len(games)
+        out[t] = {"oppPpg": round(opp_ppg, 1), "oppVsAvg": round(opp_ppg - league, 1),
+                  "faced": round(faced, 1), "facedVsAvg": round(faced - league, 1)}
+    if remaining and strength:
+        avg = sum(s["mean"] for s in strength.values()) / len(strength)
+        left = defaultdict(list)
+        for _, h, a in remaining:
+            left[h].append(strength[a]["mean"]); left[a].append(strength[h]["mean"])
+        for t, opps in left.items():
+            out.setdefault(t, {})
+            out[t]["remaining"] = len(opps)
+            out[t]["remainingVsAvg"] = round(sum(opps) / len(opps) - avg, 1)
+    for key in ("oppVsAvg", "remainingVsAvg"):
+        ranked = sorted((t for t in out if key in out[t]), key=lambda t: -out[t][key])
+        for i, t in enumerate(ranked):
+            out[t][key + "Rank"] = i + 1  # 1 = toughest
+    return out
+
+
+def consistency(season, close=10.0):
+    sc = team_scores(season)
+    out = {}
+    for t, games in sc.items():
+        pts = [g[1] for g in games]
+        if not pts:
+            continue
+        cw = sum(1 for g in games if abs(g[1] - g[3]) < close and g[1] > g[3])
+        cl = sum(1 for g in games if abs(g[1] - g[3]) < close and g[1] < g[3])
+        out[t] = {"avg": round(statistics.mean(pts), 1), "median": round(statistics.median(pts), 1),
+                  "floor": round(min(pts), 1), "ceiling": round(max(pts), 1),
+                  "sd": round(statistics.pstdev(pts), 1) if len(pts) > 1 else 0.0,
+                  "closeW": cw, "closeL": cl}
+    return out
+
+
+# ---------------------------------------------------------------- draft review
+
+def draft_review(picks, players, rank_pool, pos_window=2):
+    """picks: ESPN draft picks. players: id -> {name, pos, team, pts}. rank_pool: pos -> sorted desc season pts
+    of the wider player pool (to place each pick's finish). Value = points scored minus the average of
+    players at the same position drafted within ±pos_window positional slots (K and D/ST excluded)."""
+    rows = []
+    for p in sorted(picks, key=lambda p: p["overallPickNumber"]):
+        info = players.get(p["playerId"], {"name": "Player #%s" % p["playerId"], "pos": "?", "team": "", "pts": 0.0})
+        rows.append({"pick": p["overallPickNumber"], "round": p["roundId"], "roundPick": p["roundPickNumber"],
+                     "team": p["teamId"], "id": p["playerId"], "name": info["name"], "pos": info["pos"],
+                     "nfl": info["team"], "pts": round(info["pts"], 1), "keeper": bool(p.get("keeper"))})
+    skill = [r for r in rows if r["pos"] not in ("K", "D/ST")]
+    seen = defaultdict(int)
+    for r in rows:
+        seen[r["pos"]] += 1
+        r["draftPosRank"] = seen[r["pos"]]
+        pool = rank_pool.get(r["pos"], [])
+        r["finishPosRank"] = 1 + sum(1 for x in pool if x > r["pts"] + 1e-9)
+    for r in skill:
+        # compare against players at the same position taken around the same positional slot
+        # (QB18 vs QBs drafted 16th-20th), so high-scoring positions don't look like steals by default
+        near = [x["pts"] for x in skill if x["pos"] == r["pos"] and abs(x["draftPosRank"] - r["draftPosRank"]) <= pos_window]
+        r["expected"] = round(sum(near) / len(near), 1)
+        r["value"] = round(r["pts"] - r["expected"], 1)
+    teams = defaultdict(lambda: {"value": 0.0, "pts": 0.0, "picks": 0})
+    for r in skill:
+        teams[r["team"]]["value"] += r["value"]
+        teams[r["team"]]["pts"] += r["pts"]
+        teams[r["team"]]["picks"] += 1
+    order = sorted(teams, key=lambda t: -teams[t]["value"])
+    letters = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "F"]
+    for i, t in enumerate(order):
+        teams[t]["rank"] = i + 1
+        teams[t]["grade"] = letters[min(len(letters) - 1, int(i * len(letters) / len(order)))]
+        teams[t]["value"] = round(teams[t]["value"], 1)
+        teams[t]["pts"] = round(teams[t]["pts"], 1)
+    early = [r for r in skill if r["round"] <= 8]
+    return {"picks": rows, "teams": dict(teams),
+            "steals": [r["pick"] for r in sorted(skill, key=lambda r: -r["value"])[:6]],
+            "busts": [r["pick"] for r in sorted(early, key=lambda r: r["value"])[:6]]}

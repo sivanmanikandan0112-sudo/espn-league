@@ -99,7 +99,8 @@ def player_info(season, ids):
     for e in fetch(season, params=[("view", "kona_player_info")], headers={"X-Fantasy-Filter": filt}).get("players", []):
         p = e["player"]
         out[p["id"]] = {"name": p["fullName"], "pos": POS.get(p.get("defaultPositionId"), "?"),
-                        "team": PRO.get(p.get("proTeamId"), "")}
+                        "team": PRO.get(p.get("proTeamId"), ""),
+                        "pts": stat_line(p, season, 0).get("appliedTotal") or 0.0}
     return out
 
 
@@ -190,9 +191,12 @@ def build_season(season, is_current, names):
     # -- player pool: position ranks (rest of season now; final finish for past seasons)
     pool = player_pool(season)
     by_pos, best_fa = defaultdict(list), {}
+    actual = {}  # season points so far (or final) for everyone in the pool: draft review & rankings
     for e in pool:
         p = e["player"]
         pos = POS.get(p.get("defaultPositionId"), "?")
+        actual[p["id"]] = {"name": p["fullName"], "pos": pos, "team": PRO.get(p.get("proTeamId"), ""),
+                           "pts": stat_line(p, season, 0).get("appliedTotal") or 0.0}
         line = stat_line(p, season, 1) if not over else stat_line(p, season, 0)
         total = line.get("appliedTotal") or 0.0
         if total > 0:
@@ -296,8 +300,17 @@ def build_season(season, is_current, names):
         t.update(luck.get(tid, {}))
         t.update(eff.get(tid, {}))
     data["recaps"] = stats.weekly_recaps(data, per_week, {tid: t["name"] for tid, t in teams.items()})
+    remaining = strength = None
     if is_current and not over and current_week <= regular:
-        add_playoff_odds(data, main, teams, regular, current_week)
+        remaining, strength = add_playoff_odds(data, main, teams, regular, current_week)
+    sos = stats.schedule_strength(data, remaining, strength)
+    cons = stats.consistency(data)
+    for tid, t in teams.items():
+        t["sos"] = sos.get(tid)
+        t["consistency"] = cons.get(tid)
+    data["trades"] = stats.grade_trades(data, data["trades"])
+    add_waivers(data, teams, names_seen, season)
+    add_draft(data, season, actual)
 
     for t in teams.values():
         for r in t["roster"]:
@@ -386,6 +399,36 @@ def add_playoff_odds(data, main, teams, regular, current_week):
     odds = stats.playoff_odds(data, schedule, strength)
     for tid, o in odds.items():
         teams[tid]["odds"] = o
+    return schedule, strength
+
+
+def add_waivers(data, teams, names_seen, season):
+    picks, by_team = stats.waiver_pickups(data)
+    info = dict(names_seen)
+    info.update(player_info(season, {p["id"] for p in picks if p["id"] not in info}))
+    for p in picks:
+        x = info.get(p["id"], {})
+        p.update({"name": x.get("name", "Player #%s" % p["id"]), "pos": x.get("pos", "?"), "nfl": x.get("team", "")})
+    picks.sort(key=lambda p: -p["started"])
+    data["waivers"] = {"top": [p for p in picks if p["started"] > 0][:30], "teams": by_team}
+
+
+def add_draft(data, season, actual):
+    try:
+        picks = fetch(season, params=[("view", "mDraftDetail")]).get("draftDetail", {}).get("picks", [])
+    except Exception as e:
+        print("  draft unavailable: %s" % e)
+        return
+    if not picks:
+        return
+    players = dict(actual)
+    players.update(player_info(season, {p["playerId"] for p in picks if p["playerId"] not in players}))
+    rank_pool = defaultdict(list)
+    for x in players.values():
+        rank_pool[x["pos"]].append(x["pts"])
+    for v in rank_pool.values():
+        v.sort(reverse=True)
+    data["draft"] = stats.draft_review(picks, players, rank_pool)
 
 
 # ---------------------------------------------------------------- trades
@@ -466,7 +509,7 @@ def make_trade(tid, date, moves, names):
     sides = defaultdict(list)
     for pid, frm, to in moves:
         info = names.get(pid, {"name": "Player #%s" % pid, "pos": "", "team": ""})
-        sides[to].append({"name": info["name"], "pos": info["pos"], "team": info["team"], "from": frm})
+        sides[to].append({"id": pid, "name": info["name"], "pos": info["pos"], "team": info["team"], "from": frm})
     return {"id": tid, "date": date, "sides": [{"team": k, "gets": v} for k, v in sorted(sides.items())]}
 
 
@@ -534,7 +577,63 @@ def build_history(seasons_data, names, current_members):
                         "playoffW": r["pw"], "playoffL": r["pl"]})
     members.sort(key=lambda m: (-m["titles"], -m["pct"]))
     return {"members": members, "champions": sorted(champions, key=lambda c: -c["season"]),
-            "h2h": {"%s|%s" % k: [v[0], v[1], v[2], round(v[3], 1), round(v[4], 1)] for k, v in h2h.items()}}
+            "h2h": {"%s|%s" % k: [v[0], v[1], v[2], round(v[3], 1), round(v[4], 1)] for k, v in h2h.items()},
+            "records": record_book(seasons_data), "rivalries": rivalries(h2h)}
+
+
+def record_book(seasons_data, top=5):
+    """League records across every season (all matchups, playoffs included)."""
+    scores, games, players, bench = [], [], [], []
+    for data in seasons_data:
+        lg = data["league"]
+        tm = {t["id"]: t for t in data["teams"]}
+        ref = lambda tid: {"team": tm[tid]["name"], "owners": tm[tid]["owners"], "logo": tm[tid]["logo"]}
+        for w in data["weeks"]:
+            if not w["final"]:
+                continue
+            for g in w["games"]:
+                if len(g["sides"]) != 2:
+                    continue
+                a, b = g["sides"]
+                if a["pts"] <= 0 or b["pts"] <= 0:
+                    continue
+                where = {"season": lg["season"], "week": w["week"], "playoff": g["tier"] == "WINNERS_BRACKET"}
+                for s in (a, b):
+                    scores.append(dict(where, pts=s["pts"], **ref(s["team"])))
+                    for p in s["lineup"]:
+                        row = dict(where, name=p["name"], pos=p["pos"], pts=p["pts"], **ref(s["team"]))
+                        (players if stats.is_starter(p) else bench if p["slot"] != "IR" else []).append(row)
+                win, lose = sorted((a, b), key=lambda s: -s["pts"])
+                games.append(dict(where, winner=ref(win["team"]), loser=ref(lose["team"]), winPts=win["pts"],
+                                  losePts=lose["pts"], margin=round(win["pts"] - lose["pts"], 2),
+                                  combined=round(win["pts"] + lose["pts"], 2)))
+    return {
+        "highScores": sorted(scores, key=lambda x: -x["pts"])[:top],
+        "lowScores": sorted(scores, key=lambda x: x["pts"])[:top],
+        "blowouts": sorted(games, key=lambda x: -x["margin"])[:top],
+        "closest": sorted(games, key=lambda x: x["margin"])[:top],
+        "shootouts": sorted(games, key=lambda x: -x["combined"])[:top],
+        "playerGames": sorted(players, key=lambda x: -x["pts"])[:top],
+        "benchGames": sorted(bench, key=lambda x: -x["pts"])[:top],
+    }
+
+
+def rivalries(h2h, top=6):
+    """Pairs of members, from the all-time head-to-head table."""
+    pairs = []
+    for (a, b), v in h2h.items():
+        if a >= b:
+            continue
+        games = v[0] + v[1] + v[2]
+        if games < 2:
+            continue
+        pairs.append({"a": a, "b": b, "aW": v[0], "bW": v[1], "t": v[2], "games": games,
+                      "aPts": round(v[3], 1), "bPts": round(v[4], 1), "diffPerGame": round(abs(v[3] - v[4]) / games, 1)})
+    most = sorted(pairs, key=lambda p: (-p["games"], p["diffPerGame"]))[:top]
+    closest = sorted([p for p in pairs if p["games"] >= 3], key=lambda p: (abs(p["aW"] - p["bW"]), p["diffPerGame"]))[:top]
+    lopsided = sorted([p for p in pairs if p["games"] >= 3],
+                      key=lambda p: (-abs(p["aW"] - p["bW"]) / p["games"], -p["diffPerGame"]))[:top]
+    return {"mostPlayed": most, "closest": closest, "lopsided": lopsided}
 
 
 # ---------------------------------------------------------------- main

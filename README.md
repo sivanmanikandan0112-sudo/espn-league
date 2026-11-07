@@ -29,15 +29,22 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 - **Standings / Power value** (current season) = expected starting-lineup points over the remaining weeks
   (`power.py`): best QB/RB/WR/TE/FLEX each week from available players, replayed 500 times with random injuries,
   so bench players count as often as they'd really play. Roster cards show ROS position rank and expected starts.
-- **Insights**: playoff odds (10,000 simulated finishes of the regular season + reseeded bracket, `stats.py`;
-  team strengths are shrunk halfway to the league average, `STRENGTH_SHRINK`),
-  luck (actual wins vs. all-play expected wins), and manager efficiency (points started vs. best possible lineup).
+- **Insights** (its own tabs, each linkable as `#/insights/<name>`, code in `stats.py`):
+  - *Playoff race*: playoff / bye / title odds from 10,000 simulated finishes (team strengths shrunk halfway to
+    the league average, `STRENGTH_SHRINK`). Past seasons show final results.
+  - *Scenarios*: playoff odds for every possible remaining record, plain-language targets, most likely seed.
+  - *Luck* (actual vs. all-play expected wins), *Schedule* (opponent strength so far and remaining),
+    *Consistency* (floor, ceiling, swing, close-game record), *Efficiency* (points started vs. best lineup).
+  - *Draft*: each pick vs. players at the same position drafted around the same spot; team grades, steals, busts.
+  - *Trade grades*: points each side's received players scored in its starting lineup after the trade.
+  - *Waiver MVPs*: pickups ranked by started points for the team that added them.
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
   game, player of the week, most points left on the bench, best bench performance).
 - **Trades**: the current season comes from the league activity feed (exact). ESPN doesn't keep that feed for past
   seasons, so those trades are rebuilt from week-to-week roster swaps confirmed against the transaction log.
-- **History**: champions, all-time standings and head-to-head, keyed by each member's ESPN account rather than
-  team slot, so former members keep their records and new members start fresh.
+- **History** (tabs): champions & all-time standings, head to head, rivalries (most played, closest, most
+  one-sided) and a record book (high/low scores, blowouts, closest games, shootouts, best player and bench games),
+  all keyed by each member's ESPN account rather than team slot, so former members keep their records.
 - **Live updates**: while the current season is in progress, open pages re-check for new data every 2 minutes.
   If the data is more than 8 hours old in-season, a banner warns that the refresh (usually the cookies) may be broken.
 
