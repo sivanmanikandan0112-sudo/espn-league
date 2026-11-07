@@ -678,3 +678,11 @@ a.bm-foot:hover { color: var(--accent); }
   .tbl tbody tr td.wide { display: block; }
   .tbl tbody tr td.wide::before { display: block; margin-bottom: 2px; }
 }
+
+/* ---- since your last visit ---- */
+.since { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: var(--radius); padding: 14px 18px; margin: 0 0 18px; }
+.since-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.since-head h2 { font-size: 17px; }
+.since ul { margin: 8px 0 4px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.since .note { margin: 6px 0 0; }
+.since-who select { padding: 4px 8px; font-size: 13px; min-height: 0; }

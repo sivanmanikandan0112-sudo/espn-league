@@ -331,6 +331,90 @@
   }
 
   // phones: the sidebar's highlights as a row of small tappable tiles
+  // ---- "Since your last visit": compares the league now with a snapshot saved on this device last visit
+  const SINCE_GAP_MS = 3 * 3600e3;
+  const since = { prev: null, shown: false, dismissed: false };
+  function leagueSnapshot() {
+    const cur = window.LEAGUE_DATA[IDX.current];
+    return {
+      at: Date.now(), season: IDX.current, week: cur.league.currentWeek,
+      finals: cur.weeks.filter(w => w.final).map(w => w.week),
+      ranks: Object.fromEntries(cur.teams.map(t => [t.id, t.standing])),
+      odds: Object.fromEntries(cur.teams.filter(t => t.odds).map(t => [t.id, t.odds.playoffPct])),
+      trades: cur.trades.map(t => String(t.id)),
+    };
+  }
+  function initSince() {
+    if (since.prev !== null) return;
+    const now = leagueSnapshot();
+    const last = store.get("last-visit", null);
+    let base = store.get("since-base", null);       // the comparison point stays until "Got it", so reloads keep the card
+    if (last && last.season === now.season && Date.now() - last.at >= SINCE_GAP_MS) {
+      base = base && base.season === now.season ? base : last;
+      store.set("since-base", base);
+    }
+    if (!last || last.season !== now.season || Date.now() - last.at >= SINCE_GAP_MS) store.set("last-visit", now);
+    since.prev = base && base.season === now.season ? base : false;
+  }
+  function myTeamId() {
+    const cur = window.LEAGUE_DATA[IDX.current];
+    const m = store.get("pk-member", "");
+    const t = m && cur.teams.find(x => (x.owners || []).includes(m));
+    return t ? t.id : null;
+  }
+  function sinceCard() {
+    if (state.season !== IDX.current || since.dismissed) return "";
+    initSince();
+    const prev = since.prev;
+    if (!prev) return "";
+    const cur = window.LEAGUE_DATA[IDX.current];
+    const tb = id => cur.teams.find(t => t.id === Number(id)) || { name: "?" };
+    const me = myTeamId();
+    const items = [];
+    // weeks that finished since then
+    cur.weeks.filter(w => w.final && !prev.finals.includes(w.week)).forEach(w => {
+      const g = me != null && w.games.find(x => x.sides.some(s => s.team === me));
+      if (g && g.sides.length === 2) {
+        const mine = g.sides.find(s => s.team === me), opp = g.sides.find(s => s.team !== me);
+        const won = mine.pts > opp.pts;
+        items.push(`<b>Week ${w.week}:</b> you ${won ? "beat" : mine.pts < opp.pts ? "lost to" : "tied"} ${esc(tb(opp.team).name)} <span class="num">${fmt(mine.pts)}–${fmt(opp.pts)}</span> <a class="wk-link" href="${href("matchups", { week: w.week, game: g.id })}">box score</a>`);
+      } else {
+        const sides = w.games.flatMap(x => x.sides);
+        const hi = sides.reduce((a, b) => (b.pts > a.pts ? b : a), sides[0]);
+        if (hi) items.push(`<b>Week ${w.week} is final.</b> Top score: ${esc(tb(hi.team).name)} with ${fmt(hi.pts)}. <a class="wk-link" href="${href("matchups", { week: w.week })}">recap</a>`);
+      }
+    });
+    // standings
+    if (me != null && prev.ranks[me] && prev.ranks[me] !== tb(me).standing) {
+      const a = prev.ranks[me], b = tb(me).standing;
+      items.push(`You ${b < a ? "climbed" : "slipped"} from <b>${ordinal(a)}</b> to <b>${ordinal(b)}</b> in the standings.`);
+    } else {
+      const moves = cur.teams.map(t => ({ t, d: (prev.ranks[t.id] || t.standing) - t.standing })).filter(x => x.d).sort((a, b) => b.d - a.d);
+      if (moves.length) items.push(`Biggest climb: <b>${esc(moves[0].t.name)}</b> up ${moves[0].d} to ${ordinal(moves[0].t.standing)}${moves.length > 1 && moves[moves.length - 1].d < 0 ? `; biggest drop: <b>${esc(moves[moves.length - 1].t.name)}</b> down ${-moves[moves.length - 1].d}` : ""}.`);
+    }
+    // playoff odds
+    if (cur.teams.some(t => t.odds)) {
+      if (me != null && prev.odds[me] != null) {
+        const a = prev.odds[me], b = tb(me).odds.playoffPct;
+        if (Math.abs(b - a) >= 1) items.push(`Your playoff odds: <b>${pct(a)} → ${pct(b)}</b>. <a class="wk-link" href="${href("insights", {}, "race")}">playoff race</a>`);
+      } else {
+        const mv = cur.teams.filter(t => t.odds && prev.odds[t.id] != null).map(t => ({ t, d: t.odds.playoffPct - prev.odds[t.id] })).sort((a, b) => Math.abs(b.d) - Math.abs(a.d))[0];
+        if (mv && Math.abs(mv.d) >= 3) items.push(`Biggest playoff-odds swing: <b>${esc(mv.t.name)}</b> ${pct(prev.odds[mv.t.id])} → ${pct(mv.t.odds.playoffPct)}.`);
+      }
+    }
+    // trades
+    const newTrades = cur.trades.filter(t => !prev.trades.includes(String(t.id)));
+    if (newTrades.length) items.push(`${newTrades.length} new trade${newTrades.length === 1 ? "" : "s"}: ${newTrades.slice(0, 2).map(t => t.sides.map(s => esc(tb(s.team).name)).join(" ⇄ ")).join("; ")}${newTrades.length > 2 ? "…" : ""} <a class="wk-link" href="${href("trades")}">see trades</a>`);
+    // new week: pick'em window
+    // new week: mention pick'em only if picks are actually still open (checked with the live worker after render)
+    const askPickem = cur.league.currentWeek > prev.week && !cur.league.over && LIVE_API_BASE();
+    if (!items.length && !askPickem) return "";
+    const when = new Date(prev.at).toLocaleDateString([], { weekday: "long" });
+    const who = me != null ? `Showing for <b>${esc(tb(me).name)}</b>.` : `<label class="since-who">Personalize: <select id="since-team"><option value="">Which team is yours?</option>${cur.teams.map(t => `<option value="${esc((t.owners || [])[0] || "")}">${esc(t.name)}</option>`).join("")}</select></label>`;
+    return `<section class="since" aria-label="Since your last visit"><div class="since-head"><h2>Since ${esc(when)}</h2><button type="button" class="linkbtn" data-since="dismiss">Got it</button></div>
+      <ul>${items.map(i => `<li>${i}</li>`).join("")}${askPickem ? '<li id="since-pickem" hidden></li>' : ""}</ul><p class="note">${who}</p></section>`;
+  }
+
   function tiles() {
     const wk = D.weeks.find(x => x.week === state.sideWeek);
     const rows = [];
@@ -427,7 +511,7 @@
       t.roster.some(p => p.name.toLowerCase().includes(q))) : ranked;
     const maxPos = Math.max(...D.teams.map(t => SEGS().reduce((s, p) => s + (t.posPower[p] || 0), 0)));
     const allOpen = D.teams.every(t => state.open.has(t.id));
-    main.innerHTML = `${tiles()}<div class="layout">
+    main.innerHTML = `${sinceCard()}${tiles()}<div class="layout">
       <section>
         <div class="section-head">
           <div><h1>League standings <span class="pill">${L.size} teams</span></h1>
@@ -445,6 +529,17 @@
       </section>
       ${sidebar()}
     </div>`;
+    const sp = main.querySelector("#since-pickem");
+    if (sp) pkApi("/pickem").then(d => {
+      if (d && d.open && document.body.contains(sp)) {
+        const lock = new Date(d.lockAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+        sp.innerHTML = `Week ${d.week} pick'em is open until ${esc(lock)}. <a class="wk-link" href="${href("matchups", {}, "pickem")}">Make your picks</a>`;
+        sp.hidden = false;
+      } else if (document.body.contains(sp)) {
+        const card = sp.closest(".since"); sp.remove();
+        if (card && !card.querySelector("li")) card.remove();
+      }
+    }).catch(() => {});
     const sl = main.querySelector(".sl-wrap");
     if (sl) sl.scrollLeft = sl.scrollWidth; // phones: open on the latest weeks, where the team names are
   }
@@ -1323,6 +1418,14 @@
     if (g && !(e.relatedTarget && g.contains(e.relatedTarget))) slHighlight(state.storyTeam);
   });
   main.addEventListener("click", e => {
+    if (e.target.closest('[data-since="dismiss"]')) {
+      since.dismissed = true;
+      store.set("last-visit", leagueSnapshot());
+      store.set("since-base", null);
+      const card = main.querySelector(".since");
+      if (card) card.remove();
+      return;
+    }
     const sl = e.target.closest("[data-sl]");
     if (sl) {
       state.storyTeam = String(state.storyTeam) === sl.dataset.sl ? null : sl.dataset.sl;
@@ -1387,6 +1490,7 @@
     }
   });
   main.addEventListener("change", e => {
+    if (e.target.id === "since-team" && e.target.value) { store.set("pk-member", e.target.value); PK.member = e.target.value; renderKeepScroll(renderStandings); return; }
     if (e.target.id === "sort") { state.sort = e.target.value; store.set("sort", state.sort); renderStandings(); }
     if (e.target.id === "side-week") { state.sideWeek = Number(e.target.value); document.querySelector(".side").outerHTML = sidebar(); }
     if (e.target.id === "swap-team") { state.swapTeam = e.target.value; renderKeepScroll(renderInsights); }

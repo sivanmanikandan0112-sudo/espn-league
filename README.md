@@ -26,6 +26,9 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 - **Season switcher** (top right of the tabs): every season back to the league's first, each with standings,
   matchups, insights and trades as they stood. Past seasons show final finishes, end-of-season rosters with each
   player's final position rank, and position bars built from points actually started.
+- **Since your last visit** (Standings): coming back 3+ hours later shows what changed (finished weeks and your
+  result, standings moves, playoff-odds swings, new trades, open pick'em). The device keeps the comparison point
+  until "Got it"; it's personalized once the site knows your team (pick'em/trade block name, or the card's picker).
 - **Season storyline** (Standings, below the teams): every team's standings position after each completed week;
   tap a team to follow its path.
 - **Standings / Power value** (current season) = expected starting-lineup points over the remaining weeks
