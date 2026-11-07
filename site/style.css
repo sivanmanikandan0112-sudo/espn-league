@@ -529,3 +529,25 @@ a.bm-foot:hover { color: var(--accent); }
 .stat-tbl .n { text-align: right; font-variant-numeric: tabular-nums; }
 .stat-tbl tfoot td { border-top: 2px solid var(--ink); font-weight: 700; }
 .stat-body { overflow: auto; }
+
+/* ---- schedule swap grid ---- */
+.sg-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.swap-grid { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.swap-grid th, .swap-grid td { padding: 6px 7px; border: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.swap-grid thead th { font-size: 10px; font-weight: 800; color: var(--ink-2); vertical-align: bottom; }
+.swap-grid thead th .logo { width: 24px; height: 24px; font-size: 9px; margin: 0 auto 3px; display: grid; }
+.swap-grid thead th span { display: block; }
+.swap-grid .sg-corner { font-size: 10px; text-align: left; color: var(--ink-2); }
+.swap-grid .sg-row { display: flex; align-items: center; gap: 8px; text-align: left; font-weight: 600; max-width: 210px; border: 0; border-bottom: 1px solid var(--line); }
+.swap-grid .sg-row .logo { width: 24px; height: 24px; font-size: 9px; flex: none; }
+.swap-grid .sg-row span { overflow: hidden; text-overflow: ellipsis; }
+.swap-grid td.self { outline: 2px solid var(--ink); outline-offset: -2px; font-weight: 800; }
+.sg-pick { display: none; }
+.pick .logo { width: 28px; height: 28px; font-size: 10px; }
+@media (max-width: 640px) {
+  .sg-wrap { display: none; }
+  .sg-pick { display: block; }
+}
+.sg-pick .pick { grid-template-columns: 52px 30px minmax(0, 1fr); }
+.sg-pick .pick-name b { display: block; }
+.sg-pick .picks { min-width: 0; }

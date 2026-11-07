@@ -561,6 +561,7 @@
   const barCell = (v, cls) => `<span class="pbar"><span class="pbar-fill ${cls || ""}" style="width:${Math.min(100, v || 0)}%"></span><span class="pbar-v">${pct(v)}</span></span>`;
   const signedPts = (n, goodHigh) => `<b class="${(goodHigh ? n > 0.05 : n < -0.05) ? "pos" : (goodHigh ? n < -0.05 : n > 0.05) ? "neg" : ""}">${signed(n)}</b>`;
   const tname = id => (teamById[id] || { name: "Team " + id }).name;
+  const poss = name => name + (/s$/i.test(name.trim()) ? "’" : "’s"); // Avengers' / Club's
   // explanation that shows in full on desktop; on phones a one-line summary with an ⓘ that expands it
   const expl = (short, full) => `<p class="sub expl"><span class="expl-short">${short}</span><span class="expl-full">${full}</span>
     <button type="button" class="info-btn" aria-expanded="false" aria-label="How this works">i</button></p>`;
@@ -574,7 +575,9 @@
   function insightTabs() {
     const hasOdds = D.teams.some(t => t.odds);
     const t = [["race", hasOdds || !L.over ? "Playoff race" : "Final results"]];
-    t.push(["luck", "Luck"], ["schedule", "Schedule"], ["efficiency", "Efficiency"]);
+    t.push(["luck", "Luck"], ["schedule", "Schedule"]);
+    if (D.scheduleSwap && D.scheduleSwap.weeks) t.push(["swap", "Schedule swap"]);
+    t.push(["efficiency", "Efficiency"]);
     if (D.draft) t.push(["draft", "Draft"]);
     return t;
   }
@@ -626,6 +629,45 @@
       ];
       if (hasLeft) cols.push({ label: "Opponents left", num: 1, cell: t => t.sos.remainingVsAvg == null ? "—" : `${signed(t.sos.remainingVsAvg)} <span class="muted">#${t.sos.remainingVsAvgRank}</span>` });
       return section("Strength of schedule", { short: "How tough each team's opponents have been (#1 = toughest).", full: `<b>Opponents so far</b>: how much the teams you've faced score per week compared with the league average (#1 = toughest). <b>They scored vs you</b>: how those opponents actually played against you; high means you kept running into hot weeks.${hasLeft ? " <b>Opponents left</b>: projected strength of the rest of your schedule." : ""}` }, table(cols, rows));
+    },
+
+    swap() {
+      const S = D.scheduleSwap, G = S.grid;
+      const rec = v => `${v[0]}–${v[1]}${v[2] ? "–" + v[2] : ""}`;
+      const order = S.teams.map(id => teamById[id]).filter(Boolean).sort((a, b) => a.standing - b.standing);
+      const ids = order.map(t => String(t.id));
+      // per team: actual, best and worst schedule, average wins across every schedule
+      const sum = order.map(t => {
+        const row = G[t.id], cells = ids.map(b => ({ b, v: row[b] }));
+        const best = cells.reduce((x, y) => (y.v[0] - y.v[1] > x.v[0] - x.v[1] ? y : x));
+        const worst = cells.reduce((x, y) => (y.v[0] - y.v[1] < x.v[0] - x.v[1] ? y : x));
+        const avg = cells.reduce((n, c) => n + c.v[0] + c.v[2] / 2, 0) / cells.length;
+        const actual = row[t.id];
+        return { t, actual, best, worst, avg, diff: actual[0] + actual[2] / 2 - avg };
+      });
+      const summary = table([
+        { label: "Team", cell: r => teamCell(r.t) },
+        { label: "Actual", num: 1, cell: r => rec(r.actual) },
+        { label: "Best schedule", num: 1, cell: r => `${rec(r.best.v)} <span class="muted">with ${esc(poss(tname(r.best.b)))}</span>` },
+        { label: "Worst schedule", num: 1, cell: r => `${rec(r.worst.v)} <span class="muted">with ${esc(poss(tname(r.worst.b)))}</span>` },
+        { label: "Avg. wins", num: 1, cell: r => r.avg.toFixed(1) },
+        { label: "Schedule luck", num: 1, cell: r => signedPts(r.diff, true) },
+      ], sum.slice().sort((a, b) => a.diff - b.diff));
+      // full grid: rows = whose scores, columns = whose schedule
+      const maxW = S.weeks;
+      const heat = v => { const f = (v[0] + v[2] / 2) / maxW; return `background: color-mix(in srgb, var(--accent) ${Math.round(f * 55)}%, var(--surface));`; };
+      const head = `<tr><th class="sg-corner">Scores ↓ · Schedule →</th>${order.map(t => `<th title="${esc(poss(t.name))} schedule">${logo(t)}<span>${esc(t.abbrev || initials(t.name))}</span></th>`).join("")}</tr>`;
+      const body = order.map(a => `<tr><th class="sg-row">${logo(a)}<span>${esc(a.name)}</span></th>${order.map(b => {
+        const v = G[a.id][b.id], self = a.id === b.id;
+        return `<td class="${self ? "self" : ""}" style="${heat(v)}" title="${esc(a.name)} with ${esc(poss(b.name))} schedule: ${rec(v)}${self ? " (actual)" : ""}">${rec(v)}</td>`;
+      }).join("")}</tr>`).join("");
+      if (!state.swapTeam || !G[state.swapTeam]) state.swapTeam = String(order[0].id);
+      const pickRow = ids.map(b => ({ b, v: G[state.swapTeam][b] })).sort((x, y) => (y.v[0] - y.v[1]) - (x.v[0] - x.v[1]));
+      const picker = `<div class="sg-pick"><label class="field">Team <select id="swap-team">${order.map(t => `<option value="${t.id}"${String(t.id) === state.swapTeam ? " selected" : ""}>${esc(t.name)}</option>`).join("")}</select></label>
+        <div class="picks" style="margin-top:10px">${pickRow.map(c => `<div class="pick"><span class="pick-no">${rec(c.v)}</span>${logo(teamById[c.b])}<span class="pick-name"><b>${esc(poss(tname(c.b)))} schedule</b>${c.b === state.swapTeam ? '<span class="team-mgr">actual record</span>' : ""}</span></div>`).join("")}</div></div>`;
+      return section("Schedule swap", { short: "Each team's record with every other team's schedule.", full: `Each team's record if it had played every other team's schedule, using its real weekly scores (${S.weeks} completed regular-season weeks). When the other schedule had a game against this team, it plays that team instead. Schedule luck = actual wins minus the average across all ${order.length} schedules.` }, summary) +
+        section("Every schedule", "Rows are each team's scores; columns are whose schedule they play. The outlined cell is the real record. Greener means more wins.",
+          `<div class="sg-wrap"><table class="swap-grid"><thead>${head}</thead><tbody>${body}</tbody></table></div>${picker}`);
     },
 
     efficiency() {
@@ -871,6 +913,7 @@
   main.addEventListener("change", e => {
     if (e.target.id === "sort") { state.sort = e.target.value; store.set("sort", state.sort); renderStandings(); }
     if (e.target.id === "side-week") { state.sideWeek = Number(e.target.value); document.querySelector(".side").outerHTML = sidebar(); }
+    if (e.target.id === "swap-team") { state.swapTeam = e.target.value; renderKeepScroll(renderInsights); }
     if (e.target.id === "draft-team") { state.draftTeam = e.target.value; renderKeepScroll(renderInsights); }
     if (e.target.id === "h2h-a") { state.h2hA = e.target.value; renderKeepScroll(renderHistory); }
     if (e.target.id === "h2h-b") { state.h2hB = e.target.value; renderKeepScroll(renderHistory); }

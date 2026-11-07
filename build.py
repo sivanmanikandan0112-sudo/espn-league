@@ -330,6 +330,7 @@ def build_season(season, is_current, names):
     for tid, t in teams.items():
         t["sos"] = sos.get(tid)
     data["trades"] = stats.grade_trades(data, data["trades"])
+    data["scheduleSwap"] = stats.schedule_swap(data)
     add_draft(data, season, actual)
 
     for t in teams.values():

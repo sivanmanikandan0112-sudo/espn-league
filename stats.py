@@ -397,3 +397,42 @@ def draft_review(picks, players, rank_pool, pos_window=2):
     return {"picks": rows, "teams": dict(teams),
             "steals": [r["pick"] for r in sorted(skill, key=lambda r: -r["value"])[:6]],
             "busts": [r["pick"] for r in sorted(early, key=lambda r: r["value"])[:6]]}
+
+
+# ---------------------------------------------------------------- schedule swap
+
+def schedule_swap(season):
+    """Every team's record if it had played every other team's schedule (regular season, completed weeks).
+    Team A on B's schedule: each week A's score vs. the score of B's opponent that week; when B's opponent
+    was A itself, A plays B instead. The diagonal is each team's actual record."""
+    sc = {}  # (week, team) -> (pts, opponent)
+    for w in regular_weeks(season):
+        for g in w["games"]:
+            if len(g["sides"]) != 2:
+                continue
+            a, b = g["sides"]
+            sc[(w["week"], a["team"])] = (a["pts"], b["team"])
+            sc[(w["week"], b["team"])] = (b["pts"], a["team"])
+    weeks = sorted({w for w, _ in sc})
+    teams = sorted({t for _, t in sc})
+    grid = {}
+    for A in teams:
+        grid[A] = {}
+        for B in teams:
+            w_ = l_ = t_ = 0
+            for wk in weeks:
+                if (wk, A) not in sc or (wk, B) not in sc:
+                    continue
+                mine = sc[(wk, A)][0]
+                opp = sc[(wk, B)][1]
+                if opp == A:
+                    opp = B
+                theirs = sc[(wk, opp)][0]
+                if mine > theirs:
+                    w_ += 1
+                elif mine < theirs:
+                    l_ += 1
+                else:
+                    t_ += 1
+            grid[A][B] = [w_, l_, t_]
+    return {"teams": teams, "weeks": len(weeks), "grid": {str(a): {str(b): v for b, v in row.items()} for a, row in grid.items()}}
