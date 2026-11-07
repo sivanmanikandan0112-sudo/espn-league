@@ -41,6 +41,10 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   - *Draft*: each pick vs. players at the same position drafted around the same spot; team grades, steals, busts.
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
   game, player of the week, most points left on the bench, best bench performance).
+- **Playoff bracket** (Matchups → Playoff bracket): every season's bracket with seeds, byes and scores; live during
+  the playoffs; before them, "if the season ended today" with each team's playoff odds.
+- **Share cards**: Share buttons on weekly recaps, matchups, trades and the bracket draw a 1080px image in the browser
+  (canvas, no server) to share, copy or download.
 - **Trades**: every trade with its grade: points each side's received players scored in its starting lineup after
   the trade. The current season's trades come from the league activity feed (exact). ESPN doesn't keep that feed for past
   seasons, so those trades are rebuilt from week-to-week roster swaps confirmed against the transaction log.

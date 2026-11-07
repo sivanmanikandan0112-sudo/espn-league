@@ -412,10 +412,13 @@
     if (r.topPlayer) items.push(item("Player of the week", esc(r.topPlayer.name), `${esc(r.topPlayer.pos)} · ${fmt(r.topPlayer.pts)} pts for ${tn(r.topPlayer.team)}`));
     if (r.mostLeft && r.mostLeft.pts > 0) items.push(item("Most left on the bench", tn(r.mostLeft.team), `${fmt(r.mostLeft.pts)} pts better lineup available`));
     if (r.benchStar && r.benchStar.pts > 0) items.push(item("Best bench performance", esc(r.benchStar.name), `${fmt(r.benchStar.pts)} pts on ${tn(r.benchStar.team)}'s bench`));
-    return `<section class="recap"><div class="section-head"><h2>Week ${w} recap</h2></div><div class="recap-grid">${items.join("")}</div></section>`;
+    return `<section class="recap"><div class="section-head"><h2>Week ${w} recap</h2><button type="button" class="share-btn" data-share="recap" data-week="${w}">${SHARE_ICON}Share</button></div><div class="recap-grid">${items.join("")}</div></section>`;
   }
 
+  const MATCHUP_TABS = [["", "Weekly"], ["bracket", "Playoff bracket"]];
+
   function renderMatchups() {
+    if (state.sub === "bracket") return renderBracket();
     const weeks = D.weeks.map(x => x.week);
     let w = parseInt(state.params.get("week"), 10);
     if (!weeks.includes(w)) w = L.over ? weeks[weeks.length - 1] : L.currentWeek;
@@ -450,7 +453,8 @@
         </button>
         ${isOpen && a && b ? (() => {
           const showB = focusTeam != null && b.team === focusTeam ? 1 : 0;
-          return `<div class="box-toggle" role="tablist" aria-label="Show lineup">
+          return `<div class="box-actions"><button type="button" class="share-btn" data-share="game" data-week="${w}" data-game="${g.id}">${SHARE_ICON}Share ${wk.final ? "result" : "score"}</button></div>
+          <div class="box-toggle" role="tablist" aria-label="Show lineup">
             <button type="button" role="tab" data-boxside="0" aria-selected="${!showB}" class="${showB ? "" : "active"}">${esc(teamById[a.team].name)}</button>
             <button type="button" role="tab" data-boxside="1" aria-selected="${!!showB}" class="${showB ? "active" : ""}">${esc(teamById[b.team].name)}</button></div>
           <div class="box" data-show="${showB}">${boxCol(a, focusPlayer)}${boxCol(b, focusPlayer)}</div>`;
@@ -459,6 +463,7 @@
     }).join("");
     main.innerHTML = `
       <div class="section-head"><div><h1>Week ${w} matchups</h1><p class="sub">${wk.final ? "Final scores." : "Live scores · week in progress."} Tap a matchup for the box score.</p></div></div>
+      ${subnav("matchups", MATCHUP_TABS, "")}
       <div class="week-strip" role="tablist">${D.weeks.map(x => `<button data-week="${x.week}" class="${x.week === w ? "active" : ""}${x.playoffs ? " po" : ""}" role="tab" aria-selected="${x.week === w}">${x.playoffs ? "PO " : "Wk "}${x.week}</button>`).join("")}</div>
       ${wk.final ? recapCard(w) : ""}
       <div class="games">${games}</div>`;
@@ -472,6 +477,78 @@
         (art.querySelector(".box-line.hl") || art).scrollIntoView({ block: "center" });
       }
     }
+  }
+
+
+  // ---------------------------------------------------------------- playoff bracket
+  function bracketModel() {
+    const rs = L.regularSeasonWeeks, R = L.playoffRounds, n = L.playoffTeams;
+    const size = 2 ** R, byes = Math.max(0, size - n);
+    const wb = w => (D.weeks.find(x => x.week === w) || { games: [] }).games.filter(g => g.tier === "WINNERS_BRACKET");
+    const started = wb(rs + 1).length > 0;
+    const seed = {};
+    if (started || L.over) D.teams.forEach(t => { if (t.seed && t.seed <= n) seed[t.id] = t.seed; });
+    else D.teams.slice().sort((a, b) => a.standing - b.standing).slice(0, n).forEach((t, i) => { seed[t.id] = i + 1; });
+    const byId = Object.fromEntries(Object.entries(seed).map(([tid, sd]) => [sd, Number(tid)]));
+    const roundName = r => (R - r === 0 ? "Championship" : R - r === 1 ? "Semifinals" : R - r === 2 ? "Quarterfinals" : "Round " + r);
+    const rounds = [];
+    let champion = null;
+    for (let r = 1; r <= R; r++) {
+      const week = rs + r;
+      const wk = D.weeks.find(x => x.week === week);
+      const games = wb(week);
+      let matches;
+      if (games.length) {
+        matches = games.map(g => {
+          const win = g.winner === "HOME" ? 0 : g.winner === "AWAY" ? 1 : -1;
+          const entries = g.sides.map((s, i) => ({ team: s.team, seed: seed[s.team], pts: s.pts, won: win === i, lost: win !== -1 && win !== i }));
+          return { game: g.id, week, bye: g.sides.length === 1, live: !(wk && wk.final), entries };
+        });
+        if (r === R) {
+          const f = matches.find(m => !m.bye && m.entries.some(e => e.won));
+          if (f && !f.live) champion = f.entries.find(e => e.won).team;
+        }
+      } else if (r === 1) {
+        // projected first round: byes for the top seeds, then best remaining seed vs worst
+        matches = [];
+        for (let s = 1; s <= byes; s++) if (byId[s]) matches.push({ bye: true, projected: true, entries: [{ team: byId[s], seed: s }] });
+        const rest = [];
+        for (let s = byes + 1; s <= n; s++) if (byId[s]) rest.push(s);
+        for (let i = 0; i < rest.length / 2; i++) matches.push({ projected: true, entries: [{ team: byId[rest[i]], seed: rest[i] }, { team: byId[rest[rest.length - 1 - i]], seed: rest[rest.length - 1 - i] }] });
+      } else {
+        matches = Array.from({ length: size / 2 ** r }, () => ({ tbd: true, entries: [] }));
+      }
+      matches.sort((a, b) => Math.min(...a.entries.map(e => e.seed || 99), 99) - Math.min(...b.entries.map(e => e.seed || 99), 99));
+      rounds.push({ r, week, name: roundName(r), matches, live: wk && !wk.final && games.length > 0 });
+    }
+    return { rounds, champion, started, projected: !started && !L.over, byes, size };
+  }
+
+  function renderBracket() {
+    const M = bracketModel();
+    const teamLine = (e, m) => {
+      const t = teamById[e.team];
+      const odds = M.projected && t.odds ? `<span class="bm-odds" title="Chance to make the playoffs">${pct(t.odds.playoffPct)}</span>` : "";
+      const score = e.pts != null && !m.bye ? `<span class="bm-pts">${fmt(e.pts)}</span>` : odds;
+      return `<div class="bm-row${e.won ? " won" : ""}${e.lost ? " lost" : ""}"><span class="bm-seed">${e.seed || ""}</span>${logo(t)}<span class="bm-name">${esc(t.name)}</span>${score}</div>`;
+    };
+    const matchBox = m => {
+      if (m.tbd) return `<div class="bm tbd"><div class="bm-row"><span class="bm-name muted">TBD</span></div><div class="bm-row"><span class="bm-name muted">TBD</span></div></div>`;
+      if (m.bye) return `<div class="bm bye">${teamLine(m.entries[0], m)}<div class="bm-foot">First-round bye</div></div>`;
+      const link = m.game != null ? `<a class="bm-foot" href="${href("matchups", { week: m.week, game: m.game })}">${m.live ? "Live · box score →" : "Box score →"}</a>` : `<div class="bm-foot">${M.projected ? "If the season ended today" : ""}</div>`;
+      return `<div class="bm${m.live ? " live" : ""}">${m.entries.map(e => teamLine(e, m)).join("")}${link}</div>`;
+    };
+    const cols = M.rounds.map(r => `<div class="b-round"><div class="b-head"><span class="kicker">${r.name}</span><span class="b-week">Week ${r.week}${r.live ? ' · <b class="neg">live</b>' : ""}</span></div><div class="b-matches">${r.matches.map(matchBox).join("")}</div></div>`).join("");
+    const champ = M.champion ? teamById[M.champion] : null;
+    const champCol = `<div class="b-round b-champ"><div class="b-head"><span class="kicker">Champion</span></div><div class="b-matches">${champ
+      ? `<div class="bm champ-box">${logoImg(champ.logo, champ.name, "lg")}<div class="champ-team">${esc(champ.name)}</div><div class="team-mgr">${esc(champ.manager)} · ${champ.seed ? ordinal(champ.seed) + " seed" : ""}</div></div>`
+      : `<div class="bm tbd champ-box"><div class="champ-team muted">TBD</div></div>`}</div></div>`;
+    const sub = M.projected
+      ? `If the season ended today. Top ${L.playoffTeams} make it${M.byes ? `; top ${M.byes} get a first-round bye` : ""}, reseeded each round so the best seed left plays the worst. Percentages are each team's playoff odds.`
+      : L.over ? `How the ${L.season} playoffs played out.` : "The playoffs are underway. Live scores update with every refresh.";
+    main.innerHTML = `<div class="section-head"><div><h1>Playoff bracket</h1><p class="sub">${sub}</p></div>${M.started || L.over ? `<button type="button" class="share-btn" data-share="bracket">${SHARE_ICON}Share</button>` : ""}</div>
+      ${subnav("matchups", MATCHUP_TABS, "bracket")}
+      <div class="bracket">${cols}${champCol}</div>`;
   }
 
   // ---------------------------------------------------------------- insights
@@ -489,7 +566,7 @@
   const section = (title, sub, body) => `<section class="insight"><div class="section-head"><div><h2>${title}</h2>${!sub ? "" : typeof sub === "string" ? `<p class="sub">${sub}</p>` : expl(sub.short, sub.full)}</div></div>${body}</section>`;
 
   function subnav(tab, items, cur) {
-    return `<nav class="subnav" aria-label="${tab === "insights" ? "Insights" : "History"} sections">${items.map(([k, label]) =>
+    return `<nav class="subnav" aria-label="${tab[0].toUpperCase() + tab.slice(1)} sections">${items.map(([k, label]) =>
       `<a href="${href(tab, {}, k)}" class="${k === cur ? "active" : ""}"${k === cur ? ' aria-current="page"' : ""}>${label}</a>`).join("")}</nav>`;
   }
 
@@ -615,7 +692,7 @@
       });
       const date = tr.date ? new Date(tr.date).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
       const when = [date, tr.week ? "Week " + tr.week : ""].filter(Boolean).join(" · ");
-      return `<article class="trade"><div class="trade-head"><span>${when}</span><span>${tr.sides.reduce((n, s) => n + s.gets.length, 0)} players</span></div>
+      return `<article class="trade"><div class="trade-head"><span>${when}</span><span class="trade-head-r">${tr.sides.reduce((n, s) => n + s.gets.length, 0)} players<button type="button" class="share-btn sm" data-share="trade" data-trade="${esc(tr.id)}" aria-label="Share this trade">${SHARE_ICON}</button></span></div>
         <div class="trade-body">${sides.join(swap)}</div><div class="verdict">${verdict}</div></article>`;
     }).join("");
     main.innerHTML = `<div class="section-head"><div><h1>Trade history <span class="pill">${D.trades.length} trades</span></h1>
@@ -803,6 +880,195 @@
     fn();
     window.scrollTo(0, y);
   }
+
+
+  // ---------------------------------------------------------------- shareable image cards
+  const SHARE_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10V2M5 5l3-3 3 3M3 8v5h10V8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
+  const SITE_URL = location.host.endsWith("github.io") ? location.host + location.pathname.replace(/index\.html$/, "") : location.host;
+
+  // Loads a logo onto its own small canvas. Some ESPN logo SVGs reference outside images, which would "taint"
+  // the share card and block exporting it, so any logo that can't be read back falls back to initials.
+  function loadImg(src) {
+    return new Promise(res => {
+      if (!src) return res(null);
+      const im = new Image();
+      im.onload = () => {
+        try {
+          const cv = document.createElement("canvas");
+          cv.width = cv.height = 152;
+          const cx = cv.getContext("2d");
+          cx.drawImage(im, 0, 0, 152, 152);
+          cx.getImageData(0, 0, 1, 1);
+          res(cv);
+        } catch (_) { res(null); }
+      };
+      im.onerror = () => res(null);
+      im.src = src;
+      setTimeout(() => res(null), 4000);
+    });
+  }
+
+  // Draws a 1080px-wide card: brand header, a title, then rows of {logo, title, sub, value, hi}.
+  async function drawCard(spec) {
+    try { await Promise.all(["900 40px Archivo", "800 40px Archivo", "600 20px Inter", "700 20px Inter"].map(f => document.fonts.load(f))); } catch (_) { /* system fonts */ }
+    const W = 1080, PAD = 64, ROW = 132, GAP = 16, HEAD = 200;
+    const rows = spec.rows;
+    const noteH = spec.note ? 120 : 0;
+    const H = HEAD + 150 + rows.length * (ROW + GAP) + noteH + 110;
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const c = cv.getContext("2d");
+    const C = { head: "#0c2a20", accent: "#2bc47b", bg: "#f1f4f2", card: "#ffffff", ink: "#0f1a16", ink2: "#56645e", line: "#d5ddd8", hot: "#e2522f" };
+    const font = (w, px, fam) => `${w} ${px}px ${fam === "a" ? "Archivo, Inter, sans-serif" : "Inter, system-ui, sans-serif"}`;
+    const fit = (text, max) => { text = String(text); if (c.measureText(text).width <= max) return text; while (text.length > 1 && c.measureText(text + "…").width > max) text = text.slice(0, -1); return text + "…"; };
+    const rr = (x, y, w, h, r) => { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); };
+    // background + header
+    c.fillStyle = C.bg; c.fillRect(0, 0, W, H);
+    c.fillStyle = C.head; c.fillRect(0, 0, W, HEAD);
+    c.fillStyle = C.accent; c.fillRect(0, HEAD - 8, W, 8);
+    c.strokeStyle = C.accent; c.lineWidth = 7; c.lineJoin = "round";
+    const mk = (x, y, s) => { c.beginPath(); c.moveTo(x + 6 * s, y + 30 * s); c.lineTo(x + 20 * s, y + 8 * s); c.lineTo(x + 34 * s, y + 30 * s); c.closePath(); c.stroke(); c.beginPath(); c.moveTo(x + 13 * s, y + 30 * s); c.lineTo(x + 20 * s, y + 19 * s); c.lineTo(x + 27 * s, y + 30 * s); c.stroke(); };
+    mk(PAD - 14, 52, 2.4);
+    c.fillStyle = "rgba(234,245,239,.7)"; c.font = font(700, 22); c.textBaseline = "alphabetic";
+    c.fillText("LEAGUE HQ", PAD + 92, 86);
+    c.fillStyle = "#eaf5ef"; c.font = font(900, 44, "a");
+    c.fillText(fit(IDX.name.toUpperCase(), W - PAD * 2 - 92), PAD + 92, 138);
+    // title block
+    c.fillStyle = C.accent; c.font = font(800, 24);
+    c.fillText(spec.kicker.toUpperCase(), PAD, HEAD + 62);
+    c.fillStyle = C.ink; c.font = font(900, 50, "a");
+    c.fillText(fit(spec.title, W - PAD * 2), PAD, HEAD + 120);
+    // rows
+    let y = HEAD + 150;
+    for (const r of rows) {
+      rr(PAD, y, W - PAD * 2, ROW, 22); c.fillStyle = r.hi ? "#e3f6ec" : C.card; c.fill();
+      c.lineWidth = r.hi ? 3 : 2; c.strokeStyle = r.hi ? C.accent : C.line; c.stroke();
+      let x = PAD + 28;
+      if (r.logo !== undefined) {
+        const im = await loadImg(r.logo);
+        const cx = x + 38, cy = y + ROW / 2;
+        c.save(); c.beginPath(); c.arc(cx, cy, 38, 0, Math.PI * 2); c.closePath(); c.clip();
+        if (im) c.drawImage(im, cx - 38, cy - 38, 76, 76);
+        else { c.fillStyle = "#e8eeea"; c.fillRect(cx - 38, cy - 38, 76, 76); c.fillStyle = C.ink2; c.font = font(800, 28); c.textAlign = "center"; c.fillText(initials(r.title), cx, cy + 10); c.textAlign = "left"; }
+        c.restore();
+        x += 100;
+      }
+      c.font = font(900, 50, "a");
+      const vW = r.value ? c.measureText(r.value).width : 0;
+      const textMax = W - PAD - 28 - x - (vW ? vW + 24 : 0);
+      if (r.label) { c.fillStyle = C.ink2; c.font = font(800, 19); c.fillText(fit(r.label.toUpperCase(), textMax), x, y + 40); }
+      c.fillStyle = C.ink; c.font = font(700, 34);
+      c.fillText(fit(r.title, textMax), x, y + (r.label ? 82 : r.sub ? 62 : 78));
+      if (r.sub) { c.fillStyle = C.ink2; c.font = font(600, 24); c.fillText(fit(r.sub, textMax), x, y + (r.label ? 112 : 100)); }
+      if (r.value) { c.fillStyle = r.hi ? "#14824e" : C.ink; c.font = font(900, 50, "a"); c.textAlign = "right"; c.fillText(r.value, W - PAD - 28, y + ROW / 2 + 18); c.textAlign = "left"; }
+      y += ROW + GAP;
+    }
+    if (spec.note) {
+      c.fillStyle = C.ink; c.font = font(700, 30);
+      const words = spec.note.split(" "); let line = "", ly = y + 44;
+      for (const wd of words) { if (c.measureText(line + wd).width > W - PAD * 2) { c.fillText(line.trim(), PAD, ly); line = ""; ly += 40; } line += wd + " "; }
+      c.fillText(line.trim(), PAD, ly);
+    }
+    c.fillStyle = C.ink2; c.font = font(600, 22);
+    c.fillText(SITE_URL, PAD, H - 48);
+    c.textAlign = "right"; c.fillText(`${L.season} season`, W - PAD, H - 48); c.textAlign = "left";
+    return new Promise(res => cv.toBlob(res, "image/png"));
+  }
+
+  function shareSpec(kind, el) {
+    const tn = id => (teamById[id] || { name: "?" }).name;
+    const tl = id => (teamById[id] || {}).logo || "";
+    if (kind === "recap") {
+      const w = Number(el.dataset.week), r = D.recaps[w];
+      const rows = [{ label: "Top score", logo: tl(r.high.team), title: tn(r.high.team), value: fmt(r.high.pts), hi: true },
+        { label: "Low score", logo: tl(r.low.team), title: tn(r.low.team), value: fmt(r.low.pts) }];
+      if (r.blowout) rows.push({ label: "Biggest blowout", logo: tl(r.blowout.winner), title: tn(r.blowout.winner), sub: "beat " + tn(r.blowout.loser), value: "+" + Number(r.blowout.margin).toFixed(1) });
+      if (r.closest) rows.push({ label: "Closest game", logo: tl(r.closest.winner), title: tn(r.closest.winner), sub: "edged " + tn(r.closest.loser), value: "+" + Number(r.closest.margin).toFixed(2) });
+      if (r.topPlayer) rows.push({ label: "Player of the week", title: r.topPlayer.name, sub: r.topPlayer.pos + " · " + tn(r.topPlayer.team), value: fmt(r.topPlayer.pts) });
+      if (r.mostLeft && r.mostLeft.pts > 0) rows.push({ label: "Most left on the bench", logo: tl(r.mostLeft.team), title: tn(r.mostLeft.team), value: fmt(r.mostLeft.pts) });
+      return { file: `week-${w}-recap`, kicker: `Week ${w} recap`, title: `${L.season} · Week ${w}`, rows };
+    }
+    if (kind === "game") {
+      const w = Number(el.dataset.week), wk = D.weeks.find(x => x.week === w);
+      const g = wk.games.find(x => String(x.id) === el.dataset.game);
+      const win = g.winner === "HOME" ? 0 : g.winner === "AWAY" ? 1 : -1;
+      const rows = g.sides.map((s, i) => {
+        const top = s.lineup.filter(p => p.slot !== "BE" && p.slot !== "IR").sort((a, b) => b.pts - a.pts)[0];
+        return { logo: tl(s.team), title: tn(s.team), sub: (teamById[s.team] || {}).manager + (top ? ` · top: ${top.name} ${fmt(top.pts)}` : ""), value: fmt(s.pts), hi: wk.final ? win === i : false };
+      });
+      const tier = TIER[g.tier] || "";
+      const note = wk.final && win !== -1 ? `${tn(g.sides[win].team)} wins by ${Math.abs(g.sides[0].pts - g.sides[1].pts).toFixed(2)}.` : !wk.final ? "Live score · week in progress." : "";
+      return { file: `week-${w}-matchup`, kicker: `${tier ? tier + " · " : ""}Week ${w} · ${wk.final ? "Final" : "Live"}`, title: `${tn(g.sides[0].team)} vs ${tn(g.sides[1].team)}`, rows, note };
+    }
+    if (kind === "trade") {
+      const tr = D.trades.find(x => String(x.id) === el.dataset.trade);
+      const graded = tr.weeksSince > 0;
+      const best = graded ? Math.max(...tr.sides.map(s => s.started)) : null;
+      const rows = tr.sides.map(s => ({ label: "Receives", logo: tl(s.team), title: tn(s.team), sub: s.gets.map(p => p.name).join(", "),
+        value: graded ? s.started.toFixed(1) : "", hi: graded && s.started === best && Math.abs(tr.sides[0].started - tr.sides[1].started) >= 5 }));
+      let note = "Too early to grade: no completed weeks since the trade.";
+      if (graded && tr.sides.length === 2) {
+        const d = tr.sides[0].started - tr.sides[1].started;
+        note = Math.abs(d) < 5 ? "Even so far in started points." : `${tn(tr.sides[d > 0 ? 0 : 1].team)} ${L.over ? "won" : "is winning"} by ${Math.abs(d).toFixed(1)} started points over ${tr.weeksSince} week${tr.weeksSince === 1 ? "" : "s"}.`;
+      }
+      return { file: `trade-week-${tr.week || ""}`, kicker: `Trade grade${tr.week ? " · Week " + tr.week : ""}`, title: tr.sides.map(s => tn(s.team)).join(" ⇄ "), rows, note };
+    }
+    if (kind === "bracket") {
+      const M = bracketModel();
+      const rows = [];
+      M.rounds.forEach(r => r.matches.filter(m => !m.bye && !m.tbd && m.entries.length === 2).forEach(m => {
+        const [a, b] = m.entries, w = a.won ? a : b.won ? b : null;
+        rows.push({ label: r.name, logo: tl((w || a).team), title: `${a.seed ? "#" + a.seed + " " : ""}${tn(a.team)} vs ${b.seed ? "#" + b.seed + " " : ""}${tn(b.team)}`,
+          sub: w ? `${tn(w.team)} advances` : "in progress", value: `${fmt(a.pts)}–${fmt(b.pts)}`.replace(/\.\d+/g, ""), hi: r.r === M.rounds.length && !!w });
+      }));
+      const champ = M.champion ? tn(M.champion) : null;
+      return { file: `${L.season}-playoffs`, kicker: `${L.season} playoffs`, title: champ ? `Champion: ${champ}` : "Playoff bracket", rows };
+    }
+    return null;
+  }
+
+  async function openShare(kind, el) {
+    const spec = shareSpec(kind, el);
+    if (!spec) return;
+    const modal = document.createElement("div");
+    modal.className = "share-modal";
+    modal.innerHTML = `<div class="share-sheet" role="dialog" aria-modal="true" aria-label="Share image"><div class="share-preview"><div class="empty">Making the image…</div></div>
+      <div class="share-actions"></div><button type="button" class="linkbtn share-close">Close</button></div>`;
+    document.body.appendChild(modal);
+    const close = () => { modal.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = e => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    modal.addEventListener("click", e => { if (e.target === modal || e.target.closest(".share-close")) close(); });
+    let blob;
+    try { blob = await drawCard(spec); } catch (_) { blob = null; }
+    if (!document.body.contains(modal)) return;
+    if (!blob) { modal.querySelector(".share-preview").innerHTML = '<div class="empty">Couldn\'t make the image. Try again.</div>'; return; }
+    const name = `league-hq-${spec.file}.png`.replace(/[^a-z0-9.-]+/gi, "-").toLowerCase();
+    const url = URL.createObjectURL(blob);
+    modal.querySelector(".share-preview").innerHTML = `<img src="${url}" alt="${esc(spec.title)}">`;
+    const file = new File([blob], name, { type: "image/png" });
+    const acts = [];
+    if (navigator.canShare && navigator.canShare({ files: [file] })) acts.push('<button type="button" class="cta" data-act="share">Share…</button>');
+    if (navigator.clipboard && window.ClipboardItem) acts.push('<button type="button" class="cta alt" data-act="copy">Copy image</button>');
+    acts.push(`<a class="cta alt" data-act="download" href="${url}" download="${name}">Download</a>`);
+    const box = modal.querySelector(".share-actions");
+    box.innerHTML = acts.join("");
+    box.addEventListener("click", async e => {
+      const b = e.target.closest("[data-act]");
+      if (!b) return;
+      try {
+        if (b.dataset.act === "share") await navigator.share({ files: [file], title: spec.title });
+        if (b.dataset.act === "copy") { await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]); b.textContent = "Copied!"; }
+      } catch (_) { /* cancelled */ }
+    });
+  }
+
+  document.addEventListener("click", e => {
+    const b = e.target.closest(".share-btn");
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    openShare(b.dataset.share, b);
+  }, true);
 
   // ---------------------------------------------------------------- live updates
   // While the current season is in progress, re-check for fresh data every 2 minutes
