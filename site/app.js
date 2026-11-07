@@ -636,23 +636,18 @@
       const rec = v => `${v[0]}–${v[1]}${v[2] ? "–" + v[2] : ""}`;
       const order = S.teams.map(id => teamById[id]).filter(Boolean).sort((a, b) => a.standing - b.standing);
       const ids = order.map(t => String(t.id));
-      // per team: actual, best and worst schedule, average wins across every schedule
+      // per team: its best and worst possible schedule (record, luck and expected wins live on the Luck tab)
       const sum = order.map(t => {
         const row = G[t.id], cells = ids.map(b => ({ b, v: row[b] }));
         const best = cells.reduce((x, y) => (y.v[0] - y.v[1] > x.v[0] - x.v[1] ? y : x));
         const worst = cells.reduce((x, y) => (y.v[0] - y.v[1] < x.v[0] - x.v[1] ? y : x));
-        const avg = cells.reduce((n, c) => n + c.v[0] + c.v[2] / 2, 0) / cells.length;
-        const actual = row[t.id];
-        return { t, actual, best, worst, avg, diff: actual[0] + actual[2] / 2 - avg };
+        return { t, best, worst };
       });
       const summary = table([
         { label: "Team", cell: r => teamCell(r.t) },
-        { label: "Actual", num: 1, cell: r => rec(r.actual) },
-        { label: "Best schedule", num: 1, cell: r => `${rec(r.best.v)} <span class="muted">with ${esc(poss(tname(r.best.b)))}</span>` },
-        { label: "Worst schedule", num: 1, cell: r => `${rec(r.worst.v)} <span class="muted">with ${esc(poss(tname(r.worst.b)))}</span>` },
-        { label: "Avg. wins", num: 1, cell: r => r.avg.toFixed(1) },
-        { label: "Schedule luck", num: 1, cell: r => signedPts(r.diff, true) },
-      ], sum.slice().sort((a, b) => a.diff - b.diff));
+        { label: "Best schedule", num: 1, cell: r => `${rec(r.best.v)} <span class="muted">${r.best.b === String(r.t.id) ? "their own schedule" : "with " + esc(poss(tname(r.best.b)))}</span>` },
+        { label: "Worst schedule", num: 1, cell: r => `${rec(r.worst.v)} <span class="muted">${r.worst.b === String(r.t.id) ? "their own schedule" : "with " + esc(poss(tname(r.worst.b)))}</span>` },
+      ], sum);
       // full grid: rows = whose scores, columns = whose schedule
       const maxW = S.weeks;
       const heat = v => { const f = (v[0] + v[2] / 2) / maxW; return `background: color-mix(in srgb, var(--accent) ${Math.round(f * 55)}%, var(--surface));`; };
@@ -665,7 +660,7 @@
       const pickRow = ids.map(b => ({ b, v: G[state.swapTeam][b] })).sort((x, y) => (y.v[0] - y.v[1]) - (x.v[0] - x.v[1]));
       const picker = `<div class="sg-pick"><label class="field">Team <select id="swap-team">${order.map(t => `<option value="${t.id}"${String(t.id) === state.swapTeam ? " selected" : ""}>${esc(t.name)}</option>`).join("")}</select></label>
         <div class="picks" style="margin-top:10px">${pickRow.map(c => `<div class="pick"><span class="pick-no">${rec(c.v)}</span>${logo(teamById[c.b])}<span class="pick-name"><b>${esc(poss(tname(c.b)))} schedule</b>${c.b === state.swapTeam ? '<span class="team-mgr">actual record</span>' : ""}</span></div>`).join("")}</div></div>`;
-      return section("Schedule swap", { short: "Each team's record with every other team's schedule.", full: `Each team's record if it had played every other team's schedule, using its real weekly scores (${S.weeks} completed regular-season weeks). When the other schedule had a game against this team, it plays that team instead. Schedule luck = actual wins minus the average across all ${order.length} schedules.` }, summary) +
+      return section("Schedule swap", { short: "Each team's record with every other team's schedule.", full: `Each team's record if it had played every other team's schedule, using its real weekly scores (${S.weeks} completed regular-season weeks). When the other schedule had a game against this team, it plays that team instead. For actual records and luck, see the Luck tab.` }, summary) +
         section("Every schedule", "Rows are each team's scores; columns are whose schedule they play. The outlined cell is the real record. Greener means more wins.",
           `<div class="sg-wrap"><table class="swap-grid"><thead>${head}</thead><tbody>${body}</tbody></table></div>${picker}`);
     },

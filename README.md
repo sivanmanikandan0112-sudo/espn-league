@@ -37,7 +37,7 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
     the league average, `STRENGTH_SHRINK`; the week in progress uses ESPN's live win probabilities).
     Past seasons show final results.
   - *Luck* (actual vs. all-play expected wins), *Schedule* (opponent strength so far and remaining),
-    *Schedule swap* (every team's record on every other team's schedule, with schedule luck),
+    *Schedule swap* (every team's record on every other team's schedule, best and worst),
     *Efficiency* (points started vs. best lineup).
   - *Draft*: each pick vs. players at the same position drafted around the same spot; team grades, steals, busts.
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
