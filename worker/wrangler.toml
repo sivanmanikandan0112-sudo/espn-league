@@ -1,0 +1,13 @@
+name = "league-hq-live"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+[vars]
+LEAGUE_ID = "1262273109"
+SITE_ORIGIN = "https://sivanmanikandan0112-sudo.github.io"
+GITHUB_REPO = "sivanmanikandan0112-sudo/espn-league"
+GITHUB_WORKFLOW = "refresh.yml"
+
+# Rebuild the full site every 30 minutes (only if a GITHUB_TOKEN secret is set).
+[triggers]
+crons = ["*/30 * * * *"]

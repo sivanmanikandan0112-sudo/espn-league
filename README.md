@@ -81,3 +81,22 @@ gh secret set -f .env
 ```
 
 GitHub pauses scheduled workflows after 60 days with no commits; re-enable it from the Actions tab if that happens.
+
+## Live worker (minute-by-minute scores)
+
+`worker/` is a small Cloudflare Worker (free plan). `GET /live` returns the current week's matchups, lineups and
+player stat lines straight from ESPN, cached for 60 seconds; open pages fetch it every minute during the week.
+Its cron (every 30 min) also triggers the GitHub rebuild, since GitHub's own scheduler skips runs when busy.
+The ESPN cookies live only in the Worker's secrets.
+
+```bash
+cd worker
+npx wrangler login
+npx wrangler deploy
+grep '^ESPN_S2=' ../.env | cut -d= -f2- | npx wrangler secret put ESPN_S2
+grep '^ESPN_SWID=' ../.env | cut -d= -f2- | npx wrangler secret put ESPN_SWID
+npx wrangler secret put GITHUB_TOKEN   # optional: fine-grained token, this repo only, Actions read/write
+```
+
+Then put the Worker's URL in `site/config.js` (`liveApi`). When the ESPN cookies expire, re-run the two
+`secret put` lines (and `gh secret set -f .env` for the GitHub build).

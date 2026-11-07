@@ -149,7 +149,8 @@
     const wide = !window.matchMedia || window.matchMedia("(min-width: 641px)").matches;
     document.getElementById("footer-notes").innerHTML = `<details class="how"${wide ? " open" : ""}><summary>How these numbers work</summary>${footerNotes()}</details>`;
     document.getElementById("updated").innerHTML = "Data snapshot · " + esc(new Date(D.updated).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })) +
-      (isCur && !L.over ? ` <span class="live-chip${live.on ? " on" : ""}" id="live-chip">${live.on ? "Live · checking every 2 min" : ""}</span>` : "");
+      (isCur && !L.over ? ` <span class="live-chip${live.on ? " on" : ""}" id="live-chip"></span>` : "");
+    updateLiveChip();
     renderBanner();
   }
 
@@ -1196,14 +1197,50 @@
       }
     } catch (_) { /* offline or mid-deploy: try again next time */ }
   }
+  // Minute-by-minute scores: the live worker returns the current week's matchups, lineups and stat lines
+  // straight from ESPN (cached 60s on its side). The full site still rebuilds on its own schedule.
+  const LIVE_API = ((window.LEAGUE_CONFIG || {}).liveApi || "").replace(/\/$/, "");
+  let liveAsOf = null;
+  async function liveTick() {
+    if (document.hidden || !LIVE_API) return;
+    const cur = window.LEAGUE_DATA[IDX.current];
+    if (!cur || cur.league.over) return;
+    try {
+      const r = await fetch(LIVE_API + "/live", { cache: "no-store" });
+      if (!r.ok) return;
+      const lv = await r.json();
+      if (lv.error || lv.season !== IDX.current) return;
+      if (lv.week !== cur.league.currentWeek) { poll(); return; } // ESPN moved on to a new week: reload everything
+      const wk = cur.weeks.find(w => w.week === lv.week);
+      if (!wk || wk.final) return;
+      wk.games = lv.games;
+      if (window.LEAGUE_STATS && window.LEAGUE_STATS[IDX.current]) Object.assign(window.LEAGUE_STATS[IDX.current], lv.stats);
+      liveAsOf = lv.updated;
+      updateLiveChip();
+      const typing = document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
+      if (state.season === IDX.current && ["standings", "matchups"].includes(state.tab) && !typing) {
+        const y = window.scrollY;
+        await route();
+        window.scrollTo(0, y);
+      }
+    } catch (_) { /* network blip: next minute */ }
+  }
+  function updateLiveChip() {
+    const chip = document.getElementById("live-chip");
+    if (!chip || !live.on) return;
+    chip.className = "live-chip on";
+    chip.textContent = LIVE_API
+      ? "Live · scores update every minute" + (liveAsOf ? " · as of " + new Date(liveAsOf).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "")
+      : "Live · checking every 2 min";
+  }
   function startLive() {
     const cur = window.LEAGUE_DATA[IDX.current];
     if (!cur || cur.league.over || live.timer) return;
     live.on = true;
     live.timer = setInterval(poll, 120000);
-    const chip = document.getElementById("live-chip");
-    if (chip) { chip.className = "live-chip on"; chip.textContent = "Live · checking every 2 min"; }
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+    if (LIVE_API) { liveTick(); setInterval(liveTick, 60000); }
+    updateLiveChip();
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) { poll(); liveTick(); } });
   }
 
   route().then(startLive);
