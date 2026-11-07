@@ -23,8 +23,12 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 
 ## Notes
 
-- **Power value** = sum of every rostered player's ESPN rest-of-season projected points.
-  Position bars use each team's top QBs/RBs/WRs/TEs (starters + one backup); the number is the league rank.
+- **Power value** = value over replacement. Each QB/RB/WR/TE is worth his ESPN rest-of-season projection
+  minus the best free agent's at his position (floor 0). The team's best legal lineup (QB, RB, WR, TE, FLEX)
+  counts in full; everyone else counts at `BENCH_WEIGHT` (0.3). K and D/ST are excluded.
+  For display, that edge is added to a free-agent-only lineup's projection and scaled so the top team
+  shows `POWER_TOP` (2,500). This keeps the order and gives familiar numbers.
+  Bar segments are each position's share; the number is the team's rank at that position.
 - **Roster cards** show each player's rest-of-season rank at their position (e.g. "ROS RB 12"), from ESPN's
   rest-of-season projections across the 1,000 most-rostered players. "—" means ESPN projects no more points (out/IR).
 - **Trade history** comes from the league activity feed (completed trades only).

@@ -24,6 +24,8 @@ PRO = {0: "FA", 1: "ATL", 2: "BUF", 3: "CHI", 4: "CIN", 5: "CLE", 6: "DAL", 7: "
        17: "NE", 18: "NO", 19: "NYG", 20: "NYJ", 21: "PHI", 22: "ARI", 23: "PIT", 24: "LAC",
        25: "SF", 26: "SEA", 27: "TB", 28: "WSH", 29: "CAR", 30: "JAX", 33: "BAL", 34: "HOU"}
 POWER_POSITIONS = ["QB", "RB", "WR", "TE"]
+BENCH_WEIGHT = 0.3
+POWER_TOP = 2500  # displayed power value of the #1 team
 
 
 def load_env():
@@ -113,11 +115,15 @@ def build(season):
                                    "sortPercOwned": {"sortPriority": 1, "sortAsc": False}}})
     pool = fetch(season, params=[("view", "kona_player_info")], headers={"X-Fantasy-Filter": filt})
     by_pos = defaultdict(list)
+    replacement = defaultdict(float)  # best unrostered (free agent / waivers) projection per position
     for e in pool.get("players", []):
         p = e["player"]
         ros = proj(p, season, 0, 0)
+        pos = POS.get(p.get("defaultPositionId"), "?")
         if ros > 0:
-            by_pos[POS.get(p.get("defaultPositionId"), "?")].append((ros, p["id"]))
+            by_pos[pos].append((ros, p["id"]))
+        if not e.get("onTeamId"):
+            replacement[pos] = max(replacement[pos], ros)
     ros_rank = {}
     for pos, rows in by_pos.items():
         for i, (_, pid) in enumerate(sorted(rows, reverse=True)):
@@ -148,17 +154,41 @@ def build(season):
             "roster": roster,
         }
 
-    # Power value: sum of each player's ESPN rest-of-season projection.
-    # Position power counts the top-N players at that position (N = starters + 1 for depth).
-    slot_counts = main["settings"]["rosterSettings"]["lineupSlotCounts"]
-    depth = {"QB": int(slot_counts.get("0", 1)) + 1, "RB": int(slot_counts.get("2", 2)) + 1,
-             "WR": int(slot_counts.get("4", 2)) + 1, "TE": int(slot_counts.get("6", 1)) + 1}
+    # Power value = value over replacement (VOR).
+    #  - A player's value = his rest-of-season projection minus the best free agent's at his position
+    #    (never below 0): what he gives you over someone you could pick up today.
+    #  - Starters (the best legal QB/RB/WR/TE/FLEX lineup by projection) count in full;
+    #    everyone else counts at BENCH_WEIGHT, since bench players only matter for byes/injuries.
+    #  - K and D/ST are left out: they're close to random week to week.
+    slot_counts = {int(k): int(v) for k, v in main["settings"]["rosterSettings"]["lineupSlotCounts"].items()}
+    fixed_slots = {"QB": slot_counts.get(0, 0), "RB": slot_counts.get(2, 0),
+                   "WR": slot_counts.get(4, 0), "TE": slot_counts.get(6, 0)}
+    flex_slots = slot_counts.get(23, 0)  # RB/WR/TE flex
     for t in teams.values():
-        t["power"] = round(sum(r["ros"] for r in t["roster"]))
-        t["posPower"] = {}
-        for pos in POWER_POSITIONS:
-            vals = sorted((r["ros"] for r in t["roster"] if r["pos"] == pos), reverse=True)
-            t["posPower"][pos] = round(sum(vals[:depth[pos]]), 1)
+        players = [r for r in t["roster"] if r["pos"] in POWER_POSITIONS]
+        for r in players:
+            r["vor"] = round(max(0.0, r["ros"] - replacement[r["pos"]]), 1)
+        starters = set()
+        for pos, n in fixed_slots.items():
+            best = sorted((r for r in players if r["pos"] == pos and r["ros"] > 0), key=lambda r: -r["ros"])
+            starters.update(r["id"] for r in best[:n])
+        flex_pool = sorted((r for r in players if r["id"] not in starters and r["ros"] > 0
+                            and r["pos"] in ("RB", "WR", "TE")), key=lambda r: -r["ros"])
+        starters.update(r["id"] for r in flex_pool[:flex_slots])
+        t["posPower"] = {pos: 0.0 for pos in POWER_POSITIONS}
+        for r in players:
+            t["posPower"][r["pos"]] += r["vor"] * (1.0 if r["id"] in starters else BENCH_WEIGHT)
+        t["posPower"] = {k: round(v, 1) for k, v in t["posPower"].items()}
+        t["vorTotal"] = sum(t["posPower"].values())
+
+    # Displayed power = (a free-agent-only starting lineup's projection + the team's edge over it),
+    # scaled so the top team shows POWER_TOP. Same order as the raw edge; friendlier numbers.
+    baseline = sum(replacement[pos] * n for pos, n in fixed_slots.items())
+    baseline += flex_slots * max(replacement["RB"], replacement["WR"], replacement["TE"])
+    scale = POWER_TOP / max(baseline + t["vorTotal"] for t in teams.values())
+    for t in teams.values():
+        t["power"] = round((baseline + t.pop("vorTotal")) * scale)
+    print("Power: free-agent lineup baseline %.0f pts, scale x%.2f" % (baseline, scale))
     for pos in POWER_POSITIONS:
         ranked = sorted(teams.values(), key=lambda t: -t["posPower"][pos])
         for i, t in enumerate(ranked):

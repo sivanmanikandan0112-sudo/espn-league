@@ -48,8 +48,11 @@
 
   <footer class="footer">
     <div class="wrap footer-inner">
-      <p><strong>Power value</strong> is the sum of each rostered player's ESPN rest-of-season projected points.
-        Position bars count each team's top QBs, RBs, WRs and TEs (starters plus one backup); the number in each bar is that position's rank in the league.</p>
+      <p><strong>Power value</strong> measures how much better a roster is than what's sitting on waivers.
+        Each player is worth his ESPN rest-of-season projection minus the best free agent's at his position.
+        A team's best QB/RB/WR/TE/FLEX lineup counts in full and bench players count 30%; kickers and defenses are left out.
+        That edge is added to what a lineup of free agents would score, then scaled so the top team shows 2,500.
+        Each bar segment is that position's share of the edge, and its number is the team's rank at that position.</p>
       <p class="muted" id="updated"></p>
     </div>
   </footer>
