@@ -124,7 +124,7 @@
     const champ = D.teams.find(t => t.finalRank === 1);
     document.getElementById("week-label").textContent = L.over ? "FINAL" : L.currentWeek > L.regularSeasonWeeks ? "PLAYOFFS" : "WEEK " + pad(L.currentWeek);
     document.getElementById("teams-label").textContent = L.over && champ ? "Champion · " + champ.name : L.size + " teams · ESPN Fantasy";
-    document.querySelectorAll(".tabs a").forEach(a => {
+    document.querySelectorAll("a[data-tab]").forEach(a => {
       const t = a.dataset.tab;
       a.setAttribute("href", href(t));
       a.classList.toggle("active", t === state.tab);
@@ -273,7 +273,8 @@
       const block = (label, val, list) => `
         <div class="panel-row"><span class="kicker">${label}</span>${list.length > 1 ? '<span class="kicker">Tied</span>' : ""}</div>
         <div class="big">${fmt(val)}<small>PTS</small></div>
-        ${list.map(r => `<div class="mini-team">${logo(r.team)}${esc(r.team.name)}</div>`).join("")}`;
+        ${list.slice(0, 3).map(r => `<div class="mini-team">${logo(r.team)}${esc(r.team.name)}</div>`).join("")}
+        ${list.length > 3 ? `<div class="note" title="${esc(list.slice(3).map(r => r.team.name).join(", "))}">+${list.length - 3} more tied</div>` : ""}`;
       winners = block("Highest score", hi, rows.filter(r => r.pts === hi)) + '<hr class="divider">' + block("Lowest score", lo, rows.filter(r => r.pts === lo));
     }
     const opts = D.weeks.slice().reverse().map(w => `<option value="${w.week}"${w.week === state.sideWeek ? " selected" : ""}>Week ${w.week}${w.playoffs ? " (playoffs)" : ""}</option>`).join("");
@@ -394,7 +395,10 @@
         <button class="game-btn" data-game="${g.id}" aria-expanded="${isOpen}">${row(a)}${row(b)}
           <div class="game-foot"><span>${tier ? tier + " · " : ""}${liveG ? "In progress" : "Final"}${wp ? " · " + wp : ""}</span><span>${isOpen ? "Hide box score ↑" : "Box score ↓"}</span></div>
         </button>
-        ${isOpen && a && b ? `<div class="box">${boxCol(a)}${boxCol(b)}</div>` : ""}
+        ${isOpen && a && b ? `<div class="box-toggle" role="tablist" aria-label="Show lineup">
+            <button type="button" role="tab" data-boxside="0" aria-selected="true" class="active">${esc(teamById[a.team].name)}</button>
+            <button type="button" role="tab" data-boxside="1" aria-selected="false">${esc(teamById[b.team].name)}</button></div>
+          <div class="box" data-show="0">${boxCol(a)}${boxCol(b)}</div>` : ""}
       </article>`;
     }).join("");
     main.innerHTML = `
@@ -409,7 +413,7 @@
   // ---------------------------------------------------------------- insights
   function table(cols, rows) {
     return `<div class="table-wrap"><table class="tbl"><thead><tr>${cols.map(c => `<th class="${c.num ? "n" : ""}">${c.label}</th>`).join("")}</tr></thead>
-      <tbody>${rows.map(r => `<tr>${cols.map(c => `<td class="${c.num ? "n" : ""}">${c.cell(r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      <tbody>${rows.map(r => `<tr>${cols.map((c, i) => `<td class="${c.num ? "n" : ""}${i === 0 ? " lead" : ""}" data-label="${c.label}">${c.cell(r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
   }
   const teamCell = t => `<span class="tcell">${logo(t)}<span><span class="tname">${esc(t.name)}</span><span class="team-mgr">${esc(t.manager)}</span></span></span>`;
   const barCell = (v, cls) => `<span class="pbar"><span class="pbar-fill ${cls || ""}" style="width:${Math.min(100, v || 0)}%"></span><span class="pbar-v">${pct(v)}</span></span>`;
@@ -584,10 +588,10 @@
         const seasons = open ? `<tr class="sub-row"><td colspan="9"><div class="member-seasons">${x.seasons.slice().reverse().map(s => `
           <a class="ms" href="#/?season=${s.season}">${logoImg(s.logo, s.team)}<span><b>${s.season}</b> · ${esc(s.team)}<br><span class="team-mgr">${s.w}–${s.l}${s.t ? "–" + s.t : ""} · ${s.finish ? finishText(s.finish) : "in progress (#" + s.standing + ")"}</span></span></a>`).join("")}</div></td></tr>` : "";
         return `<tr class="member-row${open ? " open" : ""}" data-member="${esc(x.id)}" tabindex="0" aria-expanded="${open}">
-          <td><span class="mname">${esc(x.name)}</span>${x.active ? (x.seasons.length === 1 ? ' <span class="badge new">New</span>' : "") : ' <span class="badge former">Former</span>'}</td>
-          <td class="n">${x.seasons.length}</td><td class="n">${x.w}–${x.l}${x.t ? "–" + x.t : ""}</td><td class="n">${(x.pct * 100).toFixed(1)}%</td>
-          <td class="n">${x.ppg.toFixed(1)}</td><td class="n">${x.titles ? `<b class="champ">${x.titles}</b>` : "0"}</td>
-          <td class="n">${x.finals}</td><td class="n">${x.playoffs}</td><td class="n">${x.best ? finishText(x.best) : "—"}</td></tr>${seasons}`;
+          <td class="lead" data-label="Manager"><span class="mname">${esc(x.name)}</span>${x.active ? (x.seasons.length === 1 ? ' <span class="badge new">New</span>' : "") : ' <span class="badge former">Former</span>'}</td>
+          <td class="n" data-label="Seasons">${x.seasons.length}</td><td class="n" data-label="Record">${x.w}–${x.l}${x.t ? "–" + x.t : ""}</td><td class="n" data-label="Win %">${(x.pct * 100).toFixed(1)}%</td>
+          <td class="n" data-label="Pts/game">${x.ppg.toFixed(1)}</td><td class="n" data-label="Titles">${x.titles ? `<b class="champ">${x.titles}</b>` : "0"}</td>
+          <td class="n" data-label="Finals">${x.finals}</td><td class="n" data-label="Playoffs">${x.playoffs}</td><td class="n" data-label="Best">${x.best ? finishText(x.best) : "—"}</td></tr>${seasons}`;
       }).join("");
       return section("Champions", "", `<div class="champs">${champs || '<div class="empty">No completed seasons yet.</div>'}</div>`) +
         section("All-time standings", "By member, across every season they played. Tap a row for their seasons.",
@@ -678,6 +682,17 @@
     }
     const wkBtn = e.target.closest("[data-week]");
     if (wkBtn) { location.hash = href("matchups", { week: wkBtn.dataset.week }); return; }
+    const side = e.target.closest("[data-boxside]");
+    if (side) {
+      const art = side.closest(".game");
+      art.querySelector(".box").dataset.show = side.dataset.boxside;
+      art.querySelectorAll("[data-boxside]").forEach(b => {
+        const on = b === side;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-selected", on);
+      });
+      return;
+    }
     const game = e.target.closest("[data-game]");
     if (game) {
       const p = new URLSearchParams(state.params);

@@ -44,6 +44,10 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 - **History** (tabs): champions & all-time standings, head to head, rivalries (most played, closest, most
   one-sided) and a record book (high/low scores, blowouts, closest games, shootouts, best player and bench games),
   all keyed by each member's ESPN account rather than team slot, so former members keep their records.
+- **Phones**: below 640px wide the site switches to an app-style layout (bottom tab bar, one-line header, tables as
+  cards, one-team-at-a-time box scores, swipeable weekly-winners strip). It can be added to a home screen (iPhone:
+  Share → Add to Home Screen; Android/Chrome: Install app; Mac Safari: File → Add to Dock) via `manifest.webmanifest`
+  and `site/icons/`.
 - **Live updates**: while the current season is in progress, open pages re-check for new data every 2 minutes.
   If the data is more than 8 hours old in-season, a banner warns that the refresh (usually the cookies) may be broken.
 

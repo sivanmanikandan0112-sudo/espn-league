@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>League HQ</title>
+  <meta name="theme-color" content="#0c2a20">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="League HQ">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -57,6 +65,14 @@
     <div class="wrap footer-inner" id="footer-notes"></div>
     <div class="wrap"><p class="muted" id="updated"></p></div>
   </footer>
+
+  <nav class="bottom-nav" aria-label="Sections">
+    <a href="#/" data-tab="standings"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 14V8h3v6M6.5 14V3h3v11M11 14V6h3v8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span>Standings</span></a>
+    <a href="#/matchups" data-tab="matchups"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l4 5-4 5M13 3l-4 5 4 5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span>Matchups</span></a>
+    <a href="#/insights" data-tab="insights"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 13l4-5 3 3 5-7" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span>Insights</span></a>
+    <a href="#/trades" data-tab="trades"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span>Trades</span></a>
+    <a href="#/history" data-tab="history"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v2M4 6h8l-1 8H5zM5 4h6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span>History</span></a>
+  </nav>
 
   <!-- cache-bust the data index so every visit gets the latest ESPN refresh -->
   <script>document.write('<script src="data/index.js?t=' + Date.now() + '"><\/script>');</script>
