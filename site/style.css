@@ -688,3 +688,36 @@ a.bm-foot:hover { color: var(--accent); }
 .since-who select { padding: 4px 8px; font-size: 13px; min-height: 0; }
 
 .banner.offline { background: color-mix(in srgb, var(--qb) 14%, var(--surface)); border-color: color-mix(in srgb, var(--qb) 40%, transparent); }
+
+/* ---------------------------------------------------------------- league settings */
+.set-h { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); margin: 26px 0 10px; }
+.set-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 118px), 1fr)); gap: 10px; }
+.set-tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.set-tile-k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); font-weight: 700; }
+.set-tile-v { font-family: Archivo, sans-serif; font-weight: 800; font-size: 17px; line-height: 1.2; }
+.set-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); align-items: start; }
+.set-card { padding-bottom: 8px; }
+.set-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 7px 16px; border-top: 1px solid var(--line); }
+.set-card h3 + .set-row { border-top: 0; }
+.set-k { min-width: 0; }
+.set-k .team-mgr { display: block; }
+.set-v { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.set-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 16px 12px; }
+.set-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px 4px 4px; }
+.set-chip .slot { font-size: 11px; font-weight: 800; }
+.set-chip b { font-family: Archivo, sans-serif; font-size: 15px; }
+.set-sub { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-2); margin: 12px 16px 6px; }
+.set-bracket { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; padding: 0 16px 8px; }
+.set-bracket div { display: flex; justify-content: space-between; gap: 6px; background: var(--surface-2); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+.set-bracket b { font-variant-numeric: tabular-nums; }
+.set-bracket b.pos { color: var(--accent); }
+.set-bracket b.neg { color: var(--hot); }
+.set-order { list-style: none; counter-reset: pick; margin: 0; padding: 0 16px 6px; columns: 2 220px; column-gap: 16px; }
+.set-order li { counter-increment: pick; display: flex; align-items: center; gap: 8px; padding: 5px 0; break-inside: avoid; min-width: 0; }
+.set-order li::before { content: counter(pick); font-family: Archivo, sans-serif; font-weight: 800; color: var(--ink-2); width: 18px; text-align: right; flex: none; }
+.set-order .logo { width: 24px; height: 24px; font-size: 9px; flex: none; }
+.set-order li > span { min-width: 0; }
+.set-order b, .set-order .team-mgr { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 640px) { .set-v { white-space: normal; } .set-tile-v { font-size: 15px; } }
+.set-note { margin: 2px 16px 4px; }
+.set-v .nw { white-space: nowrap; }

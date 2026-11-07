@@ -97,7 +97,7 @@
     const hash = location.hash.replace(/^#/, "") || "/";
     const [path, qs] = hash.split("?");
     const params = new URLSearchParams(qs || "");
-    const tab = ["matchups", "insights", "trades", "history"].find(t => path.startsWith("/" + t)) || "standings";
+    const tab = ["matchups", "insights", "trades", "history", "settings"].find(t => path.startsWith("/" + t)) || "standings";
     const season = Number(params.get("season")) || IDX.current;
     state.tab = tab;
     state.sub = path.split("/")[2] || "";
@@ -125,6 +125,7 @@
     else if (tab === "insights") renderInsights();
     else if (tab === "trades") renderTrades();
     else if (tab === "history") renderHistory();
+    else if (tab === "settings") renderSettings();
     else renderStandings();
   }
 
@@ -1393,6 +1394,131 @@
     const sub = HISTORY_TABS.some(([k]) => k === state.sub) ? state.sub : "overview";
     main.innerHTML = `<div class="section-head"><div><h1>League history</h1><p class="sub">${IDX.seasons.length} seasons · ${H.members.length} members all-time</p></div></div>
       ${subnav("history", HISTORY_TABS, sub)}${HISTORY[sub](H)}`;
+  }
+
+  // ---------------------------------------------------------------- league settings
+  const SCORE_GROUPS = [
+    ["Passing", [3, 4, 1, 0, 2, 20, 19, 15, 16, 64]],
+    ["Rushing", [24, 25, 23, 26, 35, 36, 37, 38]],
+    ["Receiving", [53, 42, 43, 44, 45, 46, 56, 57, 58, 41]],
+    ["Kicking", [80, 79, 78, 77, 76, 75, 74, 198, 199, 200, 201, 81, 82, 83, 84, 85, 86, 87, 88]],
+    ["Turnovers & other", [63, 68, 72, 114, 115]],
+  ];
+  const PTS_ALLOWED = [89, 90, 91, 92, 121, 122, 123, 124, 125];
+  const YDS_ALLOWED = [128, 129, 130, 131, 132, 133, 134, 135, 136];
+  const PER_YARD = new Set([3, 24, 42, 114, 115]);
+  const DAY = { SUNDAY: "Sun", MONDAY: "Mon", TUESDAY: "Tue", WEDNESDAY: "Wed", THURSDAY: "Thu", FRIDAY: "Fri", SATURDAY: "Sat" };
+  const DAY_ORDER = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+
+  function renderSettings() {
+    const S = D.settings;
+    if (!S) { main.innerHTML = '<div class="empty">Settings for this season aren\'t available yet. They\'ll show after the next refresh.</div>'; return; }
+    const num = x => (Math.round(x * 100) / 100).toString();
+    const signed = x => (x > 0 ? "+" : x < 0 ? "−" : "") + num(Math.abs(x));
+    const row = (label, value, note) => `<div class="set-row"><span class="set-k">${label}${note ? `<span class="team-mgr">${note}</span>` : ""}</span><span class="set-v">${value}</span></div>`;
+    const card = (title, rows, extra) => `<section class="rec-card set-card"><h3>${title}</h3>${rows}${extra || ""}</section>`;
+    const date = iso => iso ? new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "None";
+    const time = iso => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const items = Object.fromEntries(S.scoring.map(i => [i.stat, i]));
+    const label = id => STAT[id] || "Stat #" + id;
+
+    // at a glance
+    const ppr = (items[53] || {}).pts;
+    const fmtName = S.rankType === "PPR" || ppr === 1 ? "Full PPR" : ppr === 0.5 ? "Half PPR" : ppr ? ppr + " PPR" : "Standard";
+    const playoffStart = S.regularWeeks + 1, playoffEnd = L.finalWeek;
+    const tiles = [
+      ["Format", S.scoringType === "H2H_POINTS" ? "H2H points" : (S.scoringType || "").replace(/_/g, " ").toLowerCase(), "Head to head"],
+      ["Scoring", fmtName, ppr ? `${num(ppr)} pt per catch` : ""],
+      ["Teams", S.size || L.size, S.divisions.length > 1 ? S.divisions.length + " divisions" : "One division"],
+      ["Regular season", `${S.regularWeeks} weeks`, `Weeks 1–${S.regularWeeks}`],
+      ["Playoffs", `${S.playoffTeams} teams`, `Weeks ${playoffStart}–${playoffEnd}`],
+      ["Trade deadline", S.tradeDeadline ? new Date(S.tradeDeadline).toLocaleDateString([], { month: "short", day: "numeric" }) : "None",
+        S.tradeDeadline ? new Date(S.tradeDeadline).toLocaleDateString([], { weekday: "long" }) : ""],
+    ];
+    const glance = `<div class="set-tiles">${tiles.map(([k, v, sub]) => `<div class="set-tile"><span class="set-tile-k">${k}</span><span class="set-tile-v">${esc(String(v))}</span>${sub ? `<span class="team-mgr">${esc(sub)}</span>` : ""}</div>`).join("")}</div>`;
+
+    // roster
+    const chips = S.slots.map(s => `<span class="set-chip"><span class="slot ${esc(s.slot)}">${esc(s.slot === "BE" ? "Bench" : s.slot)}</span><b>${s.slot === "BE" && S.benchUnlimited ? s.count : s.count}</b></span>`).join("");
+    const starters = S.slots.filter(s => !["BE", "IR"].includes(s.slot)).reduce((a, s) => a + s.count, 0);
+    const total = S.slots.filter(s => s.slot !== "IR").reduce((a, s) => a + s.count, 0);
+    const flex = S.slots.find(s => s.slot === "FLEX") ? row("FLEX spot", "RB, WR or TE") : "";
+    const limits = Object.entries(S.positionLimits);
+    const roster = card("Roster", `<div class="set-chips">${chips}</div>` +
+      row("Starters", starters) + row("Roster size", total + (S.slots.find(s => s.slot === "IR") ? " + IR" : "")) + flex +
+      (limits.length ? row("Max per position", limits.map(([p, n]) => `<span class="nw">${esc(p)} ${n}</span>`).join(" · ")) : "") +
+      row("Lineup lock", S.lockType === "INDIVIDUAL_GAME" ? "At each player's kickoff" : S.lockType === "FIRST_GAME" ? "At the week's first kickoff" : esc(String(S.lockType || "—"))) +
+      (S.undroppable ? row("Undroppable list", "On", "ESPN's list of players who can't be dropped") : ""));
+
+    // scoring
+    const scoreRow = id => {
+      const v = items[id].pts;
+      if (PER_YARD.has(id)) return row(label(id), `${signed(v)} / yd`, v ? `1 pt every ${num(1 / v)} yds` : "");
+      return row(label(id), signed(v));
+    };
+    const used = new Set();
+    const groups = SCORE_GROUPS.map(([title, ids]) => {
+      const present = ids.filter(id => items[id] && items[id].pts);
+      present.forEach(id => used.add(id));
+      return present.length ? card(title, present.map(scoreRow).join("")) : "";
+    });
+    const dstVal = id => items[id] ? (items[id].dst != null ? items[id].dst : items[id].pts) : 0;
+    const dstIds = S.scoring.map(i => i.stat).filter(id => !PTS_ALLOWED.includes(id) && !YDS_ALLOWED.includes(id) && !used.has(id) && items[id].dst != null && dstVal(id));
+    const DST_ORDER = [99, 95, 96, 98, 97, 93, 101, 102, 103, 104, 206];
+    dstIds.sort((a, b) => (DST_ORDER.indexOf(a) + 1 || 99) - (DST_ORDER.indexOf(b) + 1 || 99));
+    const both = dstIds.some(id => items[id].pts && id >= 101 && id <= 104);
+    const dstPlays = dstIds.map(id => row(label(id), signed(dstVal(id)))).join("") +
+      (both ? `<p class="team-mgr set-note">Return TDs score the same for a player who makes them.</p>` : "");
+    const bracket = (title, ids) => ids.some(id => dstVal(id)) ? `<h4 class="set-sub">${title}</h4><div class="set-bracket">${ids.map(id =>
+      `<div><span>${esc(label(id).replace(/ ?\(0 pts allowed\)| pts allowed| yds allowed/g, ""))}</span><b class="${dstVal(id) > 0 ? "pos" : dstVal(id) < 0 ? "neg" : ""}">${signed(dstVal(id)) || "0"}</b></div>`).join("")}</div>` : "";
+    const dst = card("Defense / special teams", dstPlays, bracket("Points allowed", PTS_ALLOWED) + bracket("Yards allowed", YDS_ALLOWED));
+    const otherIds = S.scoring.map(i => i.stat).filter(id => !used.has(id) && items[id].dst == null && items[id].pts && !SCORE_GROUPS.some(([, ids]) => ids.includes(id)));
+    const other = otherIds.length ? card("Other", otherIds.map(scoreRow).join("")) : "";
+
+    // schedule & playoffs
+    const seedTie = { TOTAL_POINTS_SCORED: "Total points scored", H2H_RECORD: "Head-to-head record", INTRA_DIVISION_RECORD: "Division record" }[S.seedingRule] || esc(String(S.seedingRule || "—"));
+    const tie = S.tieRule === "NONE" ? "Games can end in a tie" : S.tieRule === "SLOT_POINTS" ? (S.tieRuleBy === 20 ? "Bench points break the tie" : "Points from one lineup spot break the tie") : esc(String(S.tieRule).replace(/_/g, " ").toLowerCase());
+    const rounds = Math.ceil(Math.log2(Math.max(2, S.playoffTeams || 2)));
+    const byes = S.playoffTeams && (2 ** rounds - S.playoffTeams);
+    const schedule = card("Schedule & playoffs",
+      row("Regular season", `Weeks 1–${S.regularWeeks}`) +
+      row("Playoff teams", `${S.playoffTeams}` + (byes ? ` (top ${byes} get a bye)` : "")) +
+      row("Playoff weeks", `${playoffStart}–${playoffEnd}`, S.playoffRoundWeeks > 1 ? `${S.playoffRoundWeeks} weeks per round` : "1 week per round") +
+      row("Seeding", "By record", "Tiebreak: " + seedTie) +
+      row("Reseeding", S.reseed ? "Yes" : "No", S.reseed ? "Top seed left always plays the lowest seed left" : "") +
+      row("Consolation bracket", S.consolation ? "Yes" : "No") +
+      row("Regular-season ties", tie) +
+      row("Playoff ties", S.playoffTieRule === "NONE" ? "Higher seed advances" : esc(String(S.playoffTieRule).replace(/_/g, " ").toLowerCase())) +
+      (S.homeBonus ? row("Home-team bonus", signed(S.homeBonus)) : "") +
+      (S.divisions.length > 1 ? row("Divisions", S.divisions.map(esc).join(", ")) : ""));
+
+    // draft
+    const order = S.draftOrder.length ? `<h4 class="set-sub">Draft order</h4><ol class="set-order">${S.draftOrder.map(id => {
+      const t = teamById[id];
+      return t ? `<li>${logoImg(t.logo, t.name)}<span><b>${esc(t.name)}</b><span class="team-mgr">${esc(t.manager || "")}</span></span></li>` : "";
+    }).join("")}</ol>` : "";
+    const draft = card("Draft",
+      row("Type", S.draftType === "SNAKE" ? "Snake" : S.draftType === "AUCTION" ? "Auction" : esc(String(S.draftType || "—"))) +
+      (S.draftDate ? row("Date", `${date(S.draftDate)}`, time(S.draftDate)) : "") +
+      (S.pickSeconds ? row("Time per pick", S.pickSeconds >= 60 ? `${num(S.pickSeconds / 60)} min` : `${S.pickSeconds} sec`) : "") +
+      (S.auctionBudget ? row("Auction budget", "$" + S.auctionBudget) : "") +
+      row("Keepers", S.keepers || "None"), order);
+
+    // waivers & trades
+    const days = DAY_ORDER.filter(d => S.waiverDays.includes(d)).map(d => DAY[d]);
+    const limit = n => n == null || n < 0 ? "No limit" : n;
+    const moves = card("Waivers & trades",
+      row("Waivers", S.faab != null ? `Free-agent budget ($${S.faab})` : "Waiver priority order", S.waiverReset ? "Order resets each week" : "Rolling: using a claim moves you to the back") +
+      row("Time on waivers", S.waiverHours ? `${S.waiverHours} hours after a drop` : "None") +
+      (days.length ? row("Claims run", days.length === 7 ? "Every day" : days.join(", ")) : "") +
+      row("Pickups", limit(S.acqLimit) === "No limit" ? "No limit" : `${S.acqLimit} per season`) +
+      row("Trade deadline", date(S.tradeDeadline)) +
+      row("Trade review", S.tradeReviewHours ? `${S.tradeReviewHours} hours` : "None", S.vetoVotes ? `${S.vetoVotes} league votes veto a trade` : "") +
+      (S.entryFee ? row("Entry fee", "$" + num(S.entryFee)) : ""));
+
+    main.innerHTML = `<div class="section-head"><div><h1>League settings</h1><p class="sub">${L.season} season · straight from ESPN · updated ${esc(ago(D.updated))}</p></div></div>
+      ${glance}
+      <h2 class="set-h">Roster & season</h2><div class="rec-grid set-grid">${roster}${schedule}${moves}${draft}</div>
+      <h2 class="set-h">Scoring</h2><div class="rec-grid set-grid">${groups.join("")}${other}${dst}</div>`;
   }
 
   // ---------------------------------------------------------------- events

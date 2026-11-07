@@ -185,6 +185,51 @@ def week_stats(entry, season, week):
     return None
 
 
+def _iso(ms):
+    return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).isoformat() if ms else None
+
+
+def league_settings(settings, teams):
+    """The league's rules as ESPN has them, trimmed to what a member would want to look up."""
+    ros, sch, sc = settings.get("rosterSettings", {}), settings.get("scheduleSettings", {}), settings.get("scoringSettings", {})
+    acq, dr, tr = settings.get("acquisitionSettings", {}), settings.get("draftSettings", {}), settings.get("tradeSettings", {})
+    fin = settings.get("financeSettings", {})
+    slots = [{"slot": SLOT.get(int(k), str(k)), "count": int(v), "order": SLOT_ORDER.get(int(k), 9)}
+             for k, v in ros.get("lineupSlotCounts", {}).items() if int(v) > 0]
+    slots.sort(key=lambda x: x["order"])
+    limits = {POS[int(k)]: int(v) for k, v in ros.get("positionLimits", {}).items() if int(k) in POS and int(v) > 0}
+    scoring = []
+    for i in sc.get("scoringItems", []):
+        dst = (i.get("pointsOverrides") or {}).get("16")
+        if abs(i.get("points", 0)) >= 1000 or (dst is not None and abs(dst) >= 1000):
+            continue  # ESPN placeholders, not real scoring rules
+        if i.get("points") or dst:
+            scoring.append({"stat": i["statId"], "pts": i.get("points", 0), "dst": dst})
+    return {
+        "scoringType": sc.get("scoringType"), "rankType": sc.get("playerRankType"),
+        "tieRule": sc.get("matchupTieRule"), "tieRuleBy": sc.get("matchupTieRuleBy"), "playoffTieRule": sc.get("playoffMatchupTieRule"),
+        "homeBonus": sc.get("homeTeamBonus") or 0,
+        "scoring": scoring,
+        "slots": slots, "benchUnlimited": bool(ros.get("isBenchUnlimited")), "positionLimits": limits,
+        "lockType": ros.get("lineupLocktimeType"), "undroppable": bool(ros.get("isUsingUndroppableList")),
+        "regularWeeks": sch.get("matchupPeriodCount"), "playoffTeams": sch.get("playoffTeamCount"),
+        "playoffRoundWeeks": sch.get("playoffMatchupPeriodLength"), "reseed": bool(sch.get("playoffReseed")),
+        "seedingRule": sch.get("playoffSeedingRule"), "consolation": not sch.get("consolationLadderDisabled"),
+        "divisions": [d.get("name") for d in sch.get("divisions", [])],
+        "waiverType": acq.get("acquisitionType"), "waiverHours": acq.get("waiverHours"),
+        "waiverDays": acq.get("waiverProcessDays") or [], "waiverReset": bool(acq.get("waiverOrderReset")),
+        "faab": acq.get("acquisitionBudget") if acq.get("isUsingAcquisitionBudget") else None,
+        "acqLimit": acq.get("acquisitionLimit"), "matchupAcqLimit": acq.get("matchupAcquisitionLimit"),
+        "draftType": dr.get("type"), "draftDate": _iso(dr.get("date")), "pickSeconds": dr.get("timePerSelection"),
+        "auctionBudget": dr.get("auctionBudget") if dr.get("type") == "AUCTION" else None,
+        "keepers": dr.get("keeperCount") or 0,
+        "draftOrder": [t for t in dr.get("pickOrder") or [] if t in teams],
+        "tradeDeadline": _iso(tr.get("deadlineDate")), "tradeReviewHours": tr.get("revisionHours"),
+        "vetoVotes": tr.get("vetoVotesRequired"), "tradeMax": tr.get("max"),
+        "entryFee": fin.get("entryFee") or 0, "size": settings.get("size"),
+    }
+
+
 def season_status(main, is_current):
     status = main["status"]
     final_week = status.get("finalScoringPeriod") or 17
@@ -313,6 +358,7 @@ def build_season(season, is_current, names):
         "teams": list(teams.values()),
         "weeks": weeks,
         "trades": trades,
+        "settings": league_settings(settings, teams),
         "_stats": player_stats,
     }
 
