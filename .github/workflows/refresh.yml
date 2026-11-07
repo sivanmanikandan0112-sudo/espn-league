@@ -7,6 +7,8 @@ on:
     - cron: "*/15 17-23 * * 0"     # Sunday afternoon games, every 15 min
     - cron: "*/15 0-4 * * 1,2,5"   # Sun / Mon / Thu night games, every 15 min
     - cron: "0 */3 * * *"          # otherwise every 3 hours (waivers, trades, lineup moves)
+    - cron: "0 6-13 * * 3"         # Wednesday ~1-9 AM ET, hourly: ESPN closes the week (after Tuesday stat
+                                   # corrections) and runs waivers overnight, so finished weeks land fast
   workflow_dispatch: {}            # "Run workflow" button for an instant refresh
   push:
     branches: [main]

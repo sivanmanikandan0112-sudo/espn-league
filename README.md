@@ -59,6 +59,12 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 Sunday, Monday and Thursday game windows, and every 3 hours otherwise. To refresh right now, open the
 repo's **Actions** tab → **Refresh league site** → **Run workflow**.
 
+**When a week counts as finished:** ESPN closes each week early Wednesday morning (Eastern), after Monday Night
+Football and Tuesday's stat corrections, at the same time waivers run. The hourly Wednesday-morning refresh picks
+that up, and from then on the week is included everywhere: standings, luck, efficiency, recaps, all-time records,
+head-to-head, rivalries and the record book. A week in progress shows live scores but is left out of all of those.
+Champions, titles and playoff appearances are added when a season ends.
+
 It needs three repository secrets (Settings → Secrets and variables → Actions):
 `ESPN_LEAGUE_ID`, `ESPN_S2`, `ESPN_SWID`. When the cookies expire the workflow fails (GitHub emails you);
 copy fresh cookies into `.env` and re-run:
