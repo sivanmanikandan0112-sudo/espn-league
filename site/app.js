@@ -361,11 +361,11 @@
   // ---------------------------------------------------------------- matchups
   const TIER = { WINNERS_BRACKET: "Playoffs", WINNERS_CONSOLATION_LADDER: "Consolation", LOSERS_CONSOLATION_LADDER: "Consolation" };
 
-  function boxCol(side) {
+  function boxCol(side, hl) {
     const t = teamById[side.team];
     const start = side.lineup.filter(p => p.slot !== "BE" && p.slot !== "IR");
     const bench = side.lineup.filter(p => p.slot === "BE" || p.slot === "IR");
-    const line = (p, b) => `<div class="box-line${b ? " bench" : ""}"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700;text-align:center">${esc(p.slot)}</span><span class="pn" title="${esc(p.name)} · ${esc(p.pos)} ${esc(p.team)}">${esc(p.name)}</span><span class="pp">${fmt(p.pts)}</span></div>`;
+    const line = (p, b) => `<div class="box-line${b ? " bench" : ""}${hl && String(p.id) === hl ? " hl" : ""}"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700;text-align:center">${esc(p.slot)}</span><span class="pn" title="${esc(p.name)} · ${esc(p.pos)} ${esc(p.team)}">${esc(p.name)}</span><span class="pp">${fmt(p.pts)}</span></div>`;
     return `<div class="box-col"><h4>${esc(t.name)}</h4>${start.map(p => line(p, false)).join("")}${bench.length ? '<div class="box-sep">BENCH</div>' + bench.map(p => line(p, true)).join("") : ""}</div>`;
   }
 
@@ -392,6 +392,8 @@
     if (!weeks.includes(w)) w = weeks[weeks.length - 1];
     const wk = D.weeks.find(x => x.week === w);
     const open = state.params.get("game");
+    const focusTeam = Number(state.params.get("team")) || null;   // set by Record book links
+    const focusPlayer = state.params.get("player");
     const games = wk.games.slice().sort((a, b) => (a.tier === "WINNERS_BRACKET" ? 0 : 1) - (b.tier === "WINNERS_BRACKET" ? 0 : 1)).map(g => {
       const [a, b] = g.sides;
       const winnerId = g.winner === "HOME" ? a && a.team : g.winner === "AWAY" ? b && b.team : null;
@@ -416,10 +418,13 @@
         <button class="game-btn" data-game="${g.id}" aria-expanded="${isOpen}">${row(a)}${row(b)}
           ${isOpen ? wpBar : ""}<div class="game-foot"><span>${tier ? tier + " · " : ""}${liveG ? "In progress" : "Final"}</span><span>${isOpen ? "Hide box score ↑" : "Box score ↓"}</span></div>
         </button>
-        ${isOpen && a && b ? `<div class="box-toggle" role="tablist" aria-label="Show lineup">
-            <button type="button" role="tab" data-boxside="0" aria-selected="true" class="active">${esc(teamById[a.team].name)}</button>
-            <button type="button" role="tab" data-boxside="1" aria-selected="false">${esc(teamById[b.team].name)}</button></div>
-          <div class="box" data-show="0">${boxCol(a)}${boxCol(b)}</div>` : ""}
+        ${isOpen && a && b ? (() => {
+          const showB = focusTeam != null && b.team === focusTeam ? 1 : 0;
+          return `<div class="box-toggle" role="tablist" aria-label="Show lineup">
+            <button type="button" role="tab" data-boxside="0" aria-selected="${!showB}" class="${showB ? "" : "active"}">${esc(teamById[a.team].name)}</button>
+            <button type="button" role="tab" data-boxside="1" aria-selected="${!!showB}" class="${showB ? "active" : ""}">${esc(teamById[b.team].name)}</button></div>
+          <div class="box" data-show="${showB}">${boxCol(a, focusPlayer)}${boxCol(b, focusPlayer)}</div>`;
+        })() : ""}
       </article>`;
     }).join("");
     main.innerHTML = `
@@ -429,6 +434,14 @@
       <div class="games">${games}</div>`;
     const active = main.querySelector(".week-strip .active");
     if (active) active.scrollIntoView({ block: "nearest", inline: "center" });
+    if (focusTeam && open) {  // arrived from the Record book: bring that game into view
+      const card = main.querySelector(`[data-game="${CSS.escape(open)}"]`);
+      if (card) {
+        const art = card.closest(".game");
+        art.classList.add("focus");
+        (art.querySelector(".box-line.hl") || art).scrollIntoView({ block: "center" });
+      }
+    }
   }
 
   // ---------------------------------------------------------------- insights
@@ -594,7 +607,14 @@
   // ---------------------------------------------------------------- history
   const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Head to head"], ["rivalries", "Rivalries"], ["records", "Record book"]];
   const owners = ids => esc((ids || []).map(memberName).join(" & "));
-  const whenLink = r => `<a class="when" href="#/matchups?week=${r.week}${r.season === IDX.current ? "" : "&season=" + r.season}">${r.season} · ${r.playoff ? "Playoffs" : "Wk"} ${r.week}</a>`;
+  const whenLink = r => {
+    const p = new URLSearchParams({ week: r.week });
+    if (r.season !== IDX.current) p.set("season", r.season);
+    if (r.game != null) p.set("game", r.game);
+    if (r.teamId != null) p.set("team", r.teamId);
+    if (r.pid != null) p.set("player", r.pid);
+    return `<a class="when" href="#/matchups?${p}" title="Open this box score"><span>${r.season} · ${r.playoff ? "Playoffs" : "Wk"} ${r.week}</span>${r.game != null ? '<span class="go">Box score →</span>' : ""}</a>`;
+  };
 
   const HISTORY = {
     overview(H) {
@@ -718,6 +738,7 @@
     if (game) {
       const p = new URLSearchParams(state.params);
       p.get("game") === game.dataset.game ? p.delete("game") : p.set("game", game.dataset.game);
+      ["team", "player"].forEach(k => p.delete(k));
       history.replaceState(null, "", "#/matchups?" + p.toString());
       state.params = p;
       renderKeepScroll(renderMatchups);

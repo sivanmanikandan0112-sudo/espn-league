@@ -587,14 +587,14 @@ def record_book(seasons_data, top=5):
                 a, b = g["sides"]
                 if a["pts"] <= 0 or b["pts"] <= 0:
                     continue
-                where = {"season": lg["season"], "week": w["week"], "playoff": g["tier"] == "WINNERS_BRACKET"}
+                where = {"season": lg["season"], "week": w["week"], "playoff": g["tier"] == "WINNERS_BRACKET", "game": g["id"]}
                 for s in (a, b):
-                    scores.append(dict(where, pts=s["pts"], **ref(s["team"])))
+                    scores.append(dict(where, pts=s["pts"], teamId=s["team"], **ref(s["team"])))
                     for p in s["lineup"]:
-                        row = dict(where, name=p["name"], pos=p["pos"], pts=p["pts"], **ref(s["team"]))
+                        row = dict(where, name=p["name"], pos=p["pos"], pts=p["pts"], pid=p["id"], teamId=s["team"], **ref(s["team"]))
                         (players if stats.is_starter(p) else bench if p["slot"] != "IR" else []).append(row)
                 win, lose = sorted((a, b), key=lambda s: -s["pts"])
-                games.append(dict(where, winner=ref(win["team"]), loser=ref(lose["team"]), winPts=win["pts"],
+                games.append(dict(where, teamId=win["team"], winner=ref(win["team"]), loser=ref(lose["team"]), winPts=win["pts"],
                                   losePts=lose["pts"], margin=round(win["pts"] - lose["pts"], 2),
                                   combined=round(win["pts"] + lose["pts"], 2)))
     return {
