@@ -512,3 +512,20 @@ a.bm-foot:hover { color: var(--accent); }
   .share-modal { place-items: end center; padding: 0; }
   .share-sheet { border-radius: 18px 18px 0 0; width: 100%; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
 }
+
+/* ---- player stat panel ---- */
+.box-line[data-stat] { cursor: pointer; border-radius: 6px; }
+.box-line[data-stat]:hover { background: var(--surface-2); }
+.stat-sheet { width: min(440px, 100%); }
+.stat-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.stat-head .slot { font-size: 12px; font-weight: 800; padding: 3px 8px; }
+.stat-name { font-family: Archivo, sans-serif; font-weight: 800; font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-pts { font-family: Archivo, sans-serif; font-weight: 900; font-size: 30px; text-align: right; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat-pts small { display: block; font-family: Inter, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); margin-top: 4px; }
+.stat-line { font-size: 15px; font-weight: 600; padding: 10px 12px; background: var(--surface-2); border-radius: 10px; }
+.stat-tbl { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 4px; }
+.stat-tbl th { text-align: left; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.stat-tbl td { padding: 7px 4px; border-top: 1px solid var(--line); }
+.stat-tbl .n { text-align: right; font-variant-numeric: tabular-nums; }
+.stat-tbl tfoot td { border-top: 2px solid var(--ink); font-weight: 700; }
+.stat-body { overflow: auto; }

@@ -43,6 +43,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   game, player of the week, most points left on the bench, best bench performance).
 - **Playoff bracket** (Matchups → Playoff bracket): every season's bracket with seeds, byes and scores; live during
   the playoffs; before them, "if the season ended today" with each team's playoff odds.
+- **Player stat lines**: tap any player in a box score for his real stat line and the fantasy points each stat earned
+  under that season's scoring. Stored per season in `data/<season>-stats.js`, loaded only when a player is opened.
 - **Share cards**: Share buttons on weekly recaps, matchups, trades and the bracket draw a 1080px image in the browser
   (canvas, no server) to share, copy or download.
 - **Trades**: every trade with its grade: points each side's received players scored in its starting lineup after

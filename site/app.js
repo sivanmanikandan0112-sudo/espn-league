@@ -391,11 +391,11 @@
   // ---------------------------------------------------------------- matchups
   const TIER = { WINNERS_BRACKET: "Playoffs", WINNERS_CONSOLATION_LADDER: "Consolation", LOSERS_CONSOLATION_LADDER: "Consolation" };
 
-  function boxCol(side, hl) {
+  function boxCol(side, hl, week) {
     const t = teamById[side.team];
     const start = side.lineup.filter(p => p.slot !== "BE" && p.slot !== "IR");
     const bench = side.lineup.filter(p => p.slot === "BE" || p.slot === "IR");
-    const line = (p, b) => `<div class="box-line${b ? " bench" : ""}${hl && String(p.id) === hl ? " hl" : ""}"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700;text-align:center">${esc(p.slot)}</span><span class="pn" title="${esc(p.name)} · ${esc(p.pos)} ${esc(p.team)}">${esc(p.name)}</span><span class="pp">${fmt(p.pts)}</span></div>`;
+    const line = (p, b) => `<div class="box-line${b ? " bench" : ""}${hl && String(p.id) === hl ? " hl" : ""}" role="button" tabindex="0" data-stat="${p.id}" data-stat-week="${week}" title="See ${esc(p.name)}'s stat line"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700;text-align:center">${esc(p.slot)}</span><span class="pn" title="${esc(p.name)} · ${esc(p.pos)} ${esc(p.team)}">${esc(p.name)}</span><span class="pp">${fmt(p.pts)}</span></div>`;
     return `<div class="box-col"><h4>${esc(t.name)}</h4>${start.map(p => line(p, false)).join("")}${bench.length ? '<div class="box-sep">BENCH</div>' + bench.map(p => line(p, true)).join("") : ""}</div>`;
   }
 
@@ -457,7 +457,7 @@
           <div class="box-toggle" role="tablist" aria-label="Show lineup">
             <button type="button" role="tab" data-boxside="0" aria-selected="${!showB}" class="${showB ? "" : "active"}">${esc(teamById[a.team].name)}</button>
             <button type="button" role="tab" data-boxside="1" aria-selected="${!!showB}" class="${showB ? "active" : ""}">${esc(teamById[b.team].name)}</button></div>
-          <div class="box" data-show="${showB}">${boxCol(a, focusPlayer)}${boxCol(b, focusPlayer)}</div>`;
+          <div class="box" data-show="${showB}">${boxCol(a, focusPlayer, w)}${boxCol(b, focusPlayer, w)}</div>`;
         })() : ""}
       </article>`;
     }).join("");
@@ -882,6 +882,110 @@
   }
 
 
+
+  // ---------------------------------------------------------------- player stat lines
+  // ESPN stat ids -> labels for the scoring breakdown (every id that scores in this league is covered)
+  const STAT = {
+    0: "Pass attempts", 1: "Completions", 3: "Passing yards", 4: "Passing TDs", 15: "40+ yd TD pass bonus", 16: "50+ yd TD pass bonus",
+    19: "2-pt pass", 20: "Interceptions thrown", 23: "Rushes", 24: "Rushing yards", 25: "Rushing TDs", 26: "2-pt rush",
+    35: "40+ yd TD run bonus", 36: "50+ yd TD run bonus", 37: "100-199 rush yd bonus", 38: "200+ rush yd bonus",
+    42: "Receiving yards", 43: "Receiving TDs", 44: "2-pt catch", 45: "40+ yd TD catch bonus", 46: "50+ yd TD catch bonus",
+    53: "Receptions", 56: "100-199 rec yd bonus", 57: "200+ rec yd bonus", 58: "Targets", 63: "Fumble recovered for TD", 72: "Fumbles lost",
+    77: "FG made 40-49", 80: "FG made 0-39", 85: "FG missed", 86: "Extra points", 88: "Extra point missed", 198: "FG made 50-59", 201: "FG made 60+",
+    89: "Shutout (0 pts allowed)", 90: "1-6 pts allowed", 91: "7-13 pts allowed", 92: "14-17 pts allowed", 121: "18-21 pts allowed",
+    122: "22-27 pts allowed", 123: "28-34 pts allowed", 124: "35-45 pts allowed", 125: "46+ pts allowed",
+    93: "Blocked kick return TD", 95: "Interceptions", 96: "Fumbles recovered", 97: "Blocked kicks", 98: "Safeties", 99: "Sacks",
+    101: "Kickoff return TD", 102: "Punt return TD", 103: "Interception return TD", 104: "Fumble return TD", 113: "Passes defended",
+    114: "Kick return yards", 115: "Punt return yards", 206: "Defensive 2-pt return",
+    128: "0-99 yds allowed", 129: "100-199 yds allowed", 130: "200-299 yds allowed", 131: "300-349 yds allowed", 132: "350-399 yds allowed",
+    133: "400-449 yds allowed", 134: "450-499 yds allowed", 135: "500-549 yds allowed", 136: "550+ yds allowed",
+  };
+  const BRACKET = new Set([89, 90, 91, 92, 121, 122, 123, 124, 125, 128, 129, 130, 131, 132, 133, 134, 135, 136]);
+
+  function loadStats(season) {
+    window.LEAGUE_STATS = window.LEAGUE_STATS || {};
+    if (window.LEAGUE_STATS[season]) return Promise.resolve(window.LEAGUE_STATS[season]);
+    return new Promise((resolve, reject) => {
+      const sc = document.createElement("script");
+      sc.src = "data/" + season + "-stats.js?t=" + Date.now();
+      sc.onload = () => (window.LEAGUE_STATS[season] ? resolve(window.LEAGUE_STATS[season]) : reject(new Error("empty")));
+      sc.onerror = () => reject(new Error("load failed"));
+      document.head.appendChild(sc);
+    });
+  }
+
+  // a box-score style one-liner from the raw stats
+  function statLine(pos, r) {
+    const n = id => Number(r[id] || 0);
+    const v = x => (Math.round(x * 10) / 10).toLocaleString();
+    const parts = [];
+    const pass = () => { if (n(0) || n(1) || n(3)) parts.push(`${v(n(1))}/${v(n(0))}, ${v(n(3))} pass yds${n(4) ? ", " + n(4) + " TD" : ""}${n(20) ? ", " + n(20) + " INT" : ""}`); };
+    const rush = () => { if (n(23) || n(24)) parts.push(`${v(n(23))} rush, ${v(n(24))} yds${n(25) ? ", " + n(25) + " TD" : ""}`); };
+    const rec = () => { if (n(53) || n(58) || n(42)) parts.push(`${v(n(53))} rec${n(58) ? ` (${v(n(58))} tgt)` : ""}, ${v(n(42))} yds${n(43) ? ", " + n(43) + " TD" : ""}`); };
+    if (pos === "K") {
+      parts.push(`FG ${v(n(83))}/${v(n(84))}`, `XP ${v(n(86))}/${v(n(87))}`);
+    } else if (pos === "D/ST") {
+      if (n(99)) parts.push(`${v(n(99))} sack${n(99) === 1 ? "" : "s"}`);
+      if (n(95)) parts.push(`${v(n(95))} INT`);
+      if (n(96)) parts.push(`${v(n(96))} fumble rec`);
+      const tds = n(93) + n(101) + n(102) + n(103) + n(104);
+      if (tds) parts.push(`${tds} TD`);
+      if (r[120] != null) parts.push(`${v(n(120))} pts allowed`);
+      if (r[127] != null) parts.push(`${v(n(127))} yds allowed`);
+    } else {
+      if (pos === "QB") { pass(); rush(); rec(); }
+      else if (pos === "RB") { rush(); rec(); pass(); }
+      else { rec(); rush(); pass(); }
+      if (n(72)) parts.push(`${v(n(72))} fumble${n(72) === 1 ? "" : "s"} lost`);
+    }
+    return parts.join(" · ");
+  }
+
+  async function openPlayerStats(pid, week) {
+    const wk = D.weeks.find(x => x.week === week);
+    let p = null, team = null;
+    (wk ? wk.games : []).forEach(g => g.sides.forEach(sd => sd.lineup.forEach(x => { if (String(x.id) === String(pid)) { p = x; team = sd.team; } })));
+    if (!p) return;
+    const sheet = document.createElement("div");
+    sheet.className = "share-modal stat-modal";
+    sheet.innerHTML = `<div class="share-sheet stat-sheet" role="dialog" aria-modal="true" aria-label="${esc(p.name)} stat line">
+      <div class="stat-head"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span><div style="min-width:0"><div class="stat-name">${esc(p.name)}</div>
+      <div class="team-mgr">${esc(p.team)} · Week ${week}${L.season !== IDX.current ? ", " + L.season : ""} · ${esc((teamById[team] || {}).name || "")}${p.slot === "BE" || p.slot === "IR" ? " (bench)" : ""}</div></div>
+      <div class="stat-pts">${fmt(p.pts)}<small>fantasy pts</small></div></div>
+      <div class="stat-body"><div class="empty">Loading stats…</div></div>
+      <button type="button" class="linkbtn share-close">Close</button></div>`;
+    document.body.appendChild(sheet);
+    const close = () => { sheet.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = e => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    sheet.addEventListener("click", e => { if (e.target === sheet || e.target.closest(".share-close")) close(); });
+    let st = null;
+    try { st = (await loadStats(L.season))[week + "|" + pid]; } catch (_) { /* shown below */ }
+    const body = sheet.querySelector(".stat-body");
+    if (!st) { body.innerHTML = `<p class="muted">${Math.abs(p.pts) < 0.01 ? "No stats this week (didn't play, bye or inactive)." : "Stats aren't available for this week."}</p>`; return; }
+    const r = st.r, a = st.a;
+    const rows = Object.keys(a).map(Number).sort((x, y) => Math.abs(a[y]) - Math.abs(a[x])).map(id => {
+      const label = STAT[id] || "Stat #" + id;
+      const raw = BRACKET.has(id) ? "" : (r[id] != null ? (Math.round(r[id] * 10) / 10).toLocaleString() : "");
+      return `<tr><td>${esc(label)}</td><td class="n muted">${raw}</td><td class="n"><b class="${a[id] < 0 ? "neg" : ""}">${a[id] > 0 ? "+" : ""}${a[id].toFixed(2)}</b></td></tr>`;
+    }).join("");
+    const total = Object.values(a).reduce((x, y) => x + y, 0);
+    const live = !wk.final ? `<p class="note live">Live · updates with each refresh during games</p>` : "";
+    body.innerHTML = `<div class="stat-line">${esc(statLine(p.pos, r)) || "No recorded stats"}</div>${live}
+      <table class="stat-tbl"><thead><tr><th>Scoring</th><th class="n">Stat</th><th class="n">Pts</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="muted">No scoring plays</td></tr>'}</tbody>
+      <tfoot><tr><td>Total</td><td></td><td class="n"><b>${total.toFixed(2)}</b></td></tr></tfoot></table>`;
+  }
+
+  document.addEventListener("click", e => {
+    const line = e.target.closest("[data-stat]");
+    if (!line) return;
+    openPlayerStats(line.dataset.stat, Number(line.dataset.statWeek));
+  });
+  document.addEventListener("keydown", e => {
+    const line = e.target.closest && e.target.closest("[data-stat]");
+    if (line && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); line.click(); }
+  });
+
   // ---------------------------------------------------------------- shareable image cards
   const SHARE_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10V2M5 5l3-3 3 3M3 8v5h10V8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
   const SITE_URL = location.host.endsWith("github.io") ? location.host + location.pathname.replace(/index\.html$/, "") : location.host;
@@ -1083,6 +1187,7 @@
       if (fresh.updated === IDX.updated) { renderBanner(); return; }
       const seasonText = await (await fetch("data/" + fresh.current + ".js?t=" + Date.now(), { cache: "no-store" })).text();
       window.LEAGUE_DATA[fresh.current] = parseAssigned(seasonText);
+      if (window.LEAGUE_STATS) delete window.LEAGUE_STATS[fresh.current];
       Object.assign(IDX, fresh);
       if (state.season === IDX.current || state.tab === "history") {
         const y = window.scrollY;

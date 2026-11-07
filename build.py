@@ -169,6 +169,22 @@ def player_row(entry, season, week):
     }
 
 
+# Raw stats kept for the player stat panel (everything that scores is kept too, see week_stats).
+STAT_LINE_IDS = {0, 1, 3, 4, 19, 20, 23, 24, 25, 26, 42, 43, 44, 53, 58, 62, 72, 74, 75, 77, 78, 80, 81, 83, 84, 86, 87,
+                 95, 96, 97, 98, 99, 101, 102, 103, 104, 120, 127}
+
+
+def week_stats(entry, season, week):
+    """A player's real stats for one week and the fantasy points each one earned under this league's scoring."""
+    p = entry["playerPoolEntry"]["player"]
+    for s in p.get("stats", []):
+        if s.get("statSourceId") == 0 and s.get("scoringPeriodId") == week and s.get("seasonId") == season:
+            applied = {k: round(v, 2) for k, v in (s.get("appliedStats") or {}).items() if v}
+            raw = {k: round(v, 2) for k, v in (s.get("stats") or {}).items() if v and (int(k) in STAT_LINE_IDS or k in applied)}
+            return {"r": raw, "a": applied}
+    return None
+
+
 def season_status(main, is_current):
     status = main["status"]
     final_week = status.get("finalScoringPeriod") or 17
@@ -244,6 +260,7 @@ def build_season(season, is_current, names):
     # -- matchups with box scores
     weeks = []
     names_seen = {}
+    player_stats = {}  # "week|player id" -> {r: raw stats, a: points per stat}; written to its own file
     for w in [p for p in matchup_periods if p <= current_week]:
         print("  week %d" % w, flush=True)
         data = fetch(season, params=[("view", "mMatchupScore"), ("view", "mBoxscore"), ("scoringPeriodId", w)])
@@ -260,7 +277,12 @@ def build_season(season, is_current, names):
                     continue
                 live = not over and w == current_week and m.get("winner") == "UNDECIDED"
                 pts = s.get("totalPointsLive") if live and s.get("totalPointsLive") is not None else s.get("totalPoints", 0)
-                lineup = [player_row(e, season, w) for e in (s.get("rosterForCurrentScoringPeriod") or {}).get("entries", [])]
+                entries = (s.get("rosterForCurrentScoringPeriod") or {}).get("entries", [])
+                lineup = [player_row(e, season, w) for e in entries]
+                for e in entries:
+                    st = week_stats(e, season, w)
+                    if st:
+                        player_stats["%d|%d" % (w, e["playerId"])] = st
                 lineup.sort(key=lambda r: (r["slotOrder"], -r["pts"]))
                 for r in lineup:
                     names_seen[r["id"]] = r
@@ -285,6 +307,7 @@ def build_season(season, is_current, names):
         "teams": list(teams.values()),
         "weeks": weeks,
         "trades": trades,
+        "_stats": player_stats,
     }
 
     # -- power / position strength
@@ -650,7 +673,10 @@ def main():
     built = []
     for season in seasons:
         data = build_season(season, season == args.season, names)
+        stats_blob = data.pop("_stats", {})
         write_js(os.path.join(DATA_DIR, "%d.js" % season), "LEAGUE_DATA", season, data)
+        # player stat lines load only when someone opens a player, so they live in their own file
+        write_js(os.path.join(DATA_DIR, "%d-stats.js" % season), "LEAGUE_STATS", season, stats_blob)
         built.append(data)
         print("  wrote data/%d.js (%d KB)" % (season, os.path.getsize(os.path.join(DATA_DIR, "%d.js" % season)) // 1024))
 
