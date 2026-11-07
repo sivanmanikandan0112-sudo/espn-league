@@ -146,7 +146,8 @@
     });
     const sel = document.getElementById("season-select");
     sel.innerHTML = IDX.seasons.map(s => `<option value="${s}"${s === state.season ? " selected" : ""}>${s} season${s === IDX.current ? "" : ""}</option>`).join("");
-    document.getElementById("footer-notes").innerHTML = footerNotes();
+    const wide = !window.matchMedia || window.matchMedia("(min-width: 641px)").matches;
+    document.getElementById("footer-notes").innerHTML = `<details class="how"${wide ? " open" : ""}><summary>How these numbers work</summary>${footerNotes()}</details>`;
     document.getElementById("updated").innerHTML = "Data snapshot · " + esc(new Date(D.updated).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })) +
       (isCur && !L.over ? ` <span class="live-chip${live.on ? " on" : ""}" id="live-chip">${live.on ? "Live · checking every 2 min" : ""}</span>` : "");
     renderBanner();
@@ -328,6 +329,37 @@
     </aside>`;
   }
 
+  // phones: the sidebar's highlights as a row of small tappable tiles
+  function tiles() {
+    const wk = D.weeks.find(x => x.week === state.sideWeek);
+    const rows = [];
+    (wk ? wk.games : []).forEach(g => g.sides.forEach(s => teamById[s.team] && rows.push({ team: teamById[s.team], pts: s.pts })));
+    const items = [];
+    const tile = (kicker, value, who, link) => `<a class="tile" href="${link}"><span class="kicker">${kicker}</span><span class="tile-v">${value}</span><span class="tile-who">${who}</span></a>`;
+    if (rows.length) {
+      const hi = Math.max(...rows.map(r => r.pts)), lo = Math.min(...rows.map(r => r.pts));
+      const his = rows.filter(r => r.pts === hi), los = rows.filter(r => r.pts === lo);
+      const wkLink = href("matchups", { week: state.sideWeek });
+      const label = `Wk ${state.sideWeek}${wk && !wk.final ? " · live" : ""}`;
+      items.push(tile(`High · ${label}`, fmt(hi), his.length > 1 ? his.length + " tied" : esc(his[0].team.name), wkLink));
+      items.push(tile(`Low · ${label}`, fmt(lo), los.length > 1 ? los.length + " tied" : esc(los[0].team.name), wkLink));
+    }
+    if (L.over) {
+      const c = D.teams.find(t => t.finalRank === 1);
+      if (c) items.push(tile("Champion", record(c), esc(c.name), href("insights", {}, "race")));
+    } else {
+      const pl = D.teams.slice().sort((a, b) => a.powerRank - b.powerRank)[0];
+      items.push(tile("Power leader", pl.power.toLocaleString(), esc(pl.name), href("standings")));
+    }
+    if (D.teams.some(t => t.odds)) {
+      const fav = D.teams.slice().sort((a, b) => b.odds.titlePct - a.odds.titlePct)[0];
+      items.push(tile("Title favorite", pct(fav.odds.titlePct), esc(fav.name), href("insights", {}, "race")));
+    }
+    const pf = D.teams.slice().sort((a, b) => b.pf - a.pf)[0];
+    items.push(tile("Most points", Math.round(pf.pf).toLocaleString(), esc(pf.name), href("insights", {}, "luck")));
+    return `<div class="tiles" aria-label="This week's highlights">${items.join("")}</div>`;
+  }
+
   function renderStandings() {
     const S = sorts();
     if (!S[state.sort]) state.sort = "standing";
@@ -337,7 +369,7 @@
       t.roster.some(p => p.name.toLowerCase().includes(q))) : ranked;
     const maxPos = Math.max(...D.teams.map(t => SEGS().reduce((s, p) => s + (t.posPower[p] || 0), 0)));
     const allOpen = D.teams.every(t => state.open.has(t.id));
-    main.innerHTML = `<div class="layout">
+    main.innerHTML = `${tiles()}<div class="layout">
       <section>
         <div class="section-head">
           <div><h1>League standings <span class="pill">${L.size} teams</span></h1>
@@ -451,7 +483,10 @@
   const barCell = (v, cls) => `<span class="pbar"><span class="pbar-fill ${cls || ""}" style="width:${Math.min(100, v || 0)}%"></span><span class="pbar-v">${pct(v)}</span></span>`;
   const signedPts = (n, goodHigh) => `<b class="${(goodHigh ? n > 0.05 : n < -0.05) ? "pos" : (goodHigh ? n < -0.05 : n > 0.05) ? "neg" : ""}">${signed(n)}</b>`;
   const tname = id => (teamById[id] || { name: "Team " + id }).name;
-  const section = (title, sub, body) => `<section class="insight"><div class="section-head"><div><h2>${title}</h2>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${body}</section>`;
+  // explanation that shows in full on desktop; on phones a one-line summary with an ⓘ that expands it
+  const expl = (short, full) => `<p class="sub expl"><span class="expl-short">${short}</span><span class="expl-full">${full}</span>
+    <button type="button" class="info-btn" aria-expanded="false" aria-label="How this works">i</button></p>`;
+  const section = (title, sub, body) => `<section class="insight"><div class="section-head"><div><h2>${title}</h2>${!sub ? "" : typeof sub === "string" ? `<p class="sub">${sub}</p>` : expl(sub.short, sub.full)}</div></div>${body}</section>`;
 
   function subnav(tab, items, cur) {
     return `<nav class="subnav" aria-label="${tab === "insights" ? "Insights" : "History"} sections">${items.map(([k, label]) =>
@@ -470,7 +505,7 @@
     race() {
       if (D.teams.some(t => t.odds)) {
         const rows = D.teams.slice().sort((a, b) => b.odds.playoffPct - a.odds.playoffPct || b.odds.titlePct - a.odds.titlePct);
-        return section("Playoff race", `Top ${L.playoffTeams} make the playoffs${L.playoffTeams < 2 ** L.playoffRounds ? `; top ${2 ** L.playoffRounds - L.playoffTeams} get a first-round bye` : ""}. Odds from 10,000 simulated finishes.`,
+        return section("Playoff race", { short: `Top ${L.playoffTeams} make it${L.playoffTeams < 2 ** L.playoffRounds ? ` · top ${2 ** L.playoffRounds - L.playoffTeams} get a bye` : ""}.`, full: `Top ${L.playoffTeams} make the playoffs${L.playoffTeams < 2 ** L.playoffRounds ? `; top ${2 ** L.playoffRounds - L.playoffTeams} get a first-round bye` : ""}. Odds from 10,000 simulated finishes of the rest of the regular season and the bracket; this week's games use ESPN's live win probabilities.` },
           table([
             { label: "Team", cell: teamCell },
             { label: "Record", num: 1, cell: t => record(t) },
@@ -493,7 +528,7 @@
 
     luck() {
       const rows = D.teams.filter(t => t.allPlayW != null).sort((a, b) => b.luck - a.luck);
-      return section("Luck", "All-play is the record you'd have playing every team every week. Luck = actual wins minus the wins that rate predicts.", table([
+      return section("Luck", { short: "Actual wins vs. what your scoring deserved.", full: "All-play is the record you'd have playing every team every week. Luck = actual wins minus the wins that rate predicts." }, table([
         { label: "Team", cell: teamCell },
         { label: "Record", num: 1, cell: t => record(t) },
         { label: "All-play", num: 1, cell: t => `${t.allPlayW}–${t.allPlayL} <span class="muted">(${(t.allPlayPct * 100).toFixed(0)}%)</span>` },
@@ -512,12 +547,12 @@
         { label: "They scored vs you", num: 1, cell: t => signedPts(t.sos.facedVsAvg, false) },
       ];
       if (hasLeft) cols.push({ label: "Opponents left", num: 1, cell: t => t.sos.remainingVsAvg == null ? "—" : `${signed(t.sos.remainingVsAvg)} <span class="muted">#${t.sos.remainingVsAvgRank}</span>` });
-      return section("Strength of schedule", `<b>Opponents so far</b>: how much the teams you've faced score per week compared with the league average (#1 = toughest). <b>They scored vs you</b>: how those opponents actually played against you; high means you kept running into hot weeks.${hasLeft ? " <b>Opponents left</b>: projected strength of the rest of your schedule." : ""}`, table(cols, rows));
+      return section("Strength of schedule", { short: "How tough each team's opponents have been (#1 = toughest).", full: `<b>Opponents so far</b>: how much the teams you've faced score per week compared with the league average (#1 = toughest). <b>They scored vs you</b>: how those opponents actually played against you; high means you kept running into hot weeks.${hasLeft ? " <b>Opponents left</b>: projected strength of the rest of your schedule." : ""}` }, table(cols, rows));
     },
 
     efficiency() {
       const rows = D.teams.filter(t => t.efficiency != null).sort((a, b) => b.efficiency - a.efficiency);
-      return section("Manager efficiency", "Points started as a share of the best possible lineup each week, in hindsight. Regular season.", table([
+      return section("Manager efficiency", { short: "Points started vs. the best possible lineup.", full: "Points started as a share of the best possible lineup each week, in hindsight. Regular season." }, table([
         { label: "Team", cell: teamCell },
         { label: "Efficiency", num: 1, cell: t => `<span class="pbar"><span class="pbar-fill eff" style="width:${Math.max(0, (t.efficiency - 70) / 30 * 100)}%"></span><span class="pbar-v">${t.efficiency.toFixed(1)}%</span></span>` },
         { label: "Bench pts left", num: 1, cell: t => Number(t.benchLeft).toFixed(1) },
@@ -535,7 +570,7 @@
         <span class="pick-v">${signedPts(p.value, true)}</span></div>`;
       if (!state.draftTeam || !dr.teams[state.draftTeam]) state.draftTeam = String((grades[0] || {}).t ? grades[0].t.id : "");
       const mine = dr.picks.filter(p => String(p.team) === state.draftTeam);
-      return section("Draft grades", `Each pick is compared with players at the same position drafted around the same spot (a QB18 against QBs 16–20), using points scored${sofar}. Kickers and defenses aren't graded.`, table([
+      return section("Draft grades", { short: `Each pick vs. same-position players drafted around it${sofar}.`, full: `Each pick is compared with players at the same position drafted around the same spot (a QB18 against QBs 16–20), using points scored${sofar}. Kickers and defenses aren't graded.` }, table([
           { label: "Grade", num: 1, cell: r => `<b class="grade g${r.grade[0]}">${r.grade}</b>` },
           { label: "Team", cell: r => teamCell(r.t) },
           { label: "Vs. expected", num: 1, cell: r => signedPts(r.value, true) },
@@ -584,7 +619,7 @@
         <div class="trade-body">${sides.join(swap)}</div><div class="verdict">${verdict}</div></article>`;
     }).join("");
     main.innerHTML = `<div class="section-head"><div><h1>Trade history <span class="pill">${D.trades.length} trades</span></h1>
-        <p class="sub">Every deal that went through in ${L.season}, newest first, graded by points the received players scored in the new team's starting lineup for as long as they stayed. Bench points don't count: a trade only pays off if you play them.</p></div></div>
+        ${expl(`Every ${L.season} deal, graded by points scored in the new team's lineup.`, `Every deal that went through in ${L.season}, newest first, graded by points the received players scored in the new team's starting lineup for as long as they stayed. Bench points don't count: a trade only pays off if you play them.`)}</div></div>
       <div class="trades">${body || '<div class="empty">No trades this season.</div>'}</div>`;
   }
 
@@ -691,6 +726,14 @@
     location.hash = "#/" + tab + (p.toString() ? "?" + p : "");
   });
 
+  document.addEventListener("click", e => {
+    const btn = e.target.closest(".info-btn");
+    if (!btn) return;
+    const p = btn.closest(".expl");
+    const open = !p.classList.contains("open");
+    p.classList.toggle("open", open);
+    btn.setAttribute("aria-expanded", open);
+  });
   main.addEventListener("click", e => {
     const toggle = e.target.closest("[data-toggle]");
     if (toggle) {

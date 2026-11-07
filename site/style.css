@@ -435,3 +435,29 @@ b.neg, .neg { color: var(--hot); }
   .wp small { display: none; }
   .score { font-size: 20px; }
 }
+
+/* ---- explanations: full on desktop, one-line + ⓘ on phones ---- */
+.expl-short, .info-btn, .tiles { display: none; }
+.info-btn { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--ink-2); background: none; color: var(--ink-2);
+  font: italic 700 12px/1 Georgia, serif; cursor: pointer; vertical-align: 1px; margin-left: 4px; padding: 0; }
+.info-btn[aria-expanded="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+details.how > summary { cursor: pointer; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+details.how:not([open]) > summary { margin-bottom: 0; }
+
+@media (max-width: 640px) {
+  .expl .expl-full { display: none; }
+  .expl .expl-short { display: inline; }
+  .expl .info-btn { display: inline-block; }
+  .expl.open .expl-short { display: none; }
+  .expl.open .expl-full { display: block; margin-bottom: 6px; }
+
+  /* compact highlight tiles replace the sidebar panels on phones */
+  .side { display: none; }
+  .tiles { display: flex; gap: 8px; overflow-x: auto; margin: 16px -16px 4px; padding: 0 16px 6px; scroll-snap-type: x proximity; scroll-padding: 0 16px; }
+  .tile { flex: 0 0 auto; min-width: 128px; max-width: 170px; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; scroll-snap-align: start;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px; text-decoration: none; }
+  .tile .kicker { font-size: 9.5px; white-space: nowrap; }
+  .tile-v { font-family: Archivo, sans-serif; font-weight: 900; font-size: 20px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .tile-who { font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .layout { gap: 0; }
+}
