@@ -70,6 +70,10 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   lineup/draft tiles, your NFL games to watch, byes ahead, full schedule (results, then remaining opponents) and roster
   with ROS ranks. Your team is also highlighted on Standings, Matchups (your game first), Insights tables and the
   watch guide. Works in past seasons too (member ids are ESPN accounts). On phones Settings moves to a gear in the header.
+- **Big plays** (Matchups → Big plays, or tap "Recent big plays" on the Weekly tab, which shows the newest 5):
+  every big play this week grouped by matchup. Touchdowns, field goals worth 5+ points, turnovers, defensive plays,
+  and single plays of 30+ yards (50+ for a pass). The live worker compares stats once a minute, so a gain only counts
+  when exactly one carry, catch or completion happened in that minute.
 - **Watch guide** (Matchups → Watch guide): this week's real NFL games ranked by how much they matter to the league:
   every league starter in the game, weighted by ESPN's projection and by how close his fantasy matchup is (0.35 for a
   lopsided one up to 1.0 for a toss-up), scaled so the biggest game is 100. Kickoffs come from ESPN's NFL schedule.

@@ -577,7 +577,7 @@
     return `<section class="recap"><div class="section-head"><h2>Week ${w} recap</h2><button type="button" class="share-btn" data-share="recap" data-week="${w}">${SHARE_ICON}Share</button></div><div class="recap-grid">${items.join("")}</div></section>`;
   }
 
-  const MATCHUP_TABS = [["", "Weekly"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"], ["pickem", "Pick'em"]];
+  const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"], ["pickem", "Pick'em"]];
 
   // Big plays from the live worker (TDs, field goals, turnovers, defensive plays, big gains), newest first.
   function feedFor(week, gameId) {
@@ -598,17 +598,40 @@
   function feedPanel(week) {
     const ev = feedFor(week);
     if (!ev.length) return "";
-    const FEED_SHOWN = 5; // newest plays shown before "Show all", so the feed doesn't crowd the matchups
-    const open = state.feedAll ? ev.length : FEED_SHOWN;
-    return `<section class="feed"><div class="section-head"><div><h2>Recent big plays</h2><p class="sub">Touchdowns, long field goals, turnovers and big gains, newest first. Updated every minute during games.</p></div></div>
-      <div class="plays">${ev.slice(0, open).map(playLine).join("")}</div>
-      ${ev.length > FEED_SHOWN ? `<button type="button" class="linkbtn" data-feed-toggle>${state.feedAll ? "Show fewer" : `Show all ${ev.length}`}</button>` : ""}</section>`;
+    const FEED_SHOWN = 5; // newest plays shown here, so the feed doesn't crowd the matchups; the heading opens them all
+    const all = href("matchups", {}, "plays");
+    return `<section class="feed"><div class="section-head"><div><h2><a class="feed-title" href="${all}">Recent big plays <span aria-hidden="true">›</span></a></h2><p class="sub">Touchdowns, long field goals, turnovers and big gains, newest first. Updated every minute during games.</p></div></div>
+      <div class="plays">${ev.slice(0, FEED_SHOWN).map(playLine).join("")}</div></section>`;
+  }
+
+  // Every big play this week, grouped by fantasy matchup (your matchup first, then the busiest).
+  function renderPlays() {
+    const head = `<div class="section-head"><div><h1>Big plays</h1>${expl("Every big play this week, matchup by matchup.",
+      "Touchdowns, field goals worth 5+ points, turnovers, defensive plays, and single plays of 30+ yards (50+ for a pass), caught live from ESPN every minute during games. Each play shows the fantasy points it was worth and where the matchup stood right after it. Bench players are marked.")}</div></div>${subnav("matchups", MATCHUP_TABS, "plays")}`;
+    const wk = state.season === IDX.current ? D.weeks.find(x => x.week === L.currentWeek) : null;
+    if (!wk || L.over) { main.innerHTML = head + `<div class="empty">Big plays are tracked live for the current week while the season is in progress.${state.season !== IDX.current ? ` <a href="#/matchups/plays">Go to this week</a>` : ""}</div>`; return; }
+    if (!window.LIVE_FEED) { main.innerHTML = head + `<div class="empty">Loading this week's plays…</div>`; return; }
+    const games = wk.games.filter(g => g.sides.length === 2).map(g => ({ g, ev: feedFor(wk.week, g.id) }))
+      .sort((x, y) => (y.g.sides.some(s => isMine(teamById[s.team])) - x.g.sides.some(s => isMine(teamById[s.team]))) || y.ev.length - x.ev.length);
+    const total = games.reduce((n, x) => n + x.ev.length, 0);
+    const card = ({ g, ev }) => {
+      const [a, b] = g.sides, ta = teamById[a.team], tb = teamById[b.team];
+      const side = (s, t) => `<span class="pg-side">${logo(t)}<span class="pg-name">${esc(t.name)}</span><b class="num">${fmt(s.pts)}</b></span>`;
+      return `<article class="pg-card${g.sides.some(s => isMine(teamById[s.team])) ? " mine" : ""}">
+        <a class="pg-head" href="${href("matchups", { week: wk.week, game: g.id })}">${side(a, ta)}<span class="pg-vs">vs</span>${side(b, tb)}</a>
+        ${ev.length ? `<div class="plays pg-plays">${ev.map(playLine).join("")}</div>` : `<p class="pg-none">No big plays yet.</p>`}
+        <div class="pg-foot"><span>${ev.length} big play${ev.length === 1 ? "" : "s"}</span><a href="${href("matchups", { week: wk.week, game: g.id })}">Box score →</a></div>
+      </article>`;
+    };
+    main.innerHTML = head + `<p class="pg-sum">Week ${wk.week} · ${total} big play${total === 1 ? "" : "s"} so far${wk.final ? "" : " · updates every minute during games"}</p>
+      <div class="pg-grid">${games.map(card).join("")}</div>`;
   }
 
   function renderMatchups() {
     if (state.sub === "bracket") return renderBracket();
     if (state.sub === "pickem") return renderPickem();
     if (state.sub === "watch") return renderWatch();
+    if (state.sub === "plays") return renderPlays();
     const weeks = D.weeks.map(x => x.week);
     let w = parseInt(state.params.get("week"), 10);
     if (!weeks.includes(w)) w = L.over ? weeks[weeks.length - 1] : L.currentWeek;
@@ -645,7 +668,7 @@
         ${isOpen && a && b ? (() => {
           const showB = focusTeam != null && b.team === focusTeam ? 1 : 0;
           const gp = feedFor(w, g.id);
-          const plays = gp.length ? `<div class="game-plays"><div class="box-sep">BIG PLAYS IN THIS GAME</div>${gp.slice(0, 6).map(playLine).join("")}</div>` : "";
+          const plays = gp.length ? `<div class="game-plays"><div class="box-sep">BIG PLAYS IN THIS GAME</div>${gp.slice(0, 6).map(playLine).join("")}${gp.length > 6 ? `<a class="linkbtn" href="${href("matchups", {}, "plays")}">All ${gp.length} plays →</a>` : ""}</div>` : "";
           return `${plays}<div class="box-actions"><button type="button" class="share-btn" data-share="game" data-week="${w}" data-game="${g.id}">${SHARE_ICON}Share ${wk.final ? "result" : "score"}</button></div>
           <div class="box-toggle" role="tablist" aria-label="Show lineup">
             <button type="button" role="tab" data-boxside="0" aria-selected="${!showB}" class="${showB ? "" : "active"}">${esc(teamById[a.team].name)}</button>
@@ -1821,7 +1844,6 @@
       renderStandings();
       return;
     }
-    if (e.target.closest("[data-feed-toggle]")) { state.feedAll = !state.feedAll; renderKeepScroll(renderMatchups); return; }
     const wkBtn = e.target.closest("[data-week]");
     if (wkBtn) { location.hash = href("matchups", { week: wkBtn.dataset.week }); return; }
     const side = e.target.closest("[data-boxside]");
