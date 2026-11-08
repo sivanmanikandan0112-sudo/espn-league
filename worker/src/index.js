@@ -272,7 +272,7 @@ function describePlay(oldA, newA) {
   for (const [ids, label, pri] of PLAY) {
     if (ids.some(id => KICK_IDS.has(id)) && kickPts < KICK_MIN_PTS) continue;
     const changed = ids.some(id => (newA[id] || 0) !== (oldA[id] || 0));
-    if (changed && (!best || pri > best.pri)) best = { label, pri };
+    if (changed && (!best || pri > best.pri)) best = { label, pri, ids };
   }
   return best;
 }
@@ -341,6 +341,50 @@ async function addPlayYards(events) {
   return changed;
 }
 
+// ---- points for the play itself
+// A player's points can move several times in the minute between checks (a catch, then the TD). A big play's
+// "+points" is just that play, worked out from the league's own scoring: e.g. a 47-yd receiving TD is the TD,
+// 47 yards, the catch and any long-TD bonus.
+async function scoringMap(env, yr) {
+  return cached(`scoring-${yr}`, 6 * 3600, async () => {
+    const d = await espn(env, yr, "view=mSettings");
+    const out = {};
+    for (const i of ((d.settings || {}).scoringSettings || {}).scoringItems || []) if (Math.abs(i.points) < 1000) out[i.statId] = i.points;
+    return out;
+  });
+}
+
+function playPoints(label, S) {
+  const m = String(label).match(/^(\d+)-yd (receiving TD|rushing TD|passing TD|field goal|catch|run|pass)$/);
+  if (!m) return null;
+  const y = +m[1], s = id => S[id] || 0;
+  const long = (b40, b50) => (y >= 40 ? s(b40) : 0) + (y >= 50 ? s(b50) : 0);
+  switch (m[2]) {
+    case "receiving TD": return s(43) + y * s(42) + s(53) + long(45, 46);
+    case "rushing TD": return s(25) + y * s(24) + s(23) + long(35, 36);
+    case "passing TD": return s(4) + y * s(3) + s(1) + long(15, 16);
+    case "catch": return y * s(42) + s(53);
+    case "run": return y * s(24) + s(23);
+    case "pass": return y * s(3) + s(1);
+    case "field goal": return s(83) + (y >= 60 ? (S[201] ?? S[198] ?? s(74)) : y >= 50 ? (S[198] ?? s(74)) : y >= 40 ? s(77) : s(80));
+  }
+  return null;
+}
+
+async function pricePlays(env, events) {
+  const recent = events.filter(e => Date.now() - e.t < 12 * 3600e3);
+  if (!recent.some(e => /^\d+-yd /.test(e.label))) return false;
+  const S = await scoringMap(env, season());
+  let changed = false;
+  for (const e of recent) {
+    const pts = playPoints(e.label, S);
+    if (pts == null) continue;
+    const v = Math.round(pts * 100) / 100;
+    if (Math.abs(v - e.delta) > 0.005) { e.delta = v; changed = true; }
+  }
+  return changed;
+}
+
 async function updateFeed(env) {
   const yr = season();
   const st = (await espn(env, yr, "view=mStatus")).status;
@@ -366,10 +410,13 @@ async function updateFeed(env) {
         const play = describePlay(old.a, a) || yardagePlay(old.y, y);
         if (!play && delta > -4) continue;                  // small yardage ticks aren't plays
         // (a 4+ point drop with no play behind it is almost always an official stat correction)
+        // points from the play itself (its own stats), not everything the player gained this minute; touchdowns,
+        // field goals and long gains are priced exactly once their yards are known (playPoints below)
+        const own = play && play.ids ? Math.round(play.ids.reduce((sum, id) => sum + (a[id] || 0) - ((old.a || {})[id] || 0), 0) * 100) / 100 : delta;
         events.push({
           t: Date.now(), game: g.id, team: side.team, opp: opp.team, pid: p.id, name: p.name, pos: p.pos, nfl: p.team,
           starter: !["BE", "IR"].includes(p.slot), label: play ? play.label : "stat correction",
-          delta, pts: p.pts, score: [side.pts, opp.pts],
+          delta: own, minute: delta, pts: p.pts, score: [side.pts, opp.pts],
         });
       }
     }
@@ -379,6 +426,7 @@ async function updateFeed(env) {
   // the NFL scoring summary can trail the fantasy stats by a minute or two, so recent plays are retried each minute
   let yards = false;
   try { yards = await addPlayYards(all); } catch (e) { console.log("play yards failed", String(e)); }
+  try { if (await pricePlays(env, all)) yards = true; } catch (e) { console.log("play points failed", String(e)); }
   const stale = Date.now() - (prev.savedAt || 0) > 10 * 60e3;
   if (!events.length && !yards && !stale && Object.keys(prev.snap).length) return; // nothing worth a write this minute
   await env.PICKEM.put(key, JSON.stringify({ snap, events: all, savedAt: Date.now() }), { expirationTtl: 21 * 86400 });
