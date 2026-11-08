@@ -605,26 +605,56 @@
   }
 
   // Every big play this week, grouped by fantasy matchup (your matchup first, then the busiest).
+  // Every big play this week, grouped by real NFL game (default) or by fantasy matchup; the choice is remembered.
   function renderPlays() {
-    const head = `<div class="section-head"><div><h1>Big plays</h1>${expl("Every big play this week, matchup by matchup.",
-      "Touchdowns, field goals worth 5+ points, turnovers, defensive plays, and single plays of 30+ yards (50+ for a pass), caught live from ESPN every minute during games. Each play shows the fantasy points it was worth and where the matchup stood right after it. Bench players are marked.")}</div></div>${subnav("matchups", MATCHUP_TABS, "plays")}`;
+    const asked = state.params.get("by");
+    const by = asked === "fantasy" || asked === "nfl" ? asked : store.get("plays-by", "nfl") === "fantasy" ? "fantasy" : "nfl";
+    if (asked) store.set("plays-by", by);
+    const head = `<div class="section-head"><div><h1>Big plays</h1>${expl("Every big play this week, by NFL game or by fantasy matchup.",
+      "Touchdowns, field goals worth 5+ points, turnovers, defensive plays, and single plays of 30+ yards (50+ for a pass), caught live from ESPN every minute during games. Each play shows the fantasy points that play alone was worth and where its fantasy matchup stood right after it. Bench players are marked.")}</div></div>${subnav("matchups", MATCHUP_TABS, "plays")}`;
     const wk = state.season === IDX.current ? D.weeks.find(x => x.week === L.currentWeek) : null;
     if (!wk || L.over) { main.innerHTML = head + `<div class="empty">Big plays are tracked live for the current week while the season is in progress.${state.season !== IDX.current ? ` <a href="#/matchups/plays">Go to this week</a>` : ""}</div>`; return; }
     if (!window.LIVE_FEED) { main.innerHTML = head + `<div class="empty">Loading this week's plays…</div>`; return; }
-    const games = wk.games.filter(g => g.sides.length === 2).map(g => ({ g, ev: feedFor(wk.week, g.id) }))
-      .sort((x, y) => (y.g.sides.some(s => isMine(teamById[s.team])) - x.g.sides.some(s => isMine(teamById[s.team]))) || y.ev.length - x.ev.length);
-    const total = games.reduce((n, x) => n + x.ev.length, 0);
-    const card = ({ g, ev }) => {
-      const [a, b] = g.sides, ta = teamById[a.team], tb = teamById[b.team];
-      const side = (s, t) => `<span class="pg-side">${logo(t)}<span class="pg-name">${esc(t.name)}</span><b class="num">${fmt(s.pts)}</b></span>`;
-      return `<article class="pg-card${g.sides.some(s => isMine(teamById[s.team])) ? " mine" : ""}">
-        <a class="pg-head" href="${href("matchups", { week: wk.week, game: g.id })}">${side(a, ta)}<span class="pg-vs">vs</span>${side(b, tb)}</a>
-        ${ev.length ? `<div class="plays pg-plays">${ev.map(playLine).join("")}</div>` : `<p class="pg-none">No big plays yet.</p>`}
-        <div class="pg-foot"><span>${ev.length} big play${ev.length === 1 ? "" : "s"}</span><a href="${href("matchups", { week: wk.week, game: g.id })}">Box score →</a></div>
-      </article>`;
-    };
-    main.innerHTML = head + `<p class="pg-sum">Week ${wk.week} · ${total} big play${total === 1 ? "" : "s"} so far${wk.final ? "" : " · updates every minute during games"}</p>
-      <div class="pg-grid">${games.map(card).join("")}</div>`;
+    const all = feedFor(wk.week);
+    const toggle = `<div class="pg-by" role="tablist" aria-label="Group big plays">${[["nfl", "By NFL game"], ["fantasy", "By fantasy matchup"]].map(([k, lab]) =>
+      `<a role="tab" aria-selected="${by === k}" class="${by === k ? "active" : ""}" href="${href("matchups", { by: k }, "plays")}">${lab}</a>`).join("")}</div>`;
+    const foot = (n, link) => `<div class="pg-foot"><span>${n} big play${n === 1 ? "" : "s"}</span>${link || ""}</div>`;
+    const plays = ev => ev.length ? `<div class="plays pg-plays">${ev.map(playLine).join("")}</div>` : `<p class="pg-none">No big plays yet.</p>`;
+    let body;
+    if (by === "fantasy") {
+      const games = wk.games.filter(g => g.sides.length === 2).map(g => ({ g, ev: all.filter(e => String(e.game) === String(g.id)) }))
+        .sort((x, y) => (y.g.sides.some(s => isMine(teamById[s.team])) - x.g.sides.some(s => isMine(teamById[s.team]))) || y.ev.length - x.ev.length);
+      body = games.map(({ g, ev }) => {
+        const [a, b] = g.sides;
+        const side = s => { const t = teamById[s.team]; return `<span class="pg-side">${logo(t)}<span class="pg-name">${esc(t.name)}</span><b class="num">${fmt(s.pts)}</b></span>`; };
+        const box = href("matchups", { week: wk.week, game: g.id });
+        return `<article class="pg-card${g.sides.some(s => isMine(teamById[s.team])) ? " mine" : ""}">
+          <a class="pg-head" href="${box}">${side(a)}${side(b)}</a>${plays(ev)}${foot(ev.length, `<a href="${box}">Box score →</a>`)}</article>`;
+      }).join("");
+      body = `<div class="pg-grid">${body}</div>`;
+    } else {
+      // real NFL games this week; a play belongs to the game its player's NFL team is in
+      const nfl = (D.nflGames || []).map(g => ({ g, ev: all.filter(e => e.nfl === g.home || e.nfl === g.away) }));
+      const placed = new Set(nfl.flatMap(x => x.ev));
+      const other = all.filter(e => !placed.has(e));
+      const now = Date.now();
+      const stateOf = g => { const k = Date.parse(g.date); return now < k ? "upcoming" : now < k + 4.25 * 3600e3 ? "live" : "final"; };
+      const when = g => g.tbd ? "Time TBD" : new Date(g.date).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+      const withPlays = nfl.filter(x => x.ev.length).sort((x, y) => y.ev[0].t - x.ev[0].t); // most recent action first
+      const quiet = nfl.filter(x => !x.ev.length && stateOf(x.g) !== "upcoming");
+      const later = nfl.filter(x => !x.ev.length && stateOf(x.g) === "upcoming");
+      const card = ({ g, ev }) => {
+        const st = stateOf(g);
+        const mine = ev.some(e => isMine(teamById[e.team]));
+        return `<article class="pg-card${mine ? " mine" : ""}"><div class="pg-head pg-nfl"><span class="pg-teams">${esc(g.away)} <span class="pg-at">@</span> ${esc(g.home)}</span>
+          <span class="pg-st ${st}">${st === "live" ? "Live" : st === "final" ? "Final" : when(g)}</span></div>${plays(ev)}${foot(ev.length)}</article>`;
+      };
+      const list = (label, xs) => xs.length ? `<p class="pg-quiet"><b>${label}:</b> ${xs.map(({ g }) => `${esc(g.away)} @ ${esc(g.home)}`).join(" · ")}</p>` : "";
+      body = `<div class="pg-grid">${withPlays.map(card).join("")}${other.length ? card({ g: { away: "Other", home: "", date: 0 }, ev: other }).replace(" <span class=\"pg-at\">@</span> ", "") : ""}</div>
+        ${list("No league big plays", quiet)}${list("Still to play", later)}`;
+      if (!withPlays.length && !other.length) body = `<p class="pg-none">No big plays yet this week.</p>` + list("Still to play", later);
+    }
+    main.innerHTML = head + toggle + `<p class="pg-sum">Week ${wk.week} · ${all.length} big play${all.length === 1 ? "" : "s"} so far${wk.final ? "" : " · updates every minute during games"}</p>` + body;
   }
 
   function renderMatchups() {

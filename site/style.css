@@ -843,3 +843,13 @@ tr:has(.tcell.mine) td { background: color-mix(in srgb, var(--accent) 9%, transp
 .pg-foot { display: flex; justify-content: space-between; padding: 9px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
 .pg-foot a { color: var(--accent); text-decoration: none; font-weight: 600; }
 @media (max-width: 640px) { .pg-grid { grid-template-columns: 1fr; } .pg-side b { font-size: 16px; } }
+.pg-by { display: inline-flex; gap: 2px; padding: 3px; margin: 0 0 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; }
+.pg-by a { padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--ink-2); text-decoration: none; white-space: nowrap; }
+.pg-by a.active { background: var(--accent); color: var(--accent-ink); }
+.pg-nfl { display: flex; justify-content: space-between; align-items: center; }
+.pg-teams { font-family: Archivo, sans-serif; font-weight: 800; font-size: 17px; letter-spacing: .02em; }
+.pg-at { color: var(--ink-2); font-weight: 600; font-size: 14px; }
+.pg-st { font-size: 12px; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; }
+.pg-st.live { color: var(--hot); }
+.pg-quiet { margin: 14px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.6; }
+.pg-quiet b { color: var(--ink); font-weight: 600; }

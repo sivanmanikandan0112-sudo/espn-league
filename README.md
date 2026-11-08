@@ -71,7 +71,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   with ROS ranks. Your team is also highlighted on Standings, Matchups (your game first), Insights tables and the
   watch guide. Works in past seasons too (member ids are ESPN accounts). On phones Settings moves to a gear in the header.
 - **Big plays** (Matchups → Big plays, or tap "Recent big plays" on the Weekly tab, which shows the newest 5):
-  every big play this week grouped by matchup. Touchdowns, field goals worth 5+ points, turnovers, defensive plays,
+  every big play this week, grouped by NFL game (default) or by fantasy matchup — a switch at the top, remembered
+  on each device. Touchdowns, field goals worth 5+ points, turnovers, defensive plays,
   and single plays of 30+ yards (50+ for a pass). The live worker compares stats once a minute, so a gain only counts
   when exactly one carry, catch or completion happened in that minute.
   Touchdowns and field goals show their exact yards ("47-yd receiving TD"), matched by player and time to the
