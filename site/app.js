@@ -667,9 +667,7 @@
         </button>
         ${isOpen && a && b ? (() => {
           const showB = focusTeam != null && b.team === focusTeam ? 1 : 0;
-          const gp = feedFor(w, g.id);
-          const plays = gp.length ? `<div class="game-plays"><div class="box-sep">BIG PLAYS IN THIS GAME</div>${gp.slice(0, 6).map(playLine).join("")}${gp.length > 6 ? `<a class="linkbtn" href="${href("matchups", {}, "plays")}">All ${gp.length} plays →</a>` : ""}</div>` : "";
-          return `${plays}<div class="box-actions"><button type="button" class="share-btn" data-share="game" data-week="${w}" data-game="${g.id}">${SHARE_ICON}Share ${wk.final ? "result" : "score"}</button></div>
+          return `<div class="box-actions"><button type="button" class="share-btn" data-share="game" data-week="${w}" data-game="${g.id}">${SHARE_ICON}Share ${wk.final ? "result" : "score"}</button></div>
           <div class="box-toggle" role="tablist" aria-label="Show lineup">
             <button type="button" role="tab" data-boxside="0" aria-selected="${!showB}" class="${showB ? "" : "active"}">${esc(teamById[a.team].name)}</button>
             <button type="button" role="tab" data-boxside="1" aria-selected="${!!showB}" class="${showB ? "active" : ""}">${esc(teamById[b.team].name)}</button></div>

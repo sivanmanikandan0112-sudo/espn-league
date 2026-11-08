@@ -600,8 +600,6 @@ a.bm-foot:hover { color: var(--accent); }
 .play-what { min-width: 0; }
 .play-what .team-mgr { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .play-d { font-family: Archivo, sans-serif; font-weight: 800; font-size: 16px; font-variant-numeric: tabular-nums; }
-.game-plays { padding: 4px 12px 0; border-top: 1px solid var(--line); }
-.game-plays .play { padding: 7px 0; grid-template-columns: 56px minmax(0, 1fr) auto; }
 @media (max-width: 640px) { .play { grid-template-columns: 52px minmax(0, 1fr) auto; padding: 9px 12px; } }
 
 /* ---- trade block ---- */
