@@ -260,9 +260,17 @@ function yardagePlay(oldY, newY) {
   return best;
 }
 
+// Kicks only make the feed when the field goal itself is worth this many fantasy points (with this league's
+// scoring that's 50+ yards). Misses and short field goals are left out. Extra points never count.
+const KICK_IDS = new Set([80, 77, 74, 198, 201, 85, 88]);
+const FG_MADE = [80, 77, 74, 198, 201];
+const KICK_MIN_PTS = 5;
+
 function describePlay(oldA, newA) {
   let best = null;
+  const kickPts = FG_MADE.reduce((sum, id) => sum + (newA[id] || 0) - (oldA[id] || 0), 0);
   for (const [ids, label, pri] of PLAY) {
+    if (ids.some(id => KICK_IDS.has(id)) && kickPts < KICK_MIN_PTS) continue;
     const changed = ids.some(id => (newA[id] || 0) !== (oldA[id] || 0));
     if (changed && (!best || pri > best.pri)) best = { label, pri };
   }
