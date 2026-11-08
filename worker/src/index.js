@@ -385,6 +385,10 @@ async function pricePlays(env, events) {
   return changed;
 }
 
+// Team defenses score a little on lots of plays (sacks, interceptions, fumble recoveries); only plays worth at least
+// this many points make the feed, which in practice means defensive and return touchdowns.
+const DST_MIN_PTS = 5;
+
 async function updateFeed(env) {
   const yr = season();
   const st = (await espn(env, yr, "view=mStatus")).status;
@@ -413,6 +417,7 @@ async function updateFeed(env) {
         // points from the play itself (its own stats), not everything the player gained this minute; touchdowns,
         // field goals and long gains are priced exactly once their yards are known (playPoints below)
         const own = play && play.ids ? Math.round(play.ids.reduce((sum, id) => sum + (a[id] || 0) - ((old.a || {})[id] || 0), 0) * 100) / 100 : delta;
+        if (p.pos === "D/ST" && !(play && own >= DST_MIN_PTS)) continue; // team defenses: only plays worth 5+ (TDs)
         events.push({
           t: Date.now(), game: g.id, team: side.team, opp: opp.team, pid: p.id, name: p.name, pos: p.pos, nfl: p.team,
           starter: !["BE", "IR"].includes(p.slot), label: play ? play.label : "stat correction",
@@ -425,7 +430,10 @@ async function updateFeed(env) {
   const all = events.concat(prev.events || []).slice(0, 200);
   // the NFL scoring summary can trail the fantasy stats by a minute or two, so recent plays are retried each minute
   let yards = false;
-  try { yards = await addPlayYards(all); } catch (e) { console.log("play yards failed", String(e)); }
+  // (also clears out defensive plays logged before the 5-point rule)
+  const kept = all.filter(e => !(e.pos === "D/ST" && e.delta < DST_MIN_PTS));
+  if (kept.length !== all.length) { all.length = 0; all.push(...kept); yards = true; }
+  try { yards = (await addPlayYards(all)) || yards; } catch (e) { console.log("play yards failed", String(e)); }
   try { if (await pricePlays(env, all)) yards = true; } catch (e) { console.log("play points failed", String(e)); }
   const stale = Date.now() - (prev.savedAt || 0) > 10 * 60e3;
   if (!events.length && !yards && !stale && Object.keys(prev.snap).length) return; // nothing worth a write this minute

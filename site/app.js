@@ -611,7 +611,7 @@
     const by = asked === "fantasy" || asked === "nfl" ? asked : store.get("plays-by", "nfl") === "fantasy" ? "fantasy" : "nfl";
     if (asked) store.set("plays-by", by);
     const head = `<div class="section-head"><div><h1>Big plays</h1>${expl("Every big play this week, by NFL game or by fantasy matchup.",
-      "Touchdowns, field goals worth 5+ points, turnovers, defensive plays, and single plays of 30+ yards (50+ for a pass), caught live from ESPN every minute during games. Each play shows the fantasy points that play alone was worth and where its fantasy matchup stood right after it. Bench players are marked.")}</div></div>${subnav("matchups", MATCHUP_TABS, "plays")}`;
+      "Touchdowns, field goals worth 5+ points, turnovers, defensive plays worth 5+ points (in practice defensive and return TDs), and single plays of 30+ yards (50+ for a pass), caught live from ESPN every minute during games. Each play shows the fantasy points that play alone was worth and where its fantasy matchup stood right after it. Bench players are marked.")}</div></div>${subnav("matchups", MATCHUP_TABS, "plays")}`;
     const wk = state.season === IDX.current ? D.weeks.find(x => x.week === L.currentWeek) : null;
     if (!wk || L.over) { main.innerHTML = head + `<div class="empty">Big plays are tracked live for the current week while the season is in progress.${state.season !== IDX.current ? ` <a href="#/matchups/plays">Go to this week</a>` : ""}</div>`; return; }
     if (!window.LIVE_FEED) { main.innerHTML = head + `<div class="empty">Loading this week's plays…</div>`; return; }
