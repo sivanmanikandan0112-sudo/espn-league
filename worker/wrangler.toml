@@ -8,9 +8,11 @@ SITE_ORIGIN = "https://sivanmanikandan0112-sudo.github.io"
 GITHUB_REPO = "sivanmanikandan0112-sudo/espn-league"
 GITHUB_WORKFLOW = "refresh.yml"
 
-# Rebuild the full site every 30 minutes (only if a GITHUB_TOKEN secret is set).
+# Every minute: the live big-play feed (during NFL games), and a check that rebuilds the full site as soon as
+# rosters, lineups, trades, records or settings change on ESPN (plus every 5 min during games, every 30 min always).
+# Rebuilds only run if a GITHUB_TOKEN secret is set.
 [triggers]
-crons = ["*/30 * * * *", "* * * * *"]  # site rebuild; live big-play feed (only works during NFL games)
+crons = ["* * * * *"]
 
 # Weekly pick'em: PINs and picks
 [[kv_namespaces]]

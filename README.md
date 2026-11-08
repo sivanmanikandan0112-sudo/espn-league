@@ -91,9 +91,17 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 
 ## Auto-refresh (GitHub Pages)
 
-`.github/workflows/refresh.yml` rebuilds and redeploys the site on a schedule: every 15 minutes during
-Sunday, Monday and Thursday game windows, and every 3 hours otherwise. To refresh right now, open the
-repo's **Actions** tab → **Refresh league site** → **Run workflow**.
+`.github/workflows/refresh.yml` rebuilds and redeploys the site (about a minute per run). The live worker starts it:
+
+- **as soon as something changes on ESPN** other than live scores: an add, drop, trade, waiver claim, lineup move,
+  a new week, records, team names or league settings. The worker checks every minute and keeps a fingerprint of
+  those in KV (`watch:fp`), so changes reach the site in about 2-3 minutes;
+- **every 5 minutes while NFL games are on**, so standings, power and playoff odds follow the live scores;
+- **every 30 minutes** regardless, as a safety net.
+
+GitHub's own schedule in the workflow is a backup (it often skips runs when busy). Open pages check for a new
+build every minute and swap it in. To refresh right now, open the repo's **Actions** tab → **Refresh league site**
+→ **Run workflow**. `npx wrangler tail` in `worker/` shows each rebuild and why it started.
 
 **When a week counts as finished:** ESPN closes each week early Wednesday morning (Eastern), after Monday Night
 Football and Tuesday's stat corrections, at the same time waivers run. The hourly Wednesday-morning refresh picks

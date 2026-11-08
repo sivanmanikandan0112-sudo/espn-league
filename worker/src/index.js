@@ -2,7 +2,8 @@
 //
 //   GET /live   -> the current week's matchups, lineups and player stat lines, straight from ESPN,
 //                  cached for 60 seconds so the whole league refreshing at once is still one ESPN call.
-//   cron        -> asks GitHub to rebuild the full site (standings, insights, history) on a reliable schedule.
+//   cron        -> every minute: the big-play feed, and a GitHub rebuild of the full site whenever anything besides
+//                  live scores changes on ESPN (plus every 5 min during games and every 30 min regardless).
 //
 // Secrets (set with `wrangler secret put`): ESPN_S2, ESPN_SWID, and optionally GITHUB_TOKEN.
 // Vars (wrangler.toml): LEAGUE_ID, SITE_ORIGIN, GITHUB_REPO, GITHUB_WORKFLOW.
@@ -436,19 +437,79 @@ export default {
     return out;
   },
 
-  // Reliable scheduled rebuild of the whole site (GitHub's own scheduler skips runs when it's busy).
+  // Runs every minute: the big-play feed, plus deciding whether the full site needs rebuilding now.
   async scheduled(event, env, ctx) {
-    if (event.cron === "* * * * *") {
-      if (env.PICKEM) ctx.waitUntil(updateFeed(env).catch(e => console.log("feed update failed", String(e))));
-      return;
-    }
-    if (!env.GITHUB_TOKEN) return;
-    const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${env.GITHUB_WORKFLOW}/dispatches`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json", "User-Agent": "league-hq-live",
-        "X-GitHub-Api-Version": "2022-11-28" },
-      body: JSON.stringify({ ref: "main" }),
-    });
-    if (!r.ok) console.log("GitHub dispatch failed", r.status, await r.text());
+    if (env.PICKEM) ctx.waitUntil(updateFeed(env).catch(e => console.log("feed update failed", String(e))));
+    ctx.waitUntil(maybeRebuild(env, new Date(event.scheduledTime)).catch(e => console.log("rebuild check failed", String(e))));
   },
 };
+
+// ---------------------------------------------------------------- site rebuilds
+// The full site (standings, power, odds, insights, rosters, trades) is built by GitHub Actions in about a minute.
+// Rebuild as soon as anything besides live scores changes on ESPN, every 5 minutes while NFL games are on (so
+// standings, power and playoff odds follow the scores), and every 30 minutes regardless as a safety net.
+async function sha1(text) {
+  const buf = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Everything the site shows that isn't a live score: the week, records, team names, rosters and lineup slots,
+// transaction counts (adds, drops, trades, waiver claims), waiver order and the league settings.
+async function leagueFingerprint(env) {
+  const yr = season();
+  const d = await espn(env, yr, "view=mStatus&view=mTeam&view=mRoster&view=mSettings");
+  const st = d.status || {};
+  const teams = (d.teams || []).map(t => {
+    const rec = (t.record || {}).overall || {};
+    return [t.id, t.name, t.abbrev, t.logo, (t.owners || []).join(","), rec.wins, rec.losses, rec.ties, t.waiverRank,
+      t.transactionCounter || {}, ((t.roster || {}).entries || []).map(e => e.playerId + ":" + e.lineupSlotId).sort().join(" ")];
+  }).sort((a, b) => a[0] - b[0]);
+  const parts = { yr, week: st.currentMatchupPeriod, period: st.latestScoringPeriod, final: st.finalScoringPeriod,
+    active: st.isActive, teams, settings: d.settings || {} };
+  return { hash: await sha1(JSON.stringify(parts)), parts };
+}
+
+// Name the first thing that changed, for the log.
+function whatChanged(a, b) {
+  if (!a) return "first check";
+  if (a.week !== b.week || a.period !== b.period || a.active !== b.active) return "new week";
+  if (JSON.stringify(a.settings) !== JSON.stringify(b.settings)) return "league settings";
+  const old = Object.fromEntries(a.teams.map(t => [t[0], t]));
+  for (const t of b.teams) {
+    const o = old[t[0]];
+    if (!o) return "teams";
+    if (o[10] !== t[10]) return `roster or lineup (team ${t[0]})`;
+    if (JSON.stringify(o[9]) !== JSON.stringify(t[9])) return `transaction (team ${t[0]})`;
+    if (o[5] !== t[5] || o[6] !== t[6] || o[7] !== t[7]) return "records";
+    if (o[8] !== t[8]) return "waiver order";
+    if (String(o.slice(1, 5)) !== String(t.slice(1, 5))) return `team details (team ${t[0]})`;
+  }
+  return "other";
+}
+
+async function dispatchRebuild(env, reason) {
+  if (!env.GITHUB_TOKEN) return;
+  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${env.GITHUB_WORKFLOW}/dispatches`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json", "User-Agent": "league-hq-live",
+      "X-GitHub-Api-Version": "2022-11-28" },
+    body: JSON.stringify({ ref: "main" }),
+  });
+  console.log(r.ok ? `rebuild started: ${reason}` : `GitHub dispatch failed (${reason}) ${r.status} ${await r.text()}`);
+}
+
+async function maybeRebuild(env, now) {
+  const reasons = [];
+  if (now.getUTCMinutes() % 30 === 0) reasons.push("every 30 minutes");
+  // KV is only written when something actually changed, so this stays far inside the daily write allowance
+  if (env.PICKEM) {
+    const fp = await leagueFingerprint(env);
+    const prev = await env.PICKEM.get("watch:fp", "json");
+    if (!prev || prev.hash !== fp.hash) {
+      await env.PICKEM.put("watch:fp", JSON.stringify(fp));
+      if (prev) reasons.push(whatChanged(prev.parts, fp.parts));
+    }
+    if (now.getUTCMinutes() % 5 === 0 && await gamesOn(fp.parts.yr, fp.parts.week, now.getTime())) reasons.push("games on");
+  }
+  if (reasons.length) await dispatchRebuild(env, reasons.join(", "));
+}

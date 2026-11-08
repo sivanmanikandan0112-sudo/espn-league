@@ -2173,8 +2173,8 @@
   }, true);
 
   // ---------------------------------------------------------------- live updates
-  // While the current season is in progress, re-check for fresh data every 2 minutes
-  // (the site itself refreshes from ESPN every 15 minutes during games).
+  // While the current season is in progress, check for a fresh build every minute. The live worker rebuilds the
+  // site as soon as anything besides scores changes on ESPN, and every 5 minutes during games.
   const live = { on: false, timer: null };
   async function poll() {
     if (document.hidden) return;
@@ -2233,13 +2233,13 @@
     chip.className = "live-chip on";
     chip.textContent = LIVE_API
       ? "Live · scores update every minute" + (liveAsOf ? " · as of " + new Date(liveAsOf).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "")
-      : "Live · checking every 2 min";
+      : "Live · checking every minute";
   }
   function startLive() {
     const cur = window.LEAGUE_DATA[IDX.current];
     if (!cur || cur.league.over || live.timer) return;
     live.on = true;
-    live.timer = setInterval(poll, 120000);
+    live.timer = setInterval(poll, 60000);
     if (LIVE_API) { liveTick(); setInterval(liveTick, 60000); }
     updateLiveChip();
     document.addEventListener("visibilitychange", () => { if (!document.hidden) { poll(); liveTick(); } });
