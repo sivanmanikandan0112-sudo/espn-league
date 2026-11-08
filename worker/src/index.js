@@ -241,15 +241,21 @@ const PLAY = [
   [[95], "interception", 7], [[96], "fumble recovery", 7], [[98], "safety", 7], [[97], "blocked kick", 7], [[99], "sack", 4],
 ];
 
-// Yardage gained since the last check: [raw stat id, label, minimum yards to count as a play]
-const YARDS = [[42, "receiving yards", 30], [24, "rushing yards", 30], [3, "passing yards", 50]];
+// Big gains: [yards stat id, label, minimum yards, the stat counting the plays: carries / catches / completions].
+// The feed only sees stats once a minute, so several plays can land between two checks. A gain only counts as a
+// big play when exactly one carry, catch or completion happened since the last check, so it was all one play.
+const YARDS = [[42, "catch", 30, 53], [24, "run", 30, 23], [3, "pass", 50, 1]];
+const YARD_STATS = [...new Set(YARDS.flatMap(([y, , , n]) => [y, n]))];
 
 function yardagePlay(oldY, newY) {
   if (!oldY) return null; // first snapshot with yardage
   let best = null;
-  for (const [id, label, min] of YARDS) {
+  for (const [id, label, min, plays] of YARDS) {
+    if (oldY[plays] == null) continue; // snapshot from before play counts were saved: can't tell
     const gained = Math.round((newY[id] || 0) - (oldY[id] || 0));
-    if (gained >= min && (!best || gained / min > best.ratio)) best = { label: `+${gained} ${label}`, ratio: gained / min };
+    const n = (newY[plays] || 0) - (oldY[plays] || 0);
+    if (n !== 1) continue;
+    if (gained >= min && (!best || gained / min > best.ratio)) best = { label: `${gained}-yd ${label}`, ratio: gained / min };
   }
   return best;
 }
@@ -279,7 +285,7 @@ async function updateFeed(env) {
       for (const p of side.lineup) {
         const line = lv.stats[`${lv.week}|${p.id}`] || {};
         const a = line.a || {}, r = line.r || {};
-        const y = { 3: r[3] || 0, 24: r[24] || 0, 42: r[42] || 0 };
+        const y = Object.fromEntries(YARD_STATS.map(k => [k, r[k] || 0]));
         snap[p.id] = { p: p.pts, a, y };
         const old = prev.snap[p.id];
         if (!old) continue;

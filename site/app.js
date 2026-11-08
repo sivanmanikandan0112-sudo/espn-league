@@ -598,10 +598,11 @@
   function feedPanel(week) {
     const ev = feedFor(week);
     if (!ev.length) return "";
-    const open = state.feedAll ? ev.length : 8;
+    const FEED_SHOWN = 5; // newest plays shown before "Show all", so the feed doesn't crowd the matchups
+    const open = state.feedAll ? ev.length : FEED_SHOWN;
     return `<section class="feed"><div class="section-head"><div><h2>Big plays</h2><p class="sub">Touchdowns, kicks, turnovers and big gains as they happen, updated every minute during games.</p></div></div>
       <div class="plays">${ev.slice(0, open).map(playLine).join("")}</div>
-      ${ev.length > 8 ? `<button type="button" class="linkbtn" data-feed-toggle>${state.feedAll ? "Show fewer" : `Show all ${ev.length}`}</button>` : ""}</section>`;
+      ${ev.length > FEED_SHOWN ? `<button type="button" class="linkbtn" data-feed-toggle>${state.feedAll ? "Show fewer" : `Show all ${ev.length}`}</button>` : ""}</section>`;
   }
 
   function renderMatchups() {
