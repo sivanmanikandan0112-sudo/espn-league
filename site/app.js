@@ -600,7 +600,7 @@
     if (!ev.length) return "";
     const FEED_SHOWN = 5; // newest plays shown before "Show all", so the feed doesn't crowd the matchups
     const open = state.feedAll ? ev.length : FEED_SHOWN;
-    return `<section class="feed"><div class="section-head"><div><h2>Big plays</h2><p class="sub">Touchdowns, kicks, turnovers and big gains as they happen, updated every minute during games.</p></div></div>
+    return `<section class="feed"><div class="section-head"><div><h2>Recent big plays</h2><p class="sub">Touchdowns, long field goals, turnovers and big gains, newest first. Updated every minute during games.</p></div></div>
       <div class="plays">${ev.slice(0, open).map(playLine).join("")}</div>
       ${ev.length > FEED_SHOWN ? `<button type="button" class="linkbtn" data-feed-toggle>${state.feedAll ? "Show fewer" : `Show all ${ev.length}`}</button>` : ""}</section>`;
   }
