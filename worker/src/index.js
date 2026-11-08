@@ -277,6 +277,70 @@ function describePlay(oldA, newA) {
   return best;
 }
 
+// ---- exact yardage for touchdowns and field goals
+// ESPN's fantasy stats only say a TD or a 50+ yd kick happened. The public NFL game summary lists every scoring
+// play with its exact yards and the time it happened, so each feed play is matched to the scoring play by the same
+// player that happened closest before the feed noticed it.
+const NFL_SITE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl";
+const YDS_LABEL = { "passing TD": "passer", "receiving TD": "receiver", "rushing TD": "rusher" };
+const isFgLabel = l => / field goal$/.test(l) && !/^missed/.test(l);
+const normName = n => String(n || "").toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b\.?/g, "").replace(/[^a-z]/g, "");
+
+async function nflGameIds() {
+  // NFL team abbreviation -> today's ESPN game id
+  return cached("nfl-scoreboard", 60, async () => {
+    const d = await (await fetch(`${NFL_SITE}/scoreboard`)).json();
+    const out = {};
+    for (const e of d.events || []) for (const c of (e.competitions || [])[0]?.competitors || []) out[c.team.abbreviation] = e.id;
+    return out;
+  });
+}
+
+async function scoringPlays(gameId) {
+  return cached(`nfl-scoring-${gameId}`, 45, async () => {
+    const d = await (await fetch(`${NFL_SITE}/summary?event=${gameId}`)).json();
+    const wall = {};
+    for (const drv of (d.drives || {}).previous || []) for (const p of drv.plays || []) if (p.wallclock) wall[p.id] = Date.parse(p.wallclock);
+    const out = [];
+    for (const sp of d.scoringPlays || []) {
+      const text = sp.text || "", w = wall[sp.id] || null;
+      let m;
+      if ((m = text.match(/^(.+?) (\d+) Yd pass from (.+?)(?: \(|$)/))) {
+        out.push({ id: sp.id, role: "receiver", name: normName(m[1]), yds: +m[2], w });
+        out.push({ id: sp.id, role: "passer", name: normName(m[3]), yds: +m[2], w });
+      } else if ((m = text.match(/^(.+?) (\d+) Yd (?:Rush|Run)\b/))) {
+        out.push({ id: sp.id, role: "rusher", name: normName(m[1]), yds: +m[2], w });
+      } else if ((m = text.match(/^(.+?) (\d+) Yd Field Goal/))) {
+        out.push({ id: sp.id, role: "kicker", name: normName(m[1]), yds: +m[2], w });
+      }
+    }
+    return out;
+  });
+}
+
+// Fill in yards on recent TD and field-goal plays that don't have them yet. Returns true if any changed.
+async function addPlayYards(events) {
+  const todo = events.filter(e => e.yds == null && Date.now() - e.t < 6 * 3600e3 && e.nfl &&
+    (YDS_LABEL[e.label] || isFgLabel(e.label)));
+  if (!todo.length) return false;
+  const games = await nflGameIds();
+  let changed = false;
+  for (const e of todo) {
+    const gid = games[e.nfl];
+    if (!gid) continue;
+    const role = YDS_LABEL[e.label] || "kicker";
+    const taken = new Set(events.filter(x => x !== e && x.sp && x.pid === e.pid).map(x => x.sp));
+    const cands = (await scoringPlays(gid)).filter(p => p.role === role && p.name === normName(e.name) && !taken.has(p.id)
+      && (p.w == null || p.w <= e.t + 120e3));
+    if (!cands.length) continue;
+    const sp = cands.reduce((best, p) => (p.w || 0) > (best.w || 0) ? p : best);
+    e.yds = sp.yds; e.sp = sp.id;
+    e.label = role === "kicker" ? `${sp.yds}-yd field goal` : `${sp.yds}-yd ${e.label}`;
+    changed = true;
+  }
+  return changed;
+}
+
 async function updateFeed(env) {
   const yr = season();
   const st = (await espn(env, yr, "view=mStatus")).status;
@@ -310,10 +374,13 @@ async function updateFeed(env) {
       }
     }
   }
-  const stale = Date.now() - (prev.savedAt || 0) > 10 * 60e3;
-  if (!events.length && !stale && Object.keys(prev.snap).length) return; // nothing worth a write this minute
   events.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
   const all = events.concat(prev.events || []).slice(0, 200);
+  // the NFL scoring summary can trail the fantasy stats by a minute or two, so recent plays are retried each minute
+  let yards = false;
+  try { yards = await addPlayYards(all); } catch (e) { console.log("play yards failed", String(e)); }
+  const stale = Date.now() - (prev.savedAt || 0) > 10 * 60e3;
+  if (!events.length && !yards && !stale && Object.keys(prev.snap).length) return; // nothing worth a write this minute
   await env.PICKEM.put(key, JSON.stringify({ snap, events: all, savedAt: Date.now() }), { expirationTtl: 21 * 86400 });
 }
 

@@ -74,6 +74,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   every big play this week grouped by matchup. Touchdowns, field goals worth 5+ points, turnovers, defensive plays,
   and single plays of 30+ yards (50+ for a pass). The live worker compares stats once a minute, so a gain only counts
   when exactly one carry, catch or completion happened in that minute.
+  Touchdowns and field goals show their exact yards ("47-yd receiving TD"), matched by player and time to the
+  scoring plays in ESPN's public NFL game summary.
 - **Watch guide** (Matchups → Watch guide): this week's real NFL games ranked by how much they matter to the league:
   every league starter in the game, weighted by ESPN's projection and by how close his fantasy matchup is (0.35 for a
   lopsided one up to 1.0 for a toss-up), scaled so the biggest game is 100. Kickoffs come from ESPN's NFL schedule.
