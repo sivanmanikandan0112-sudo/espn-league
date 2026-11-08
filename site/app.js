@@ -2249,6 +2249,64 @@
   if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
+  // Pull to refresh, only when opened from the home screen: an installed app has no refresh button and iOS gives
+  // it no pull-down gesture. Pulling down from the top of the page reloads everything fresh.
+  // (?ptr=1 turns it on in a normal browser tab, for testing.)
+  (function pullToRefresh() {
+    const standalone = (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+    if (!standalone && !/[?&]ptr=1/.test(location.search)) return;
+    const el = document.createElement("div");
+    el.className = "ptr";
+    el.setAttribute("aria-hidden", "true");
+    el.innerHTML = '<span class="ptr-spin"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></span><span class="ptr-txt">Pull to refresh</span>';
+    document.body.appendChild(el);
+    const txt = el.querySelector(".ptr-txt"), spin = el.querySelector(".ptr-spin");
+    const TRIGGER = 80, MAX = 120;
+    let startY = null, startX = 0, dist = 0, pulling = false, busy = false;
+    function show(d) {
+      el.style.transform = "translate(-50%," + (Math.min(d, MAX) - 60) + "px)";
+      el.style.opacity = Math.min(1, d / 50);
+      const ready = d >= TRIGGER;
+      el.classList.toggle("ready", ready);
+      spin.style.transform = "rotate(" + (ready ? 180 : 0) + "deg)";
+      txt.textContent = ready ? "Release to refresh" : "Pull to refresh";
+    }
+    function reset() {
+      el.classList.add("back");
+      el.style.transform = ""; el.style.opacity = "";
+      setTimeout(() => el.classList.remove("back", "ready"), 250);
+    }
+    document.addEventListener("touchstart", e => {
+      if (busy || e.touches.length !== 1 || window.scrollY > 0 || document.querySelector(".share-modal")) { startY = null; return; }
+      startY = e.touches[0].clientY; startX = e.touches[0].clientX; dist = 0; pulling = false;
+    }, { passive: true });
+    document.addEventListener("touchmove", e => {
+      if (startY == null) return;
+      const dy = e.touches[0].clientY - startY, dx = Math.abs(e.touches[0].clientX - startX);
+      if (!pulling) {
+        if (dy < 8 && dx < 8) return;
+        if (dy <= 0 || dx > dy || window.scrollY > 0) { startY = null; return; } // scrolling up or swiping sideways
+        pulling = true;
+      }
+      dist = Math.max(0, dy * 0.6); // some resistance, like the native gesture
+      show(dist);
+    }, { passive: true });
+    function end() {
+      if (startY == null || !pulling) { startY = null; return; }
+      startY = null; pulling = false;
+      if (dist < TRIGGER) { reset(); return; }
+      busy = true;
+      el.classList.add("busy");
+      el.style.transform = "translate(-50%," + (TRIGGER - 60) + "px)";
+      spin.style.transform = "";
+      txt.textContent = "Refreshing…";
+      // a full reload: the offline worker fetches pages and data from the network first, so this gets fresh copies
+      setTimeout(() => location.reload(), 200);
+    }
+    document.addEventListener("touchend", end, { passive: true });
+    document.addEventListener("touchcancel", end, { passive: true });
+  })();
+
   window.addEventListener("offline", () => renderBanner());
   window.addEventListener("online", () => { renderBanner(); poll(); liveTick(); });
 

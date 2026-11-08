@@ -86,6 +86,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   browse (newest copy first when online). With no signal the site still opens with the last saved scores and an
   "You're offline" banner; it refreshes itself when the connection comes back. Each deploy stamps `SW_BUILD`, so
   old saved copies are cleared automatically.
+- **Pull to refresh** in the home-screen app: pull down from the top of any page to reload it fresh (only when
+  opened from the home screen, where there's no refresh button; add `?ptr=1` to the address to try it in a browser).
 
 ## Auto-refresh (GitHub Pages)
 

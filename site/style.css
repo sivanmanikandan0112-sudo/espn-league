@@ -812,3 +812,14 @@ tr:has(.tcell.mine) td { background: color-mix(in srgb, var(--accent) 9%, transp
 .wg-bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
 .wg-meter .team-mgr { flex-basis: 100%; }
 .bc-h { white-space: nowrap; }
+
+/* pull to refresh (home-screen app only) */
+.ptr { position: fixed; top: env(safe-area-inset-top); left: 50%; z-index: 200; transform: translate(-50%, -60px); opacity: 0;
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px 8px 8px; border-radius: 999px; pointer-events: none;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.ptr.back { transition: transform .25s ease, opacity .25s ease; }
+.ptr-spin { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--surface-2); color: var(--ink-2); transition: transform .2s ease, background .2s, color .2s; }
+.ptr.ready .ptr-spin, .ptr.busy .ptr-spin { background: var(--accent); color: var(--accent-ink); }
+.ptr.busy .ptr-spin svg { display: none; }
+.ptr.busy .ptr-spin::after { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 2.4px solid currentColor; border-right-color: transparent; animation: ptr-rot .7s linear infinite; }
+@keyframes ptr-rot { to { transform: rotate(360deg); } }
