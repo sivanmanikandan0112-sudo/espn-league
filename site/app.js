@@ -2361,5 +2361,18 @@
   window.addEventListener("offline", () => renderBanner());
   window.addEventListener("online", () => { renderBanner(); poll(); liveTick(); });
 
-  route().then(startLive);
+  // Opening the site with no page picked (the home-screen app always starts this way): on days with NFL games it
+  // starts on Matchups, so checking scores takes no tapping; other days it starts on Standings. Links to a page,
+  // reloads and pull-to-refresh keep whatever page is in the address.
+  async function startPage() {
+    if (location.hash && location.hash !== "#") return; // a page was picked (including "#/" = Standings)
+    try {
+      const cur = await loadSeason(IDX.current);
+      const today = new Date().toDateString();
+      const gameToday = !cur.league.over && (cur.nflGames || []).some(g => !g.tbd && new Date(g.date).toDateString() === today);
+      if (gameToday) history.replaceState(null, "", location.pathname + location.search + "#/matchups");
+    } catch (_) { /* no data: just open Standings */ }
+  }
+
+  startPage().then(route).then(startLive);
 })();
