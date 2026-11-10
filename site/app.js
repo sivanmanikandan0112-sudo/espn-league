@@ -704,8 +704,9 @@
     const gap = Math.abs(A.sd.pts - B.sd.pts);
     const names = list => list.map(p => `${esc(p.name)} <span class="muted">${p.pos === "D/ST" ? "" : esc(p.pos) + ", "}avg ${avg(p).toFixed(1)}</span>`).join(" + ");
     let need;
-    if (!behind.left.length) need = `<b>${esc(behind.t.name)}</b> has nobody left; ${esc(ahead.t.name)} has it locked.`;
-    else if (!ahead.left.length) {
+    if (!behind.left.length) return `<div class="mm" data-mm><div class="mm-h"><span>🔒 Locked up</span></div>
+      <p><b>${esc(behind.t.name)}</b> has nobody left to play, so <b>${esc(ahead.t.name)}</b> has this one won.</p></div>`;
+    if (!ahead.left.length) {
       const target = gap + 0.01;
       const solo = behind.left.length === 1 ? (logs[behind.left[0].id] || []) : [];
       const hit = solo.filter(x => x >= target).length;
