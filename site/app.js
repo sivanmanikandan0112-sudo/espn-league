@@ -2553,6 +2553,7 @@
       if (window.LEAGUE_STATS && window.LEAGUE_STATS[IDX.current]) Object.assign(window.LEAGUE_STATS[IDX.current], lv.stats);
       liveAsOf = lv.updated;
       updateLiveChip();
+      await checkNflStatus();
       renderTicker();
       const typing = document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
       if (state.season === IDX.current && ["standings", "matchups"].includes(state.tab) && state.sub !== "pickem" && !typing) {
@@ -2564,11 +2565,24 @@
   }
   // Score ticker: while NFL games are being played, a thin crawl along the bottom of every page with every
   // matchup's score (yours first), each matchup in its own box. Tap it for the matchups.
+  const NFL_STATUS = { at: 0, live: true };
+  async function checkNflStatus() {
+    const cur = window.LEAGUE_DATA && window.LEAGUE_DATA[IDX.current], now = Date.now();
+    if (!cur || !(cur.nflGames || []).some(g => !g.tbd && g.date && now >= Date.parse(g.date) && now < Date.parse(g.date) + 4 * 3600e3)) return;
+    try {
+      const d = await (await fetch("https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard", { cache: "no-store" })).json();
+      NFL_STATUS.live = (d.events || []).some(e => ((e.status || {}).type || {}).state === "in");
+      NFL_STATUS.at = Date.now();
+    } catch (_) { /* unknown: fall back to the kickoff-time window */ }
+  }
   function renderTicker() {
     let el = document.getElementById("ticker");
     const cur = window.LEAGUE_DATA && window.LEAGUE_DATA[IDX.current];
     const now = Date.now();
-    const on = cur && !cur.league.over && (cur.nflGames || []).some(g => !g.tbd && g.date && now >= Date.parse(g.date) && now < Date.parse(g.date) + 4 * 3600e3);
+    const window4h = cur && !cur.league.over && (cur.nflGames || []).some(g => !g.tbd && g.date && now >= Date.parse(g.date) && now < Date.parse(g.date) + 4 * 3600e3);
+    // inside a game window, ESPN's NFL scoreboard (checked each minute) says whether a game is actually still on,
+    // so the bar goes away as soon as the last game ends instead of 4 hours after its kickoff
+    const on = window4h && (NFL_STATUS.at && now - NFL_STATUS.at < 5 * 60e3 ? NFL_STATUS.live : true);
     const wk = on && cur.weeks.find(w => w.week === cur.league.currentWeek && !w.final);
     if (!wk) { if (el) { el.remove(); document.body.classList.remove("has-ticker"); } return; }
     const tm = Object.fromEntries(cur.teams.map(t => [t.id, t]));
