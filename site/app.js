@@ -1175,6 +1175,202 @@
         (gems.length ? section("Missed by everyone", "Undrafted players the redraft takes.", `<div class="picks">${gems.map(boardLine).join("")}</div>`) : "");
     },
 
+    byes() {
+      // only weeks where some team is short (byes are over by the playoffs)
+      const weeks = D.teams[0].byeCrunch.map(x => x.w).filter(w => D.teams.some(t => t.byeCrunch.some(x => x.w === w && (x.lost >= 0.5 || x.need.length))));
+      if (!weeks.length) return section("Byes ahead", "", `<div class="empty">No bye weeks left this season.</div>`);
+      const rows = D.teams.map(t => ({ t, total: t.byeCrunch.reduce((s, x) => s + x.lost, 0) })).sort((a, b) => b.total - a.total);
+      const max = Math.max(1, ...D.teams.flatMap(t => t.byeCrunch.map(x => x.lost)));
+      const who = x => x.out.map(p => `${p.name} (${p.pos}${p.bye ? ", bye" : ", out"})`).join(", ");
+      const cell = (t, x) => {
+        const tip = `${t.name}, week ${x.w}: ` + (x.lost >= 0.5 ? `−${x.lost.toFixed(1)} pts. ${who(x)}` : "full strength") + (x.need.length ? `. No ${x.need.join(" or ")} that week` : "");
+        return `<div class="bc-cell" style="--a:${(x.lost / max).toFixed(2)}" title="${esc(tip)}">${x.lost >= 0.5 ? "−" + x.lost.toFixed(0) : ""}${x.need.length ? `<i>${esc(x.need.join("/"))}</i>` : ""}</div>`;
+      };
+      const grid = `<div class="bc-wrap"><div class="bc-grid" style="--n:${weeks.length}">
+        <div class="bc-h bc-first">Team</div>${weeks.map(w => `<div class="bc-h">${w > L.regularSeasonWeeks ? "PO" : "Wk"} ${w}</div>`).join("")}<div class="bc-h">Total</div>
+        ${rows.map(({ t, total }) => `<div class="bc-team bc-first${isMine(t) ? " mine" : ""}">${logo(t)}<span class="tname">${esc(t.name)}</span></div>${t.byeCrunch.filter(x => weeks.includes(x.w)).map(x => cell(t, x)).join("")}<div class="bc-tot">${total >= 0.5 ? "−" + total.toFixed(0) : "0"}</div>`).join("")}
+      </div></div>`;
+      const worst = D.teams.flatMap(t => t.byeCrunch.map(x => Object.assign({ t }, x))).filter(x => x.lost >= 3 || x.need.length)
+        .sort((a, b) => b.lost - a.lost).slice(0, 10);
+      const line = x => `<div class="rec"><span class="rec-v">${x.lost >= 0.5 ? "−" + x.lost.toFixed(1) : "0"}</span><span class="rec-who">${logo(x.t)}<span><b>${esc(x.t.name)}</b>
+        <span class="team-mgr">Week ${x.w}: ${esc(who(x))}${x.need.length ? `${x.out.length ? " · " : ""}no ${esc(x.need.join(" or "))}` : ""}</span></span></span></div>`;
+      return section("Byes ahead", { short: "Projected points each team's best lineup loses to byes in the weeks left.", full: "For every week still to play: how many projected points each team's best lineup loses compared with its full-strength lineup, because starters are on bye (or ESPN expects them to miss the game). Bench depth counts: if a backup fills in well, little is lost. K or D/ST means every kicker or defense on the roster is on bye that week, so one has to be picked up. Tap or hover a cell for who's missing." }, grid) +
+        (worst.length ? section("Toughest weeks", "The biggest holes coming up.", `<div class="rec-card wrap">${worst.map(line).join("")}</div>`) : "");
+    },
+
+    race() {
+      if (D.teams.some(t => t.odds)) {
+        const rows = D.teams.slice().sort((a, b) => b.odds.playoffPct - a.odds.playoffPct || b.odds.titlePct - a.odds.titlePct);
+        return section("Playoff race", { short: `Top ${L.playoffTeams} make it${L.playoffTeams < 2 ** L.playoffRounds ? ` · top ${2 ** L.playoffRounds - L.playoffTeams} get a bye` : ""}.`, full: `Top ${L.playoffTeams} make the playoffs${L.playoffTeams < 2 ** L.playoffRounds ? `; top ${2 ** L.playoffRounds - L.playoffTeams} get a first-round bye` : ""}. Odds from 10,000 simulated finishes of the rest of the regular season and the bracket; this week's games use ESPN's live win probabilities.` },
+          table([
+            { label: "Team", cell: teamCell },
+            { label: "Record", num: 1, cell: t => record(t) },
+            { label: "Proj. wins", num: 1, cell: t => t.odds.projWins.toFixed(1) },
+            { label: "Playoffs", num: 1, cell: t => barCell(t.odds.playoffPct) },
+            { label: "Bye", num: 1, cell: t => barCell(t.odds.byePct, "bye") },
+            { label: "Title", num: 1, cell: t => barCell(t.odds.titlePct, "title") },
+          ], rows));
+      }
+      if (!L.over) return `<div class="empty">Playoff odds appear during the regular season. The bracket is set; follow it on the Matchups tab.</div>`;
+      const rows = D.teams.slice().sort((a, b) => (a.finalRank || 99) - (b.finalRank || 99));
+      return section("Final results", `How the ${L.season} season ended.`, table([
+        { label: "Finish", num: 1, cell: t => `<b class="${t.finalRank === 1 ? "champ" : ""}">${finishText(t.finalRank)}</b>` },
+        { label: "Team", cell: teamCell },
+        { label: "Record", num: 1, cell: t => record(t) },
+        { label: "Seed", num: 1, cell: t => (t.seed && t.seed <= L.playoffTeams ? "#" + t.seed : "—") },
+        { label: "Points for", num: 1, cell: t => fmt(t.pf) },
+      ], rows));
+    },
+
+    luck() {
+      const rows = D.teams.filter(t => t.allPlayW != null).sort((a, b) => b.luck - a.luck);
+      return section("Luck", { short: "Actual wins vs. what your scoring deserved.", full: "All-play is the record you'd have playing every team every week. Luck = actual wins minus the wins that rate predicts." }, table([
+        { label: "Team", cell: teamCell },
+        { label: "Record", num: 1, cell: t => record(t) },
+        { label: "All-play", num: 1, cell: t => `${t.allPlayW}–${t.allPlayL} <span class="muted">(${(t.allPlayPct * 100).toFixed(0)}%)</span>` },
+        { label: "Expected wins", num: 1, cell: t => t.expectedWins.toFixed(1) },
+        { label: "Luck", num: 1, cell: t => signedPts(t.luck, true) },
+      ], rows));
+    },
+
+    schedule() {
+      const rows = D.teams.filter(t => t.sos).sort((a, b) => b.sos.oppVsAvg - a.sos.oppVsAvg);
+      const hasLeft = rows.some(t => t.sos.remainingVsAvg != null);
+      const cols = [
+        { label: "Team", cell: teamCell },
+        { label: "Record", num: 1, cell: t => record(t) },
+        { label: "Opponents so far", num: 1, cell: t => `${signed(t.sos.oppVsAvg)} <span class="muted">#${t.sos.oppVsAvgRank}</span>` },
+        { label: "They scored vs you", num: 1, cell: t => signedPts(t.sos.facedVsAvg, false) },
+      ];
+      if (hasLeft) cols.push({ label: "Opponents left", num: 1, cell: t => t.sos.remainingVsAvg == null ? "—" : `${signed(t.sos.remainingVsAvg)} <span class="muted">#${t.sos.remainingVsAvgRank}</span>` });
+      return section("Strength of schedule", { short: "How tough each team's opponents have been (#1 = toughest).", full: `<b>Opponents so far</b>: how much the teams you've faced score per week compared with the league average (#1 = toughest). <b>They scored vs you</b>: how those opponents actually played against you; high means you kept running into hot weeks.${hasLeft ? " <b>Opponents left</b>: projected strength of the rest of your schedule." : ""}` }, table(cols, rows));
+    },
+
+    close() {
+      const LIMIT = 10;
+      const rs = L.regularSeasonWeeks;
+      const rec = {};
+      D.teams.forEach(t => { rec[t.id] = { t, w: 0, l: 0, games: 0, bestW: null, worstL: null }; });
+      D.weeks.filter(w => w.final && w.week <= rs).forEach(w => w.games.forEach(g => {
+        if (g.sides.length !== 2) return;
+        g.sides.forEach((me, i) => {
+          const opp = g.sides[1 - i], r = rec[me.team];
+          if (!r) return;
+          r.games++;
+          const m = me.pts - opp.pts;
+          if (Math.abs(m) >= LIMIT || m === 0) return;
+          const game = { m: Math.abs(m), week: w.week, opp: opp.team, game: g.id };
+          if (m > 0) { r.w++; if (!r.bestW || game.m < r.bestW.m) r.bestW = game; }
+          else { r.l++; if (!r.worstL || game.m < r.worstL.m) r.worstL = game; }
+        });
+      }));
+      const rows = Object.values(rec).filter(r => r.games).sort((a, b) => (b.w - b.l) - (a.w - a.l) || b.w - a.w);
+      const total = rows.reduce((n, r) => n + r.w, 0);
+      const gameLink = (g, verb) => g ? `${verb} by <b>${g.m.toFixed(2)}</b> <span class="muted">vs ${esc(tname(g.opp))}, <a class="wk-link" href="${href("matchups", { week: g.week, game: g.game })}">wk ${g.week}</a></span>` : '<span class="muted">—</span>';
+      return section("Close games", { short: `Records in games decided by under ${LIMIT} points.`, full: `Every regular-season game decided by less than ${LIMIT} points (${total} so far this season). These usually come down to one play, so a team well above or below .500 here has been getting, or missing, the breaks.` }, table([
+        { label: "Team", cell: r => teamCell(r.t) },
+        { label: "Close record", num: 1, cell: r => `<b>${r.w}–${r.l}</b>` },
+        { label: "Of all games", num: 1, cell: r => `${r.w + r.l} of ${r.games}` },
+        { label: "Closest win", wide: 1, cell: r => gameLink(r.bestW, "won") },
+        { label: "Closest loss", wide: 1, cell: r => gameLink(r.worstL, "lost") },
+      ], rows));
+    },
+
+    form() {
+      const rows = D.teams.filter(t => t.form).sort((a, b) => b.form.diff - a.form.diff);
+      const lc = rows.length ? rows[0].form.leagueChange : 0;
+      const tag = d => d >= 8 ? '<span class="badge hot">Hot</span>' : d <= -8 ? '<span class="badge cold">Cold</span>' : '<span class="badge">Steady</span>';
+      const wks = rows.length ? rows[0].form.weeks : [];
+      return section("Hot & cold", { short: `Last ${wks.length} weeks vs. each team's season average.`, full: `Each team's average over the last ${wks.length} completed weeks (weeks ${wks.join(", ")}) compared with its season average. Scoring across the whole league moved ${signed(lc)} a week over that stretch (byes and injuries hit everyone), so <b>Trend</b> takes that out: it's how much better or worse a team is doing than the league's own swing.` }, table([
+        { label: "Team", cell: teamCell },
+        { label: `Last ${wks.length} weeks`, num: 1, cell: t => `<span class="muted">${t.form.lastPts.map(x => x.toFixed(0)).join(" · ")}</span>` },
+        { label: "Recent avg", num: 1, cell: t => t.form.lastAvg.toFixed(1) },
+        { label: "Season avg", num: 1, cell: t => t.form.seasonAvg.toFixed(1) },
+        { label: "Trend", num: 1, cell: t => `${signedPts(t.form.diff, true)} ${tag(t.form.diff)}` },
+        { label: "Recent record", num: 1, cell: t => `${t.form.lastW}–${t.form.lastL}` },
+      ], rows));
+    },
+
+    projection() {
+      const rows = D.teams.filter(t => t.vsProj).sort((a, b) => b.vsProj.diff - a.vsProj.diff);
+      return section("Vs. projection", { short: "Points scored vs. what ESPN projected for the lineup each week.", full: "Each week, the points a team's starters actually scored compared with ESPN's pre-game projection for that same lineup. Positive means its players beat their projections; it's about how the players performed, not lineup choices (that's Efficiency) or opponents (that's Luck). Regular season." }, table([
+        { label: "Team", cell: teamCell },
+        { label: "Projected", num: 1, cell: t => t.vsProj.proj.toFixed(1) },
+        { label: "Actual", num: 1, cell: t => t.vsProj.actual.toFixed(1) },
+        { label: "Difference", num: 1, cell: t => signedPts(t.vsProj.diff, true) },
+        { label: "Per week", num: 1, cell: t => signedPts(t.vsProj.perWeek, true) },
+        { label: "Beat it", num: 1, cell: t => `${t.vsProj.beat} of ${t.vsProj.weeks} wks` },
+        { label: "Best week", num: 1, cell: t => t.vsProj.best ? `${signed(t.vsProj.best[1])} <span class="muted">wk ${t.vsProj.best[0]}</span>` : "—" },
+        { label: "Worst week", num: 1, cell: t => t.vsProj.worst ? `${signed(t.vsProj.worst[1])} <span class="muted">wk ${t.vsProj.worst[0]}</span>` : "—" },
+      ], rows));
+    },
+
+    swap() {
+      const S = D.scheduleSwap, G = S.grid;
+      const rec = v => `${v[0]}–${v[1]}${v[2] ? "–" + v[2] : ""}`;
+      const order = S.teams.map(id => teamById[id]).filter(Boolean).sort((a, b) => a.standing - b.standing);
+      const ids = order.map(t => String(t.id));
+      // per team: its best and worst possible schedule (record, luck and expected wins live on the Luck tab)
+      const sum = order.map(t => {
+        const row = G[t.id], cells = ids.map(b => ({ b, v: row[b] }));
+        const best = cells.reduce((x, y) => (y.v[0] - y.v[1] > x.v[0] - x.v[1] ? y : x));
+        const worst = cells.reduce((x, y) => (y.v[0] - y.v[1] < x.v[0] - x.v[1] ? y : x));
+        return { t, best, worst };
+      });
+      const summary = table([
+        { label: "Team", cell: r => teamCell(r.t) },
+        { label: "Best schedule", num: 1, cell: r => `${rec(r.best.v)} <span class="muted">${r.best.b === String(r.t.id) ? "their own schedule" : "with " + esc(poss(tname(r.best.b)))}</span>` },
+        { label: "Worst schedule", num: 1, cell: r => `${rec(r.worst.v)} <span class="muted">${r.worst.b === String(r.t.id) ? "their own schedule" : "with " + esc(poss(tname(r.worst.b)))}</span>` },
+      ], sum);
+      // full grid: rows = whose scores, columns = whose schedule
+      const maxW = S.weeks;
+      const heat = v => { const f = (v[0] + v[2] / 2) / maxW; return `background: color-mix(in srgb, var(--accent) ${Math.round(f * 55)}%, var(--surface));`; };
+      const head = `<tr><th class="sg-corner">Scores ↓ · Schedule →</th>${order.map(t => `<th title="${esc(poss(t.name))} schedule">${logo(t)}<span>${esc(t.abbrev || initials(t.name))}</span></th>`).join("")}</tr>`;
+      const body = order.map(a => `<tr><th class="sg-row">${logo(a)}<span>${esc(a.name)}</span></th>${order.map(b => {
+        const v = G[a.id][b.id], self = a.id === b.id;
+        return `<td class="${self ? "self" : ""}" style="${heat(v)}" title="${esc(a.name)} with ${esc(poss(b.name))} schedule: ${rec(v)}${self ? " (actual)" : ""}">${rec(v)}</td>`;
+      }).join("")}</tr>`).join("");
+      if (!state.swapTeam || !G[state.swapTeam]) state.swapTeam = String(order[0].id);
+      const pickRow = ids.map(b => ({ b, v: G[state.swapTeam][b] })).sort((x, y) => (y.v[0] - y.v[1]) - (x.v[0] - x.v[1]));
+      const picker = `<div class="sg-pick"><label class="field">Team <select id="swap-team">${order.map(t => `<option value="${t.id}"${String(t.id) === state.swapTeam ? " selected" : ""}>${esc(t.name)}</option>`).join("")}</select></label>
+        <div class="picks" style="margin-top:10px">${pickRow.map(c => `<div class="pick"><span class="pick-no">${rec(c.v)}</span>${logo(teamById[c.b])}<span class="pick-name"><b>${esc(poss(tname(c.b)))} schedule</b>${c.b === state.swapTeam ? '<span class="team-mgr">actual record</span>' : ""}</span></div>`).join("")}</div></div>`;
+      return section("Schedule swap", { short: "Each team's record with every other team's schedule.", full: `Each team's record if it had played every other team's schedule, using its real weekly scores (${S.weeks} completed regular-season weeks). When the other schedule had a game against this team, it plays that team instead. For actual records and luck, see the Luck tab.` }, summary) +
+        section("Every schedule", "Rows are each team's scores; columns are whose schedule they play. The outlined cell is the real record. Greener means more wins.",
+          `<div class="sg-wrap"><table class="swap-grid"><thead>${head}</thead><tbody>${body}</tbody></table></div>${picker}`);
+    },
+
+    efficiency() {
+      const rows = D.teams.filter(t => t.efficiency != null).sort((a, b) => b.efficiency - a.efficiency);
+      return section("Manager efficiency", { short: "Points started vs. the best possible lineup.", full: "Points started as a share of the best possible lineup each week, in hindsight. Regular season." }, table([
+        { label: "Team", cell: teamCell },
+        { label: "Efficiency", num: 1, cell: t => `<span class="pbar"><span class="pbar-fill eff" style="width:${Math.max(0, (t.efficiency - 70) / 30 * 100)}%"></span><span class="pbar-v">${t.efficiency.toFixed(1)}%</span></span>` },
+        { label: "Bench pts left", num: 1, cell: t => Number(t.benchLeft).toFixed(1) },
+        { label: "Points for", num: 1, cell: t => fmt(t.pf) },
+      ], rows));
+    },
+
+    draft() {
+      const dr = D.draft;
+      const byPick = Object.fromEntries(dr.picks.map(p => [p.pick, p]));
+      const sofar = L.over ? "" : " so far";
+      const grades = Object.entries(dr.teams).map(([tid, g]) => Object.assign({ t: teamById[tid] }, g)).filter(r => r.t).sort((a, b) => a.rank - b.rank);
+      const pickLine = p => `<div class="pick"><span class="pick-no">R${p.round}.${p.roundPick}</span><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>
+        <span class="pick-name"><b>${esc(p.name)}</b>${p.keeper ? ' <span class="badge former">Keeper</span>' : ""}<span class="team-mgr">${esc(tname(p.team))} · drafted ${esc(p.pos)}${p.draftPosRank} · ${L.over ? "finished" : "now"} ${esc(p.pos)}${p.finishPosRank}</span></span>
+        <span class="pick-v">${signedPts(p.value, true)}</span></div>`;
+      if (!state.draftTeam || !dr.teams[state.draftTeam]) state.draftTeam = String((grades[0] || {}).t ? grades[0].t.id : "");
+      const mine = dr.picks.filter(p => String(p.team) === state.draftTeam);
+      return section("Draft grades", { short: `Each pick vs. same-position players drafted around it${sofar}.`, full: `Each pick is compared with players at the same position drafted around the same spot (a QB18 against QBs 16–20), using points scored${sofar}. Kickers and defenses aren't graded.` }, table([
+          { label: "Grade", num: 1, cell: r => `<b class="grade g${r.grade[0]}">${r.grade}</b>` },
+          { label: "Team", cell: r => teamCell(r.t) },
+          { label: "Vs. expected", num: 1, cell: r => signedPts(r.value, true) },
+          { label: "Points from picks", num: 1, cell: r => r.pts.toFixed(1) },
+        ], grades)) +
+        `<div class="two-col">${section("Steals", "Biggest gains over draft slot.", `<div class="picks">${dr.steals.map(p => pickLine(byPick[p])).join("")}</div>`)}
+          ${section("Busts", "Biggest shortfalls, rounds 1–8.", `<div class="picks">${dr.busts.map(p => pickLine(byPick[p])).join("")}</div>`)}</div>` +
+        section("Draft board", "", `<label class="field">Team <select id="draft-team">${grades.map(r => `<option value="${r.t.id}"${String(r.t.id) === state.draftTeam ? " selected" : ""}>${esc(r.t.name)}</option>`).join("")}</select></label>
+          <div class="picks" style="margin-top:10px">${mine.map(p => pickLine(p)).join("")}</div>`);
+    },
+
   };
 
   function renderInsights() {
