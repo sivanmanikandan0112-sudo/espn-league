@@ -108,7 +108,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   just before the play to 3 hours after (`addPlayVideos` in `worker/src/index.js`). Clips expire after ~2 days, and
   the link disappears with them. Team defenses and stat corrections aren't matched.
 - **Score ticker**: while any NFL game is being played, a thin crawl along the bottom of every page (above the
-  phone tab bar) shows every matchup score (yours first, in green) and the 5 newest big plays; tap it for Matchups.
+  phone tab bar) shows every matchup score, each matchup in its own box (yours first, in green; the leader in bold);
+  tap it for Matchups.
   Hover pauses it; with reduced motion turned on it's a still, swipeable strip.
 - **Watch guide** (Matchups → Watch guide): this week's real NFL games ranked by how much they matter to the league:
   every league starter in the game, weighted by ESPN's projection and by how close his fantasy matchup is (0.35 for a

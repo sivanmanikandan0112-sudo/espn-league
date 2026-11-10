@@ -2562,8 +2562,8 @@
       }
     } catch (_) { /* network blip: next minute */ }
   }
-  // Score ticker: while NFL games are being played, a thin crawl along the bottom of every page with all the
-  // current matchup scores (yours first) and the newest big plays. Tap it for the matchups.
+  // Score ticker: while NFL games are being played, a thin crawl along the bottom of every page with every
+  // matchup's score (yours first), each matchup in its own box. Tap it for the matchups.
   function renderTicker() {
     let el = document.getElementById("ticker");
     const cur = window.LEAGUE_DATA && window.LEAGUE_DATA[IDX.current];
@@ -2576,11 +2576,10 @@
     const mine = g => g.sides.some(sd => isMine(tm[sd.team])) ? 0 : 1;
     const games = wk.games.filter(g => g.sides.length === 2).sort((a, b) => mine(a) - mine(b)).map(g => {
       const [a, b] = g.sides, lead = a.pts > b.pts ? 0 : b.pts > a.pts ? 1 : -1;
-      return `<span class="tk-item${mine(g) ? "" : " mine"}"><b class="${lead === 0 ? "tk-lead" : ""}">${short(tm[a.team])} ${a.pts.toFixed(1)}</b><span class="tk-dash">–</span><b class="${lead === 1 ? "tk-lead" : ""}">${b.pts.toFixed(1)} ${short(tm[b.team])}</b></span>`;
+      const side = (sd, i) => `<span class="tk-side${lead === i ? " tk-lead" : ""}"><span class="tk-abbr">${short(tm[sd.team])}</span><span class="tk-pts">${sd.pts.toFixed(1)}</span></span>`;
+      return `<span class="tk-game${mine(g) ? "" : " mine"}">${side(a, 0)}${side(b, 1)}</span>`;
     });
-    const f = window.LIVE_FEED && window.LIVE_FEED.week === wk.week ? window.LIVE_FEED.events.slice().sort((x, y) => y.t - x.t).slice(0, 5) : [];
-    const plays = f.map(e => `<span class="tk-item tk-play">🏈 ${esc(e.name)} ${esc(e.label)} <b class="${e.delta >= 0 ? "pos" : "neg"}">${e.delta >= 0 ? "+" : ""}${e.delta.toFixed(1)}</b> <span class="tk-team">${short(tm[e.team])}</span></span>`);
-    const run = games.concat(plays).join('<span class="tk-sep" aria-hidden="true">•</span>');
+    const run = games.join("");
     if (!el) {
       el = document.createElement("a");
       el.id = "ticker"; el.className = "ticker";
@@ -2590,8 +2589,7 @@
     el.href = "#/matchups";
     el.setAttribute("aria-label", "Live scores: open matchups");
     // two copies back to back so the crawl loops without a gap; the speed follows the length
-    const len = games.length + plays.length;
-    el.innerHTML = `<span class="tk-live">LIVE</span><span class="tk-track" style="--tk-dur:${Math.max(25, len * 6)}s"><span class="tk-run">${run}<span class="tk-sep" aria-hidden="true">•</span></span><span class="tk-run" aria-hidden="true">${run}<span class="tk-sep">•</span></span></span>`;
+    el.innerHTML = `<span class="tk-live">LIVE</span><span class="tk-track" style="--tk-dur:${Math.max(25, games.length * 7)}s"><span class="tk-run">${run}</span><span class="tk-run" aria-hidden="true">${run}</span></span>`;
   }
   function updateLiveChip() {
     const chip = document.getElementById("live-chip");
