@@ -121,6 +121,7 @@
       state.sideWeek = (finals[finals.length - 1] || D.weeks[D.weeks.length - 1] || {}).week;
     }
     renderChrome();
+    renderTicker();
     if (tab === "matchups") renderMatchups();
     else if (tab === "insights") renderInsights();
     else if (tab === "trades") renderTrades();
@@ -585,13 +586,16 @@
     if (!f || f.week !== week || state.season !== IDX.current) return [];
     return f.events.filter(e => gameId == null || String(e.game) === String(gameId)).sort((a, b) => b.t - a.t);
   }
+  // highlight clip on ESPN for the play, when the worker found one (clips expire after about 2 days)
+  const watchLink = e => e.vid && /^https:\/\/www\.espn\.com\//.test(e.vid.u) && !(e.vid.x && Date.now() > e.vid.x)
+    ? ` <a class="play-vid" href="${esc(e.vid.u)}" target="_blank" rel="noopener" aria-label="Watch the highlight on ESPN">▶ Watch</a>` : "";
   function playLine(e) {
     const t = teamById[e.team] || { name: "Team " + e.team }, o = teamById[e.opp] || { name: "opponent" };
     const lead = e.score[0] - e.score[1];
     const status = Math.abs(lead) < 0.005 ? `ties ${esc(o.name)}` : `${lead > 0 ? "leads" : "trails"} ${esc(o.name)} by ${Math.abs(lead).toFixed(2)}`;
     const when = new Date(e.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     return `<div class="play${e.starter ? "" : " bench"}"><span class="play-t">${when}</span>
-      <span class="play-what"><b>${esc(e.name)}</b> <span class="muted">${esc(e.pos)}${e.nfl ? " · " + esc(e.nfl) : ""}</span> · ${esc(e.label)}${e.starter ? "" : ' <span class="muted">(bench)</span>'}
+      <span class="play-what"><b>${esc(e.name)}</b> <span class="muted">${esc(e.pos)}${e.nfl ? " · " + esc(e.nfl) : ""}</span> · ${esc(e.label)}${e.starter ? "" : ' <span class="muted">(bench)</span>'}${watchLink(e)}
       <span class="team-mgr">${esc(t.name)} ${status}</span></span>
       <span class="play-d ${e.delta >= 0 ? "pos" : "neg"}">${e.delta >= 0 ? "+" : ""}${e.delta.toFixed(2)}</span></div>`;
   }
@@ -2549,6 +2553,7 @@
       if (window.LEAGUE_STATS && window.LEAGUE_STATS[IDX.current]) Object.assign(window.LEAGUE_STATS[IDX.current], lv.stats);
       liveAsOf = lv.updated;
       updateLiveChip();
+      renderTicker();
       const typing = document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
       if (state.season === IDX.current && ["standings", "matchups"].includes(state.tab) && state.sub !== "pickem" && !typing) {
         const y = window.scrollY;
@@ -2556,6 +2561,37 @@
         window.scrollTo(0, y);
       }
     } catch (_) { /* network blip: next minute */ }
+  }
+  // Score ticker: while NFL games are being played, a thin crawl along the bottom of every page with all the
+  // current matchup scores (yours first) and the newest big plays. Tap it for the matchups.
+  function renderTicker() {
+    let el = document.getElementById("ticker");
+    const cur = window.LEAGUE_DATA && window.LEAGUE_DATA[IDX.current];
+    const now = Date.now();
+    const on = cur && !cur.league.over && (cur.nflGames || []).some(g => !g.tbd && g.date && now >= Date.parse(g.date) && now < Date.parse(g.date) + 4 * 3600e3);
+    const wk = on && cur.weeks.find(w => w.week === cur.league.currentWeek && !w.final);
+    if (!wk) { if (el) { el.remove(); document.body.classList.remove("has-ticker"); } return; }
+    const tm = Object.fromEntries(cur.teams.map(t => [t.id, t]));
+    const short = t => esc(t ? (t.abbrev || t.name.slice(0, 4)).toUpperCase() : "?");
+    const mine = g => g.sides.some(sd => isMine(tm[sd.team])) ? 0 : 1;
+    const games = wk.games.filter(g => g.sides.length === 2).sort((a, b) => mine(a) - mine(b)).map(g => {
+      const [a, b] = g.sides, lead = a.pts > b.pts ? 0 : b.pts > a.pts ? 1 : -1;
+      return `<span class="tk-item${mine(g) ? "" : " mine"}"><b class="${lead === 0 ? "tk-lead" : ""}">${short(tm[a.team])} ${a.pts.toFixed(1)}</b><span class="tk-dash">–</span><b class="${lead === 1 ? "tk-lead" : ""}">${b.pts.toFixed(1)} ${short(tm[b.team])}</b></span>`;
+    });
+    const f = window.LIVE_FEED && window.LIVE_FEED.week === wk.week ? window.LIVE_FEED.events.slice().sort((x, y) => y.t - x.t).slice(0, 5) : [];
+    const plays = f.map(e => `<span class="tk-item tk-play">🏈 ${esc(e.name)} ${esc(e.label)} <b class="${e.delta >= 0 ? "pos" : "neg"}">${e.delta >= 0 ? "+" : ""}${e.delta.toFixed(1)}</b> <span class="tk-team">${short(tm[e.team])}</span></span>`);
+    const run = games.concat(plays).join('<span class="tk-sep" aria-hidden="true">•</span>');
+    if (!el) {
+      el = document.createElement("a");
+      el.id = "ticker"; el.className = "ticker";
+      document.body.appendChild(el);
+      document.body.classList.add("has-ticker");
+    }
+    el.href = "#/matchups";
+    el.setAttribute("aria-label", "Live scores: open matchups");
+    // two copies back to back so the crawl loops without a gap; the speed follows the length
+    const len = games.length + plays.length;
+    el.innerHTML = `<span class="tk-live">LIVE</span><span class="tk-track" style="--tk-dur:${Math.max(25, len * 6)}s"><span class="tk-run">${run}<span class="tk-sep" aria-hidden="true">•</span></span><span class="tk-run" aria-hidden="true">${run}<span class="tk-sep">•</span></span></span>`;
   }
   function updateLiveChip() {
     const chip = document.getElementById("live-chip");

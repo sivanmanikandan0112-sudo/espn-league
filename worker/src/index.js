@@ -315,9 +315,13 @@ async function nflGameIds() {
   });
 }
 
+async function gameSummary(gameId) {
+  return cached(`nfl-summary-${gameId}`, 45, async () => (await fetch(`${NFL_SITE}/summary?event=${gameId}`)).json());
+}
+
 async function scoringPlays(gameId) {
   return cached(`nfl-scoring-${gameId}`, 45, async () => {
-    const d = await (await fetch(`${NFL_SITE}/summary?event=${gameId}`)).json();
+    const d = await gameSummary(gameId);
     const wall = {};
     for (const drv of (d.drives || {}).previous || []) for (const p of drv.plays || []) if (p.wallclock) wall[p.id] = Date.parse(p.wallclock);
     const out = [];
@@ -355,6 +359,37 @@ async function addPlayYards(events) {
     const sp = cands.reduce((best, p) => (p.w || 0) > (best.w || 0) ? p : best);
     e.yds = sp.yds; e.sp = sp.id;
     e.label = role === "kicker" ? `${sp.yds}-yd field goal` : `${sp.yds}-yd ${e.label}`;
+    changed = true;
+  }
+  return changed;
+}
+
+// ---- highlight clips
+// ESPN posts short clips of most touchdowns (and some other big plays) to the game summary a few minutes after they
+// happen, headlined with the players' names ("Patrick Mahomes finds Kenneth Walker III for a Chiefs TD"). A play gets
+// the first clip naming its player that was posted from just before it to 3 hours after. Clips expire after ~2 days.
+async function gameVideos(gameId) {
+  return cached(`nfl-videos-${gameId}`, 60, async () => ((await gameSummary(gameId)).videos || []).map(v => ({
+    u: ((v.links || {}).web || {}).href, h: normName(v.headline), p: Date.parse(v.originalPublishDate || v.lastModified || 0),
+    x: Date.parse(((v.timeRestrictions || {}).expirationDate) || 0) || null,
+  })).filter(v => v.u && v.p));
+}
+
+async function addPlayVideos(events) {
+  const todo = events.filter(e => !e.vid && e.nfl && e.pos !== "D/ST" && e.label !== "stat correction" && Date.now() - e.t < 4 * 3600e3)
+    .sort((a, b) => a.t - b.t);
+  if (!todo.length) return false;
+  const games = await nflGameIds();
+  let changed = false;
+  for (const e of todo) {
+    const gid = games[e.nfl];
+    const who = normName(e.name);
+    if (!gid || who.length < 5) continue;
+    const taken = new Set(events.filter(x => x.vid && x.pid === e.pid).map(x => x.vid.u));
+    const clip = (await gameVideos(gid)).filter(v => v.h.includes(who) && !taken.has(v.u) && v.p >= e.t - 10 * 60e3 && v.p <= e.t + 3 * 3600e3)
+      .sort((a, b) => a.p - b.p)[0];
+    if (!clip) continue;
+    e.vid = { u: clip.u, x: clip.x };
     changed = true;
   }
   return changed;
@@ -467,6 +502,7 @@ async function updateFeed(env) {
   if (kept.length !== all.length) { all.length = 0; all.push(...kept); yards = true; }
   try { yards = (await addPlayYards(all)) || yards; } catch (e) { console.log("play yards failed", String(e)); }
   try { if (await pricePlays(env, all)) yards = true; } catch (e) { console.log("play points failed", String(e)); }
+  try { if (await addPlayVideos(all)) yards = true; } catch (e) { console.log("play videos failed", String(e)); }
   const stale = Date.now() - (prev.savedAt || 0) > 10 * 60e3;
   if (!events.length && !yards && !stale && Object.keys(prev.snap).length) return; // nothing worth a write this minute
   await env.PICKEM.put(key, JSON.stringify({ snap, events: all, savedAt: Date.now() }), { expirationTtl: 21 * 86400 });

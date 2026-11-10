@@ -917,3 +917,36 @@ tr:has(.tcell.mine) td { background: color-mix(in srgb, var(--accent) 9%, transp
 .tw-card:hover { border-color: var(--accent); }
 .tw-card .kicker { font-size: 11px; }
 .tw-rank { color: var(--accent); font-weight: 700; }
+
+/* Watch-the-play link (big plays) */
+.play-vid { display: inline-block; margin-left: 4px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 18px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); text-decoration: none; white-space: nowrap; }
+.play-vid:hover { background: var(--accent); color: var(--accent-ink); }
+
+/* Live score ticker (bottom of every page while NFL games are on) */
+.ticker { position: fixed; left: 0; right: 0; bottom: 0; z-index: 49; display: flex; align-items: center; height: 34px; overflow: hidden;
+  background: var(--head); color: var(--head-ink); text-decoration: none; font-size: 13px; border-top: 1px solid var(--line); }
+body.has-ticker { padding-bottom: 34px; }
+.tk-live { position: relative; z-index: 1; flex: none; align-self: stretch; display: flex; align-items: center; padding: 0 10px; background: var(--hot); color: #fff;
+  font-size: 11px; font-weight: 800; letter-spacing: .1em; }
+.tk-track { display: flex; width: max-content; animation: tk-crawl var(--tk-dur, 40s) linear infinite; }
+.ticker:hover .tk-track, .ticker:focus .tk-track { animation-play-state: paused; }
+.tk-run { display: flex; align-items: center; white-space: nowrap; }
+.tk-item { padding: 0 4px; }
+.tk-item b { font-weight: 600; opacity: .85; }
+.tk-item b.tk-lead { font-weight: 800; opacity: 1; }
+.tk-item.mine { color: var(--accent); }
+.tk-dash { margin: 0 5px; opacity: .6; }
+.tk-sep { padding: 0 12px; opacity: .45; }
+.tk-team { opacity: .6; font-size: 11px; }
+.tk-play b.pos { color: var(--accent); } .tk-play b.neg { color: var(--hot); }
+@keyframes tk-crawl { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) {
+  .tk-track { animation: none; }
+  .ticker { overflow-x: auto; }
+  .tk-run[aria-hidden] { display: none; }
+}
+@media (max-width: 640px) {
+  .ticker { bottom: calc(62px + env(safe-area-inset-bottom)); }
+  body.has-ticker { padding-bottom: calc(66px + 34px + env(safe-area-inset-bottom)); }
+}

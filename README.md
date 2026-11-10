@@ -103,6 +103,13 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   long-TD bonus), not everything the player gained in that minute.
   When ESPN takes a play back (a fumble or interception overturned, a TD ruled short), that play is removed from
   the feed rather than shown again with the opposite points.
+- **Watch the play**: big plays get a "▶ Watch" link to ESPN's highlight clip when one exists. The live worker
+  matches each play to the first clip in ESPN's public game summary whose headline names the player, posted from
+  just before the play to 3 hours after (`addPlayVideos` in `worker/src/index.js`). Clips expire after ~2 days, and
+  the link disappears with them. Team defenses and stat corrections aren't matched.
+- **Score ticker**: while any NFL game is being played, a thin crawl along the bottom of every page (above the
+  phone tab bar) shows every matchup score (yours first, in green) and the 5 newest big plays; tap it for Matchups.
+  Hover pauses it; with reduced motion turned on it's a still, swipeable strip.
 - **Watch guide** (Matchups → Watch guide): this week's real NFL games ranked by how much they matter to the league:
   every league starter in the game, weighted by ESPN's projection and by how close his fantasy matchup is (0.35 for a
   lopsided one up to 1.0 for a toss-up), scaled so the biggest game is 100. Kickoffs come from ESPN's NFL schedule.
