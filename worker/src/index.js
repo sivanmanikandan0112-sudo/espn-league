@@ -370,26 +370,40 @@ async function addPlayYards(events) {
 // the first clip naming its player that was posted from just before it to 3 hours after. Clips expire after ~2 days.
 async function gameVideos(gameId) {
   return cached(`nfl-videos-${gameId}`, 60, async () => ((await gameSummary(gameId)).videos || []).map(v => ({
-    u: ((v.links || {}).web || {}).href, h: normName(v.headline), p: Date.parse(v.originalPublishDate || v.lastModified || 0),
+    u: ((v.links || {}).web || {}).href, h: normName(v.headline), raw: String(v.headline || "").toLowerCase(),
+    p: Date.parse(v.originalPublishDate || v.lastModified || 0), d: v.duration || 0,
     x: Date.parse(((v.timeRestrictions || {}).expirationDate) || 0) || null,
   })).filter(v => v.u && v.p));
 }
 
+// the clip has to be about this kind of play: a TD clip for a touchdown, a pick/fumble clip for a turnover...
+// (a player's name also shows up in recaps and in clips of other plays he was part of)
+function clipFits(label, raw) {
+  if (/\bTD\b/.test(label)) return /\btd\b|touchdown|scores?\b|end zone|runs it in|punches it in|house/.test(raw);
+  if (/interception/.test(label)) return /pick|intercept/.test(raw);
+  if (/fumble/.test(label)) return /fumble|strip|cough/.test(raw);
+  if (/field goal/.test(label)) return /field goal|\bfg\b|kick|boot/.test(raw);
+  return !/\btd\b|touchdown|pick|intercept|fumble/.test(raw); // a long gain: a clip of the play, not of a score
+}
+
 async function addPlayVideos(events) {
+  // clips matched before the play-type check (vid without k) are matched again
+  let changed = false;
+  for (const e of events) if (e.vid && !e.vid.k) { delete e.vid; changed = true; }
   const todo = events.filter(e => !e.vid && e.nfl && e.pos !== "D/ST" && e.label !== "stat correction" && Date.now() - e.t < 4 * 3600e3)
     .sort((a, b) => a.t - b.t);
-  if (!todo.length) return false;
+  if (!todo.length) return changed;
   const games = await nflGameIds();
-  let changed = false;
   for (const e of todo) {
     const gid = games[e.nfl];
     const who = normName(e.name);
     if (!gid || who.length < 5) continue;
     const taken = new Set(events.filter(x => x.vid && x.pid === e.pid).map(x => x.vid.u));
-    const clip = (await gameVideos(gid)).filter(v => v.h.includes(who) && !taken.has(v.u) && v.p >= e.t - 10 * 60e3 && v.p <= e.t + 3 * 3600e3)
+    const clip = (await gameVideos(gid)).filter(v => v.h.includes(who) && !taken.has(v.u) && v.d <= 45 && clipFits(e.label, v.raw)
+      && v.p >= e.t - 10 * 60e3 && v.p <= e.t + 3 * 3600e3)
       .sort((a, b) => a.p - b.p)[0];
     if (!clip) continue;
-    e.vid = { u: clip.u, x: clip.x };
+    e.vid = { u: clip.u, x: clip.x, k: 2 };
     changed = true;
   }
   return changed;
