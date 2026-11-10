@@ -853,3 +853,14 @@ tr:has(.tcell.mine) td { background: color-mix(in srgb, var(--accent) 9%, transp
 .pg-st.live { color: var(--hot); }
 .pg-quiet { margin: 14px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.6; }
 .pg-quiet b { color: var(--ink); font-weight: 600; }
+
+/* Rules lab + hindsight redraft (Insights) */
+.rl-by { flex-wrap: wrap; border-radius: 18px; }
+.rl-desc { margin: 0 0 6px; color: var(--ink-2); font-size: 13px; max-width: 760px; }
+.rl-head { margin: 0 0 12px; font-size: 14px; }
+.rl-move { display: inline-block; min-width: 26px; font-size: 11px; font-weight: 700; color: var(--ink-2); }
+.rl-move.up { color: var(--accent); }
+.rl-move.down { color: var(--hot); }
+.rd-alt b { display: inline; font-weight: 600; }
+.more-btn { display: block; margin: 10px auto 0; padding: 8px 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.more-btn:hover { border-color: var(--accent); }

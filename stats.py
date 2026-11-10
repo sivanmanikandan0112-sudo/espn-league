@@ -488,3 +488,126 @@ def vs_projection(season):
     return {t: {"actual": round(a["actual"], 1), "proj": round(a["proj"], 1), "diff": round(a["actual"] - a["proj"], 1),
                 "perWeek": round((a["actual"] - a["proj"]) / a["weeks"], 1), "weeks": a["weeks"], "beat": a["beat"],
                 "best": a["best"], "worst": a["worst"]} for t, a in agg.items()}
+
+
+# ---------------------------------------------------------------- rules lab
+
+# ESPN's standard (non-PPR) scoring for offense and kickers. D/ST keeps the league's own rules in every version,
+# and anything the league scores that isn't listed in LEAGUE_ONLY keeps its league value too.
+STANDARD = {3: 0.04, 4: 4, 19: 2, 20: -2, 24: 0.1, 25: 6, 26: 2, 42: 0.1, 43: 6, 44: 2, 72: -2,
+            80: 3, 77: 4, 74: 5, 85: -1, 86: 1}
+# league rules standard scoring doesn't have (completions, receptions, long-TD bonuses, 50-59 / 60+ FG brackets,
+# missed PAT): dropped and replaced by STANDARD
+LEAGUE_ONLY = {1, 15, 35, 45, 53, 88, 198, 201}
+RULE_VERSIONS = [
+    ("actual", "Your league"), ("half", "Half-PPR"), ("ppr", "Full PPR"), ("standard", "Standard"),
+    ("median", "+ median win"), ("bestball", "Best ball"),
+]
+
+
+def rescore(p, st, ppr):
+    """A player's week under standard scoring plus `ppr` per catch. st = {r: raw stats, a: league points per stat}."""
+    if p["pos"] == "D/ST" or not st:
+        return p["pts"]
+    raw, applied = st["r"], st["a"]
+    pts = sum(v for k, v in applied.items() if int(k) not in LEAGUE_ONLY and int(k) not in STANDARD)
+    pts += sum(raw.get(str(k), 0) * v for k, v in STANDARD.items())
+    return pts + ppr * raw.get("53", 0)
+
+
+def rules_lab(season, player_stats, slot_counts):
+    """Every team's regular-season record (completed weeks) under other scoring and formats, same lineups."""
+    weeks = regular_weeks(season)
+    if not weeks:
+        return None
+    rec = {k: defaultdict(lambda: [0, 0, 0, 0.0]) for k, _ in RULE_VERSIONS}
+    pos_pts = defaultdict(lambda: defaultdict(float))  # pos -> version -> points started
+
+    def tally(ver, a, b, pa, pb):
+        ra, rb = rec[ver][a], rec[ver][b]
+        ra[3] += pa; rb[3] += pb
+        if abs(pa - pb) < 1e-9:
+            ra[2] += 1; rb[2] += 1
+        elif pa > pb:
+            ra[0] += 1; rb[1] += 1
+        else:
+            ra[1] += 1; rb[0] += 1
+
+    for w in weeks:
+        scores = {}
+        for g in w["games"]:
+            if len(g["sides"]) != 2:
+                continue
+            sc = []
+            for s in g["sides"]:
+                v = {"actual": 0.0, "half": 0.0, "ppr": 0.0, "standard": 0.0}
+                for p in s["lineup"]:
+                    if not is_starter(p):
+                        continue
+                    st = player_stats.get("%d|%d" % (w["week"], p["id"]))
+                    std = rescore(p, st, 0)
+                    catches = (st or {}).get("r", {}).get("53", 0) if p["pos"] != "D/ST" else 0
+                    for ver, x in (("actual", p["pts"]), ("standard", std), ("half", std + 0.5 * catches), ("ppr", std + catches)):
+                        v[ver] += x
+                        pos_pts[p["pos"]][ver] += x
+                v["bestball"] = optimal_points(s["lineup"], slot_counts)
+                sc.append((s["team"], v))
+                scores[s["team"]] = s["pts"]
+            (a, va), (b, vb) = sc
+            for ver in ("actual", "half", "ppr", "standard", "bestball"):
+                tally(ver, a, b, va[ver], vb[ver])
+            tally("median", a, b, va["actual"], vb["actual"])
+        # + median: one more game each week against the league's middle score
+        med = statistics.median(scores.values())
+        for t, pts in scores.items():
+            r = rec["median"][t]
+            r[0 if pts > med else 1 if pts < med else 2] += 1
+    out = []
+    for ver, name in RULE_VERSIONS:
+        out.append({"key": ver, "name": name,
+                    "teams": {t: [r[0], r[1], r[2], round(r[3], 2)] for t, r in rec[ver].items()}})
+    return {"weeks": len(weeks), "versions": out,
+            "positions": {pos: {k: round(v, 1) for k, v in d.items()} for pos, d in pos_pts.items()}}
+
+
+# ---------------------------------------------------------------- hindsight redraft
+
+def hindsight_redraft(draft, players, slot_counts, n_teams):
+    """Re-run the draft knowing how the season went. Value = season points minus the replacement level at the
+    position (the best player left over once every team's starting lineup is filled with season totals).
+    draft: draft_review output. players: id -> {name, pos, team, pts} for the whole player pool."""
+    slots = []
+    for sid, n in slot_counts.items():
+        if sid in SLOT_ELIGIBLE:
+            slots += [SLOT_ELIGIBLE[sid]] * (n * n_teams)
+    slots.sort(key=len)
+    pool = sorted(((pid, x) for pid, x in players.items() if x["pos"] not in ("?",)), key=lambda kv: -kv[1]["pts"])
+    used = set()
+    for elig in slots:
+        for pid, x in pool:
+            if pid not in used and x["pos"] in elig:
+                used.add(pid)
+                break
+    repl = {}
+    for pid, x in pool:
+        if pid not in used and x["pos"] not in repl:
+            repl[x["pos"]] = x["pts"]
+    vor = {pid: x["pts"] - repl.get(x["pos"], 0.0) for pid, x in pool}
+    # kickers and defenses aren't redrafted (their season totals overrate them: good weeks are easy to stream),
+    # so the redraft fills the real draft's other pick slots in order with the most valuable players left
+    picks = draft["picks"]
+    slots_at = [p["pick"] for p in picks if p["pos"] not in ("K", "D/ST")]
+    ranked = sorted((pid for pid in vor if players[pid]["pos"] not in ("K", "D/ST")), key=lambda pid: -vor[pid])
+    new_at = {pid: slots_at[i] for i, pid in enumerate(ranked[:len(slots_at)])}
+    drafted_at = {p["id"]: p["pick"] for p in picks}
+    team_of = {p["id"]: p["team"] for p in picks}
+
+    def card(pid):
+        x = players[pid]
+        return {"id": pid, "name": x["name"], "pos": x["pos"], "nfl": x.get("team", ""), "pts": round(x["pts"], 1),
+                "value": round(vor[pid], 1), "at": new_at[pid], "pick": drafted_at.get(pid), "team": team_of.get(pid)}
+
+    rows = [{"pick": p["pick"], "at": new_at.get(p["id"]), "value": round(vor[p["id"]], 1) if p["id"] in vor else None}
+            for p in picks if p["pos"] not in ("K", "D/ST")]
+    return {"board": [card(pid) for pid in ranked[:len(slots_at)]], "picks": rows,
+            "replacement": {k: round(v, 1) for k, v in repl.items()}}

@@ -46,7 +46,15 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
     *Hot & cold* (last 3 weeks vs. season average, adjusted for the league-wide swing),
     *Vs. projection* (points scored vs. ESPN's pre-game projection for the lineup started),
     *Efficiency* (points started vs. best lineup).
+  - *Rules lab*: every team's record this season (completed regular-season weeks, same lineups, each player's real
+    stats rescored from the stat lines) under half-PPR, full PPR and standard ESPN scoring, with an extra weekly
+    win/loss against the league median, or as best ball (best possible lineup counts). Plus what the league's own
+    scoring does to each position's share of points started (`rules_lab` in `stats.py`; D/ST keeps league rules).
   - *Draft*: each pick vs. players at the same position drafted around the same spot; team grades, steals, busts.
+  - *Redraft*: the draft redone with hindsight (`hindsight_redraft`): skill players ranked by points above
+    replacement level at their position fill the real draft's non-K/DST pick slots in order, drafted or not.
+    Shows the redraft board, each team's picks with where they'd go now and who the redraft takes in that slot,
+    biggest climbs/falls and undrafted players the redraft takes. Kickers and defenses aren't redrafted.
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
   game, player of the week, most points left on the bench, best bench performance).
 - **Playoff bracket** (Matchups → Playoff bracket): every season's bracket with seeds, byes and scores; live during

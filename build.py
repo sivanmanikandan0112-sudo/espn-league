@@ -417,7 +417,8 @@ def build_season(season, is_current, names):
     for tid, t in teams.items():
         t["form"] = form.get(tid)
         t["vsProj"] = vsproj.get(tid)
-    add_draft(data, season, actual)
+    add_draft(data, season, actual, slot_counts)
+    data["rulesLab"] = stats.rules_lab(data, data["_stats"], slot_counts)
 
     for t in teams.values():
         for r in t["roster"]:
@@ -547,7 +548,7 @@ def add_playoff_odds(data, main, teams, regular, current_week):
     return schedule, strength
 
 
-def add_draft(data, season, actual):
+def add_draft(data, season, actual, slot_counts):
     try:
         picks = fetch(season, params=[("view", "mDraftDetail")]).get("draftDetail", {}).get("picks", [])
     except Exception as e:
@@ -563,6 +564,7 @@ def add_draft(data, season, actual):
     for v in rank_pool.values():
         v.sort(reverse=True)
     data["draft"] = stats.draft_review(picks, players, rank_pool)
+    data["draft"]["redraft"] = stats.hindsight_redraft(data["draft"], players, slot_counts, len(data["teams"]))
 
 
 # ---------------------------------------------------------------- trades
