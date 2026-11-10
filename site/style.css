@@ -907,3 +907,13 @@ tr:has(.tcell.mine) td { background: color-mix(in srgb, var(--accent) 9%, transp
 .stat-sheet { overflow-y: auto; }
 .stat-sheet .stat-body { overflow: visible; flex: none; }
 .section-head h2 .wk-link { margin-left: 8px; font-size: 13px; font-weight: 600; }
+
+/* This week in league history (Weekly matchups) */
+.tw { margin: 0 0 14px; }
+.tw-h { font-size: 15px; margin: 0 0 8px; }
+.tw-strip { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; }
+.tw-card { flex: 0 0 min(280px, 82%); scroll-snap-align: start; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; color: var(--ink); text-decoration: none; font-size: 14px; }
+.tw-card:hover { border-color: var(--accent); }
+.tw-card .kicker { font-size: 11px; }
+.tw-rank { color: var(--accent); font-weight: 700; }

@@ -807,3 +807,67 @@ def game_logs(season, player_stats):
         if int(wk) < cur and int(pid) in ids:
             logs[int(pid)].append((int(wk), round(sum(st["a"].values()), 2)))
     return {str(pid): [p for _, p in sorted(v)] for pid, v in logs.items()}
+
+
+# ---------------------------------------------------------------- this week in league history
+
+def this_week_history(seasons_data):
+    """week -> notable moments from that week of every season: top score, low score, closest game, blowout and
+    best player game, each with its all-time rank (1 = most extreme ever) in its category.
+    Row: [season, week, kind, team, owners, value, other, game id, rank, team id]."""
+    rows = []
+    for data in seasons_data:
+        yr = data["league"]["season"]
+        tm = {t["id"]: t for t in data["teams"]}
+        for w in data["weeks"]:
+            if not w["final"]:
+                continue
+            sides, games, players = [], [], []
+            for g in w["games"]:
+                if len(g["sides"]) != 2:
+                    continue
+                a, b = g["sides"]
+                if a["pts"] <= 0 or b["pts"] <= 0:
+                    continue
+                win, lose = sorted((a, b), key=lambda s: -s["pts"])
+                games.append((round(win["pts"] - lose["pts"], 2), win, lose, g["id"]))
+                for s in (a, b):
+                    sides.append((s["pts"], s, g["id"]))
+                    for p in s["lineup"]:
+                        if is_starter(p):
+                            players.append((p["pts"], p, s, g["id"]))
+            if not sides:
+                continue
+            t = lambda s: tm.get(s["team"], {"name": "Team %d" % s["team"], "owners": []})
+            hi = max(sides, key=lambda x: x[0])
+            lo = min(sides, key=lambda x: x[0])
+            close = min(games, key=lambda x: x[0])
+            blow = max(games, key=lambda x: x[0])
+            best = max(players, key=lambda x: x[0])
+            for kind, val, s, other, gid in (
+                    ("high", hi[0], hi[1], "", hi[2]), ("low", lo[0], lo[1], "", lo[2]),
+                    ("close", close[0], close[1], t(close[2])["name"], close[3]),
+                    ("blowout", blow[0], blow[1], t(blow[2])["name"], blow[3]),
+                    ("player", best[0], best[2], best[1]["name"], best[3])):
+                rows.append([yr, w["week"], kind, t(s)["name"], t(s)["owners"], round(val, 2), other, gid, None, s["team"]])
+    # all-time rank within each kind, across every week of every season (ties share a rank)
+    for kind, high_first in (("high", True), ("low", False), ("close", False), ("blowout", True), ("player", True)):
+        vals = sorted((r[5] for r in rows if r[2] == kind), reverse=high_first)
+        for r in rows:
+            if r[2] == kind:
+                r[8] = 1 + sum(1 for v in vals if (v > r[5] if high_first else v < r[5]))
+    # keep what's worth a mention: per season-week, the up-to-3 most extreme moments in the top third of their
+    # category (always at least the single most extreme one)
+    size = defaultdict(int)
+    for r in rows:
+        size[r[2]] += 1
+    pct = lambda r: r[8] / size[r[2]]
+    by_week = defaultdict(list)
+    for r in rows:
+        by_week[(r[0], r[1])].append(r)
+    out = defaultdict(list)
+    for (yr, wk), rs in by_week.items():
+        rs.sort(key=pct)
+        keep = [r for r in rs if pct(r) <= 0.33][:3] or rs[:1]
+        out[str(wk)] += keep
+    return dict(out)

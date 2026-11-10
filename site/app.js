@@ -721,6 +721,30 @@
       <p>${need}</p><p class="mm-note">Win chances: each player left gets a random game from his own scoring this season, ${N.toLocaleString()} times over.</p></div>`;
   }
 
+  // This week in league history: notable moments from the same week of the other seasons
+  function thisWeekStrip(w) {
+    const rows = ((IDX.history.thisWeek || {})[w] || []).filter(r => r[0] !== L.season);
+    if (!rows.length) return "";
+    const ord = n => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th");
+    const LABEL = { high: ["highest score", "Top score that week"], low: ["lowest score", "Low score that week"],
+      close: ["closest game", "Closest game that week"], blowout: ["biggest blowout", "Biggest win that week"], player: ["best player game", "Best player game that week"] };
+    const ranked = (kind, r) => r === 1 ? `The ${LABEL[kind][0]} in league history` : r <= 10 ? `${ord(r)}-${LABEL[kind][0]} ever` : LABEL[kind][1];
+    const v = x => x.toFixed(2);
+    const line = r => {
+      const [yr, wk, kind, team, own, val, other, gid, rank, tid] = r;
+      const who = `<b>${esc(team)}</b>`;
+      const text = kind === "high" ? `${who} put up <b>${v(val)}</b>` : kind === "low" ? `${who} managed just <b>${v(val)}</b>`
+        : kind === "close" ? `${who} beat ${esc(other)} by <b>${v(val)}</b>` : kind === "blowout" ? `${who} beat ${esc(other)} by <b>${v(val)}</b>`
+        : `<b>${esc(other)}</b> scored <b>${v(val)}</b> for ${esc(team)}`;
+      const p = new URLSearchParams({ week: wk, game: gid, team: tid });
+      if (yr !== IDX.current) p.set("season", yr);
+      return `<a class="tw-card" href="#/matchups?${p}"><span class="kicker">${yr} · Week ${wk}</span><span class="tw-text">${text}</span>
+        <span class="team-mgr">${esc((own || []).map(memberName).join(" & "))} · ${rank <= 10 ? `<b class="tw-rank">${ranked(kind, rank)}</b>` : ranked(kind, rank)}</span></a>`;
+    };
+    rows.sort((a, b) => b[0] - a[0] || a[8] - b[8]);
+    return `<section class="tw"><h2 class="tw-h">This week in league history</h2><div class="tw-strip">${rows.slice(0, 6).map(line).join("")}</div></section>`;
+  }
+
   function renderMatchups() {
     if (state.sub === "bracket") return renderBracket();
     if (state.sub === "pickem") return renderPickem();
@@ -775,6 +799,7 @@
       <div class="week-strip" role="tablist">${D.weeks.map(x => `<button data-week="${x.week}" class="${x.week === w ? "active" : ""}${x.playoffs ? " po" : ""}" role="tab" aria-selected="${x.week === w}">${x.playoffs ? "PO " : "Wk "}${x.week}</button>`).join("")}</div>
       ${wk.final ? recapCard(w) : ""}
       ${feedPanel(w)}
+      ${thisWeekStrip(w)}
       <div class="games">${games}</div>`;
     const active = main.querySelector(".week-strip .active");
     if (active) active.scrollIntoView({ block: "nearest", inline: "center" });

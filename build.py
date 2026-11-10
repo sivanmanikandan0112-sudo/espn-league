@@ -717,7 +717,8 @@ def build_history(seasons_data, names, current_members):
     return {"members": members, "champions": sorted(champions, key=lambda c: -c["season"]),
             "h2h": {"%s|%s" % k: [v[0], v[1], v[2], round(v[3], 1), round(v[4], 1)] for k, v in h2h.items()},
             "records": record_book(seasons_data), "rivalries": rivalries(h2h),
-            "badges": stats.badges(seasons_data, h2h, current_members)}
+            "badges": stats.badges(seasons_data, h2h, current_members),
+            "thisWeek": stats.this_week_history(seasons_data)}
 
 
 def record_book(seasons_data, top=5):

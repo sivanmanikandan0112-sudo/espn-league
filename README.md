@@ -89,6 +89,9 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   lineup/draft tiles, your NFL games to watch, byes ahead, full schedule (results, then remaining opponents) and roster
   with ROS ranks. Your team is also highlighted on Standings, Matchups (your game first), Insights tables and the
   watch guide. Works in past seasons too (member ids are ESPN accounts). On phones Settings moves to a gear in the header.
+- **This week in league history** (Weekly matchups): a swipeable strip of the same week's notable moments from the
+  other seasons (top/low score, closest game, blowout, best player game), with all-time ranks; each card opens that
+  box score (`this_week_history` in `stats.py`, stored in `index.js`; up to 3 per season-week from the top third).
 - **Big plays** (Matchups → Big plays, or tap "Recent big plays" on the Weekly tab, which shows the newest 5):
   every big play this week, grouped by NFL game (default) or by fantasy matchup — a switch at the top, remembered
   on each device. Touchdowns, field goals worth 5+ points, turnovers, defensive plays worth 5+ points (defensive/return TDs),
