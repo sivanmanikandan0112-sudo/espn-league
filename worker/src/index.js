@@ -271,10 +271,29 @@ function describePlay(oldA, newA) {
   const kickPts = FG_MADE.reduce((sum, id) => sum + (newA[id] || 0) - (oldA[id] || 0), 0);
   for (const [ids, label, pri] of PLAY) {
     if (ids.some(id => KICK_IDS.has(id)) && kickPts < KICK_MIN_PTS) continue;
-    const changed = ids.some(id => (newA[id] || 0) !== (oldA[id] || 0));
-    if (changed && (!best || pri > best.pri)) best = { label, pri, ids };
+    // only a stat that grew is a new play; one that shrank is ESPN taking a play back (see reversedPlays)
+    if (ids.some(id => grew(oldA, newA, id)) && (!best || pri > best.pri)) best = { label, pri, ids };
   }
   return best;
+}
+
+// Stats here are applied fantasy points (a lost fumble takes stat 72 from 0 to -3), so compare sizes, not signs.
+const grew = (oldA, newA, id) => Math.abs(newA[id] || 0) > Math.abs(oldA[id] || 0) + 1e-9;
+const shrank = (oldA, newA, id) => Math.abs(newA[id] || 0) < Math.abs(oldA[id] || 0) - 1e-9;
+
+// Plays ESPN took back since the last check (a fumble overturned on review, a TD ruled short): the play's stat
+// shrank. Returns their labels so the earlier feed entry can be removed instead of showing a second, opposite play.
+function reversedPlays(oldA, newA) {
+  return PLAY.filter(([ids]) => ids.some(id => shrank(oldA, newA, id)) && !ids.some(id => grew(oldA, newA, id)))
+    .map(([, label]) => label);
+}
+
+// Is a feed event this kind of play? Labels gain yards later ("passing TD" -> "25-yd passing TD", "50+ yd field
+// goal" -> "53-yd field goal"), so match on the kind saved with the event, or failing that the label's ending.
+function isPlayKind(e, label) {
+  if (e.kind) return e.kind === label;
+  if (isFgLabel(label)) return isFgLabel(e.label);
+  return e.label === label || e.label.endsWith(" " + label);
 }
 
 // ---- exact yardage for touchdowns and field goals
@@ -398,6 +417,7 @@ async function updateFeed(env) {
   const prev = (await env.PICKEM.get(key, "json")) || { snap: {}, events: [], savedAt: 0 };
   const snap = {};
   const events = [];
+  const takeBacks = []; // [player id, play label] for plays ESPN reversed this minute
   for (const g of lv.games) {
     if (g.sides.length !== 2) continue;
     for (const [i, side] of g.sides.entries()) {
@@ -411,7 +431,10 @@ async function updateFeed(env) {
         if (!old) continue;
         const delta = Math.round((p.pts - old.p) * 100) / 100;
         if (Math.abs(delta) < 0.05) continue;
+        const undone = reversedPlays(old.a || {}, a);
+        for (const label of undone) takeBacks.push([p.id, label]);
         const play = describePlay(old.a, a) || yardagePlay(old.y, y);
+        if (!play && undone.length) continue;               // a reversal removes the old entry; nothing new to show
         if (!play && delta > -4) continue;                  // small yardage ticks aren't plays
         // (a 4+ point drop with no play behind it is almost always an official stat correction)
         // points from the play itself (its own stats), not everything the player gained this minute; touchdowns,
@@ -421,15 +444,24 @@ async function updateFeed(env) {
         events.push({
           t: Date.now(), game: g.id, team: side.team, opp: opp.team, pid: p.id, name: p.name, pos: p.pos, nfl: p.team,
           starter: !["BE", "IR"].includes(p.slot), label: play ? play.label : "stat correction",
+          kind: play ? play.label : "stat correction",
           delta: own, minute: delta, pts: p.pts, score: [side.pts, opp.pts],
         });
       }
     }
   }
+  // Reversed plays: drop that player's most recent matching entry, so an overturned fumble simply disappears instead
+  // of showing as "fumble lost -3" followed by "fumble lost +3".
+  const older = (prev.events || []).slice();
+  for (const [pid, label] of takeBacks) {
+    const i = older.findIndex(e => e.pid === pid && isPlayKind(e, label)); // newest first
+    if (i >= 0) older.splice(i, 1);
+  }
+  const removed = older.length !== (prev.events || []).length;
   events.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
-  const all = events.concat(prev.events || []).slice(0, 200);
+  const all = events.concat(older).slice(0, 200);
   // the NFL scoring summary can trail the fantasy stats by a minute or two, so recent plays are retried each minute
-  let yards = false;
+  let yards = removed;
   // (also clears out defensive plays logged before the 5-point rule)
   const kept = all.filter(e => !(e.pos === "D/ST" && e.delta < DST_MIN_PTS));
   if (kept.length !== all.length) { all.length = 0; all.push(...kept); yards = true; }
@@ -627,26 +659,53 @@ function whatChanged(a, b) {
 async function dispatchRebuild(env, reason) {
   if (!env.GITHUB_TOKEN) return;
   const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${env.GITHUB_WORKFLOW}/dispatches`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json", "User-Agent": "league-hq-live",
-      "X-GitHub-Api-Version": "2022-11-28" },
-    body: JSON.stringify({ ref: "main" }),
+    method: "POST", headers: githubHeaders(env), body: JSON.stringify({ ref: "main" }),
   });
   console.log(r.ok ? `rebuild started: ${reason}` : `GitHub dispatch failed (${reason}) ${r.status} ${await r.text()}`);
 }
 
+const githubHeaders = env => ({ Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json",
+  "User-Agent": "league-hq-live", "X-GitHub-Api-Version": "2022-11-28" });
+
+// Minutes since the newest site rebuild that hasn't failed was started (by any trigger: this worker, a push,
+// GitHub's own schedule), or null if GitHub couldn't be asked.
+async function lastRebuildAge(env, now) {
+  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${env.GITHUB_WORKFLOW}/runs?per_page=10`,
+    { headers: githubHeaders(env) });
+  if (!r.ok) return null;
+  const run = ((await r.json()).workflow_runs || []).find(x => !["failure", "timed_out", "startup_failure"].includes(x.conclusion));
+  return run ? (now - Date.parse(run.created_at)) / 60e3 : null;
+}
+
 async function maybeRebuild(env, now) {
+  const min = now.getUTCMinutes();
   const reasons = [];
-  if (now.getUTCMinutes() % 30 === 0) reasons.push("every 30 minutes");
+  if (min % 30 === 0) reasons.push("every 30 minutes");
+  let games = false;
   // KV is only written when something actually changed, so this stays far inside the daily write allowance
   if (env.PICKEM) {
-    const fp = await leagueFingerprint(env);
     const prev = await env.PICKEM.get("watch:fp", "json");
-    if (!prev || prev.hash !== fp.hash) {
-      await env.PICKEM.put("watch:fp", JSON.stringify(fp));
-      if (prev) reasons.push(whatChanged(prev.parts, fp.parts));
+    let parts = prev && prev.parts;
+    // an ESPN hiccup here must not cancel the time-based rebuilds below, so it's caught and they still go out
+    try {
+      const fp = await leagueFingerprint(env);
+      parts = fp.parts;
+      if (!prev || prev.hash !== fp.hash) {
+        await env.PICKEM.put("watch:fp", JSON.stringify(fp));
+        if (prev) reasons.push(whatChanged(prev.parts, fp.parts));
+      }
+    } catch (e) { console.log("league check failed; time-based rebuilds still run", String(e)); }
+    if (parts) {
+      try { games = await gamesOn(parts.yr, parts.week, now.getTime()); } catch (e) { console.log("games-on check failed", String(e)); }
     }
-    if (now.getUTCMinutes() % 5 === 0 && await gamesOn(fp.parts.yr, fp.parts.week, now.getTime())) reasons.push("games on");
+    if (games && min % 5 === 0) reasons.push("games on");
   }
-  if (reasons.length) await dispatchRebuild(env, reasons.join(", "));
+  // Safety net: two minutes after each expected slot, make sure a rebuild really started (a failed dispatch, a
+  // skipped cron tick or a failed build would otherwise leave the site a whole interval behind). One GitHub read
+  // every 5 minutes during games, every 30 otherwise.
+  if (!reasons.length && env.GITHUB_TOKEN && min % (games ? 5 : 30) === 2) {
+    const age = await lastRebuildAge(env, now).catch(e => { console.log("rebuild history check failed", String(e)); return null; });
+    if (age != null && age > (games ? 6.5 : 31.5)) reasons.push(`catch-up: last rebuild ${Math.round(age)} min ago`);
+  }
+  if (reasons.length) await dispatchRebuild(env, reasons.join(", ")).catch(e => console.log("GitHub dispatch failed", String(e)));
 }

@@ -61,6 +61,17 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   the playoffs; before them, "if the season ended today" with each team's playoff odds.
 - **Player stat lines**: tap any player in a box score for his real stat line and the fantasy points each stat earned
   under that season's scoring. Stored per season in `data/<season>-stats.js`, loaded only when a player is opened.
+- **Player passport**: the same player panel shows "In this league": every league team that has had the player
+  in any season, how he got there (drafted with the pick, traded for, picked up), when he left (dropped, traded away)
+  and the points he scored in that team's starting lineup. Built from the weekly rosters (`player_passport` in
+  `stats.py`) into `data/players.js`, loaded only when a player is opened.
+- **Badges** (History → Badges, and "Your badges" on My team): 18 achievements per member across every season
+  (titles, top score of the week, 200 club, perfect lineup, nail-biters, heartbreakers, robbed/stolen wins, 5-game
+  streaks, duds, last place…), each with how many managers have it (`badges` in `stats.py`, stored in `index.js`).
+- **Monday-night math** (Weekly matchups): when the only starters left in an undecided matchup are in games that
+  haven't kicked off (Sunday night into Monday, at most 6 players), the card says what the trailing team needs from
+  whom, how often a lone player has scored that this season, and a win chance from replaying each remaining
+  player's own games this season (`gameLogs` in the current season's data; seeded so it doesn't jump each minute).
 - **Share cards**: Share buttons on weekly recaps, matchups, trades and the bracket draw a 1080px image in the browser
   (canvas, no server) to share, copy or download.
 - **Trades**: every trade with its grade: points each side's received players scored in its starting lineup after
@@ -87,6 +98,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   scoring plays in ESPN's public NFL game summary.
   Each play's "+points" is only that play, priced from the league's scoring (TD + its yards + the catch + any
   long-TD bonus), not everything the player gained in that minute.
+  When ESPN takes a play back (a fumble or interception overturned, a TD ruled short), that play is removed from
+  the feed rather than shown again with the opposite points.
 - **Watch guide** (Matchups → Watch guide): this week's real NFL games ranked by how much they matter to the league:
   every league starter in the game, weighted by ESPN's projection and by how close his fantasy matchup is (0.35 for a
   lopsided one up to 1.0 for a toss-up), scaled so the biggest game is 100. Kickoffs come from ESPN's NFL schedule.
@@ -117,6 +130,11 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   those in KV (`watch:fp`), so changes reach the site in about 2-3 minutes;
 - **every 5 minutes while NFL games are on**, so standings, power and playoff odds follow the live scores;
 - **every 30 minutes** regardless, as a safety net.
+
+Two minutes after each of those slots the worker asks GitHub for the newest rebuild that didn't fail, and starts
+one if it's late (older than 6½ minutes during games, 31½ otherwise), so a failed dispatch, a skipped cron tick or
+a failed build costs a couple of minutes, not a whole interval. An ESPN error in the change check no longer stops
+the time-based rebuilds.
 
 GitHub's own schedule in the workflow is a backup (it often skips runs when busy). Open pages check for a new
 build every minute and swap it in. To refresh right now, open the repo's **Actions** tab → **Refresh league site**

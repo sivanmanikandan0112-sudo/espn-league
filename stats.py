@@ -611,3 +611,199 @@ def hindsight_redraft(draft, players, slot_counts, n_teams):
             for p in picks if p["pos"] not in ("K", "D/ST")]
     return {"board": [card(pid) for pid in ranked[:len(slots_at)]], "picks": rows,
             "replacement": {k: round(v, 1) for k, v in repl.items()}}
+
+
+# ---------------------------------------------------------------- player passport
+
+def player_passport(seasons_data):
+    """Every player's stints on league teams across all seasons: when, how he arrived and left, and the points he
+    scored there (started = counted in the lineup). Written to its own file, loaded when a player is opened."""
+    players, teams = {}, {}
+    for data in sorted(seasons_data, key=lambda d: d["league"]["season"]):
+        yr = data["league"]["season"]
+        for t in data["teams"]:
+            teams["%d|%d" % (yr, t["id"])] = [t["name"], t["owners"]]
+        own = ownership(data, final_only=False)
+        weeks = sorted(own)
+        if not weeks:
+            continue
+        last = weeks[-1]
+        done = data["league"]["over"]
+        drafted = {p["id"]: p for p in (data.get("draft") or {}).get("picks", [])}
+        traded = {}  # (player, to team) -> True
+        for tr in data.get("trades") or []:
+            for side in tr["sides"]:
+                for p in side["gets"]:
+                    traded[(p.get("id"), side["team"])] = True
+        # who was on a team each week; a team-less week ends a stint
+        runs = defaultdict(list)  # pid -> [[team, first, last, started, starts, total]]
+        info = {}
+        playing = {w: {s["team"] for x in data["weeks"] if x["week"] == w for g in x["games"] for s in g["sides"]} for w in weeks}
+        for w in weeks:
+            for g in data["weeks"][[x["week"] for x in data["weeks"]].index(w)]["games"]:
+                for s in g["sides"]:
+                    for p in s["lineup"]:
+                        info[p["id"]] = (p["name"], p["pos"])
+            for pid, (team, started, pts) in own[w].items():
+                r = runs[pid]
+                if r and r[-1][0] == team and r[-1][2] == weeks[weeks.index(w) - 1]:
+                    cur = r[-1]
+                else:
+                    cur = [team, w, w, 0.0, 0, 0.0]
+                    r.append(cur)
+                cur[2] = w
+                cur[5] += pts
+                if started:
+                    cur[3] += pts; cur[4] += 1
+        for pid, r in runs.items():
+            name, pos = info[pid]
+            entry = players.setdefault(pid, {"n": name, "p": pos, "s": []})
+            entry["n"], entry["p"] = name, pos
+            for i, (team, first, lw, started, starts, total) in enumerate(r):
+                d = drafted.get(pid)
+                if d and d["team"] == team and i == 0 and first == weeks[0]:
+                    how = "D%d.%d" % (d["round"], d["roundPick"])
+                elif traded.get((pid, team)):
+                    how = "T"
+                elif first == weeks[0]:
+                    how = "K"  # on the roster from week 1 without a draft record (keeper / unknown)
+                else:
+                    how = "W"
+                nxt = r[i + 1] if i + 1 < len(r) else None
+                if nxt and nxt[1] == weeks[weeks.index(lw) + 1] and traded.get((pid, nxt[0])):
+                    out = "T"
+                elif lw == last or team not in playing[weeks[weeks.index(lw) + 1]]:
+                    out = "E" if done or lw != last else "N"  # season over for that team / still there
+                else:
+                    out = "X"  # dropped
+                entry["s"].append([yr, team, first, lw, round(started, 1), starts, round(total, 1), how, out])
+    return {"teams": teams, "players": {str(k): v for k, v in players.items()}}
+
+
+# ---------------------------------------------------------------- badges
+
+SLOT_IDS = {"QB": 0, "RB": 2, "WR": 4, "TE": 6, "FLEX": 23, "D/ST": 16, "K": 17, "RB/WR": 3, "WR/TE": 5, "OP": 7}
+BADGES = [
+    ("champ", "Champion", "Won the league title."),
+    ("runner", "Runner-up", "Made the championship game."),
+    ("seed1", "No. 1 seed", "Finished the regular season in first."),
+    ("pfking", "Points king", "Scored the most points in a season."),
+    ("comeback", "Comeback kid", "Started 0–3 or worse and still made the playoffs."),
+    ("streak", "On fire", "Won 5 regular-season games in a row."),
+    ("weektop", "Top score", "Highest score in the league that week."),
+    ("seasonhigh", "Season high", "The highest single-week score of a season."),
+    ("club200", "200 club", "Scored 200+ in a week."),
+    ("perfect", "Perfect lineup", "Started the best possible lineup from the roster."),
+    ("blowout", "Blowout", "Won by 75+ points."),
+    ("nailbiter", "Nail-biter", "Won by under 2 points."),
+    ("heartbreak", "Heartbreaker", "Lost by under 2 points."),
+    ("robbed", "Robbed", "Lost with one of the week's top 3 scores."),
+    ("stolen", "Stolen win", "Won with one of the week's bottom 3 scores."),
+    ("beatall", "Beat 'em all", "Has beaten every current member at least once."),
+    ("dud", "Dud", "Scored under 100 in a week."),
+    ("basement", "Basement", "Finished a season in last place."),
+]
+
+
+def badges(seasons_data, h2h, current_members):
+    """Achievements per member (ESPN account) across every season. earned: member -> [[badge, season, week,
+    game id, detail]]; one entry per time it was earned."""
+    earned = defaultdict(list)
+
+    def give(owners, badge, yr, week=None, game=None, detail=""):
+        for o in owners:
+            earned[o].append([badge, yr, week, game, detail])
+
+    for data in sorted(seasons_data, key=lambda d: d["league"]["season"]):
+        lg, yr = data["league"], data["league"]["season"]
+        tm = {t["id"]: t for t in data["teams"]}
+        own = lambda tid: tm.get(tid, {}).get("owners", [])
+        slot_counts = {SLOT_IDS[s["slot"]]: s["count"] for s in data["settings"]["slots"] if s["slot"] in SLOT_IDS}
+        rs = lg["regularSeasonWeeks"]
+        if lg["over"]:
+            for t in data["teams"]:
+                if t.get("finalRank") == 1:
+                    give(t["owners"], "champ", yr, detail=t["name"])
+                elif t.get("finalRank") == 2:
+                    give(t["owners"], "runner", yr, detail=t["name"])
+                if t.get("finalRank") == len(data["teams"]):
+                    give(t["owners"], "basement", yr, detail=t["name"])
+        season_scores, results = [], defaultdict(list)  # team -> regular-season W/L in order
+        for w in data["weeks"]:
+            if not w["final"]:
+                continue
+            week_scores = []
+            for g in w["games"]:
+                if len(g["sides"]) != 2:
+                    continue
+                a, b = g["sides"]
+                if a["pts"] <= 0 or b["pts"] <= 0:
+                    continue
+                win, lose = sorted((a, b), key=lambda s: -s["pts"])
+                margin = win["pts"] - lose["pts"]
+                counts = g["tier"] in ("NONE", "WINNERS_BRACKET")
+                if counts and margin > 0:
+                    if margin >= 75:
+                        give(own(win["team"]), "blowout", yr, w["week"], g["id"], "%.1f-pt win" % margin)
+                    if margin < 2:
+                        give(own(win["team"]), "nailbiter", yr, w["week"], g["id"], "won by %.2f" % margin)
+                        give(own(lose["team"]), "heartbreak", yr, w["week"], g["id"], "lost by %.2f" % margin)
+                for s in (a, b):
+                    if s["pts"] >= 200:
+                        give(own(s["team"]), "club200", yr, w["week"], g["id"], "%.2f pts" % s["pts"])
+                    if s["pts"] < 100:
+                        give(own(s["team"]), "dud", yr, w["week"], g["id"], "%.2f pts" % s["pts"])
+                    if slot_counts and s["pts"] > 0 and abs(optimal_points(s["lineup"], slot_counts) - s["pts"]) < 0.01:
+                        give(own(s["team"]), "perfect", yr, w["week"], g["id"], "%.2f pts" % s["pts"])
+                if w["week"] <= rs:
+                    for s, o in ((a, b), (b, a)):
+                        week_scores.append((s["pts"], s["team"], g["id"], s["pts"] > o["pts"]))
+                        results[s["team"]].append(s["pts"] > o["pts"])
+                    season_scores += [(a["pts"], a["team"], w["week"], g["id"]), (b["pts"], b["team"], w["week"], g["id"])]
+            if len(week_scores) >= 6:
+                ranked = sorted(week_scores, key=lambda x: -x[0])
+                give(own(ranked[0][1]), "weektop", yr, w["week"], ranked[0][2], "%.2f pts" % ranked[0][0])
+                for pts, team, gid, won in ranked[:3]:
+                    if not won:
+                        give(own(team), "robbed", yr, w["week"], gid, "%.2f pts, #%d of %d" % (pts, ranked.index((pts, team, gid, won)) + 1, len(ranked)))
+                for pts, team, gid, won in ranked[-3:]:
+                    if won:
+                        give(own(team), "stolen", yr, w["week"], gid, "%.2f pts, #%d of %d" % (pts, ranked.index((pts, team, gid, won)) + 1, len(ranked)))
+        if season_scores and (lg["over"] or lg["currentWeek"] > rs):
+            hi = max(season_scores)
+            give(own(hi[1]), "seasonhigh", yr, hi[2], hi[3], "%.2f pts" % hi[0])
+        for team, rr in results.items():
+            run = best = 0
+            for won in rr:
+                run = run + 1 if won else 0
+                best = max(best, run)
+            if best >= 5:
+                give(own(team), "streak", yr, detail="%d straight wins" % best)
+        if lg["over"]:
+            pf = max(data["teams"], key=lambda t: t["pf"])
+            give(pf["owners"], "pfking", yr, detail="%.2f pts" % pf["pf"])
+            for t in data["teams"]:
+                if t.get("seed") == 1:
+                    give(t["owners"], "seed1", yr, detail="%d-%d" % (t["wins"], t["losses"]))
+                rr = results.get(t["id"], [])
+                if len(rr) >= 3 and not any(rr[:3]) and t.get("seed") and t["seed"] <= (lg["playoffTeams"] or 0):
+                    give(t["owners"], "comeback", yr, detail="started 0-3, finished %d-%d" % (t["wins"], t["losses"]))
+    for m in current_members:
+        others = [o for o in current_members if o != m]
+        if others and all(h2h.get((m, o), [0])[0] > 0 for o in others):
+            give([m], "beatall", None, detail="beat all %d current members" % len(others))
+    return {"defs": [{"id": k, "name": n, "desc": d} for k, n, d in BADGES], "earned": dict(earned)}
+
+
+# ---------------------------------------------------------------- game logs (Monday-night math)
+
+def game_logs(season, player_stats):
+    """Current week's rostered players: fantasy points in each earlier week they played (from their stat lines)."""
+    cur = season["league"]["currentWeek"]
+    ids = {p["id"] for w in season["weeks"] if w["week"] == cur for g in w["games"] for s in g["sides"] for p in s["lineup"]}
+    logs = defaultdict(list)
+    for key, st in player_stats.items():
+        wk, pid = key.split("|")
+        if int(wk) < cur and int(pid) in ids:
+            logs[int(pid)].append((int(wk), round(sum(st["a"].values()), 2)))
+    return {str(pid): [p for _, p in sorted(v)] for pid, v in logs.items()}

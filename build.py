@@ -419,6 +419,8 @@ def build_season(season, is_current, names):
         t["vsProj"] = vsproj.get(tid)
     add_draft(data, season, actual, slot_counts)
     data["rulesLab"] = stats.rules_lab(data, data["_stats"], slot_counts)
+    if is_current and not over:
+        data["gameLogs"] = stats.game_logs(data, data["_stats"])
 
     for t in teams.values():
         for r in t["roster"]:
@@ -714,7 +716,8 @@ def build_history(seasons_data, names, current_members):
     members.sort(key=lambda m: (-m["titles"], -m["pct"]))
     return {"members": members, "champions": sorted(champions, key=lambda c: -c["season"]),
             "h2h": {"%s|%s" % k: [v[0], v[1], v[2], round(v[3], 1), round(v[4], 1)] for k, v in h2h.items()},
-            "records": record_book(seasons_data), "rivalries": rivalries(h2h)}
+            "records": record_book(seasons_data), "rivalries": rivalries(h2h),
+            "badges": stats.badges(seasons_data, h2h, current_members)}
 
 
 def record_book(seasons_data, top=5):
@@ -808,6 +811,8 @@ def main():
     index = {"seasons": seasons, "current": args.season, "name": current["league"]["name"],
              "updated": current["updated"], "build": (os.environ.get("GITHUB_SHA") or "dev")[:7],
              "history": build_history(built, names, current_members)}
+    # every player's stints on league teams, all seasons (loaded when a player is opened)
+    write_js(os.path.join(DATA_DIR, "players.js"), "LEAGUE_PLAYERS", "all", stats.player_passport(built))
     with open(os.path.join(DATA_DIR, "index.js"), "w") as f:
         f.write("window.LEAGUE_INDEX=")
         json.dump(index, f, separators=(",", ":"))

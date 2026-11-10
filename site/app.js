@@ -657,6 +657,69 @@
     main.innerHTML = head + toggle + `<p class="pg-sum">Week ${wk.week} · ${all.length} big play${all.length === 1 ? "" : "s"} so far${wk.final ? "" : " · updates every minute during games"}</p>` + body;
   }
 
+  // Monday-night math: once the only league starters left in a matchup are in games that haven't kicked off
+  // (Sunday night into Monday), what each side needs and a win chance drawn from those players' own game logs.
+  const NFL_GAME_MS = 4 * 3600e3;
+  function mondayMath(g, wk) {
+    if (wk.final || wk.week !== L.currentWeek || !L.isCurrent || g.sides.length !== 2 || g.winner !== "UNDECIDED" && g.winner) return null;
+    const now = window.__now || Date.now();
+    const kick = {};
+    (D.nflGames || []).forEach(x => { if (!x.tbd && x.date) kick[x.home] = kick[x.away] = new Date(x.date).getTime(); });
+    let playing = false, done = 0;
+    const sides = g.sides.map(sd => {
+      const left = [];
+      sd.lineup.filter(p => p.slot !== "BE" && p.slot !== "IR").forEach(p => {
+        const k = kick[p.team];
+        if (k == null || now >= k + NFL_GAME_MS) done++;
+        else if (now >= k) playing = true;
+        else left.push(p);
+      });
+      return { sd, t: teamById[sd.team], left };
+    });
+    const nLeft = sides[0].left.length + sides[1].left.length;
+    if (playing || !nLeft || nLeft > 6 || !done) return null;
+    const logs = D.gameLogs || {};
+    const avg = p => { const l = logs[p.id] || []; return l.length ? l.reduce((a, b) => a + b, 0) / l.length : (p.proj || 0); };
+    const draw = p => {
+      const l = logs[p.id] || [];
+      if (l.length >= 3) return l[Math.floor(rnd() * l.length)];
+      const m = p.proj != null ? p.proj : avg(p);
+      let z = 0; for (let i = 0; i < 6; i++) z += rnd(); // ~normal
+      return Math.max(-2, m + (z - 3) * m * 0.45);
+    };
+    // seeded, so the numbers don't wobble every time the scores refresh
+    let seed = (g.id * 2654435761 + Math.round((g.sides[0].pts + g.sides[1].pts) * 100)) >>> 0;
+    const rnd = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    const N = 6000;
+    let aWins = 0;
+    const [A, B] = sides;
+    for (let i = 0; i < N; i++) {
+      let a = A.sd.pts, b = B.sd.pts;
+      A.left.forEach(p => { a += draw(p); });
+      B.left.forEach(p => { b += draw(p); });
+      if (a > b) aWins++; else if (a === b) aWins += 0.5;
+    }
+    const pa = Math.round(aWins / N * 100), chance = [pa, 100 - pa];
+    const behind = A.sd.pts < B.sd.pts ? A : B, ahead = behind === A ? B : A;
+    const gap = Math.abs(A.sd.pts - B.sd.pts);
+    const names = list => list.map(p => `${esc(p.name)} <span class="muted">${p.pos === "D/ST" ? "" : esc(p.pos) + ", "}avg ${avg(p).toFixed(1)}</span>`).join(" + ");
+    let need;
+    if (!behind.left.length) need = `<b>${esc(behind.t.name)}</b> has nobody left; ${esc(ahead.t.name)} has it locked.`;
+    else if (!ahead.left.length) {
+      const target = gap + 0.01;
+      const solo = behind.left.length === 1 ? (logs[behind.left[0].id] || []) : [];
+      const hit = solo.filter(x => x >= target).length;
+      need = `<b>${esc(behind.t.name)}</b> needs <b>${target.toFixed(2)}</b> from ${names(behind.left)}` +
+        (solo.length >= 3 ? `. He's scored that in <b>${hit} of ${solo.length}</b> games this season.` : ".");
+    } else if (gap < 0.005) {
+      need = `Tied. ${names(A.left)} for ${esc(A.t.name)} vs ${names(B.left)} for ${esc(B.t.name)} decides it.`;
+    } else {
+      need = `<b>${esc(behind.t.name)}</b> is down <b>${gap.toFixed(2)}</b>: ${names(behind.left)} must outscore ${names(ahead.left)} by more than that.`;
+    }
+    return `<div class="mm" data-mm><div class="mm-h"><span>🧮 What it takes</span><span class="mm-wp">${esc(A.t.name)} <b>${chance[0]}%</b> · ${esc(B.t.name)} <b>${chance[1]}%</b></span></div>
+      <p>${need}</p><p class="mm-note">Win chances: each player left gets a random game from his own scoring this season, ${N.toLocaleString()} times over.</p></div>`;
+  }
+
   function renderMatchups() {
     if (state.sub === "bracket") return renderBracket();
     if (state.sub === "pickem") return renderPickem();
@@ -693,7 +756,7 @@
       const tier = TIER[g.tier] || (g.playoff ? "Playoffs" : "");
       return `<article class="game${g.tier && g.tier !== "NONE" && g.tier !== "WINNERS_BRACKET" ? " consolation" : ""}${g.sides.some(s => isMine(teamById[s.team])) ? " mine" : ""}">
         <button class="game-btn" data-game="${g.id}" aria-expanded="${isOpen}">${row(a)}${row(b)}
-          ${isOpen ? wpBar : ""}<div class="game-foot"><span>${tier ? tier + " · " : ""}${liveG ? "In progress" : "Final"}</span><span>${isOpen ? "Hide box score ↑" : "Box score ↓"}</span></div>
+          ${isOpen ? wpBar : ""}${mondayMath(g, wk) || ""}<div class="game-foot"><span>${tier ? tier + " · " : ""}${liveG ? "In progress" : "Final"}</span><span>${isOpen ? "Hide box score ↑" : "Box score ↓"}</span></div>
         </button>
         ${isOpen && a && b ? (() => {
           const showB = focusTeam != null && b.team === focusTeam ? 1 : 0;
@@ -1288,7 +1351,32 @@
   });
 
   // ---------------------------------------------------------------- history
-  const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Head to head"], ["rivalries", "Rivalries"], ["records", "Record book"]];
+  const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Head to head"], ["rivalries", "Rivalries"], ["records", "Record book"], ["badges", "Badges"]];
+  const BADGE_ICON = { champ: "🏆", runner: "🥈", seed1: "👑", pfking: "💰", comeback: "🔄", streak: "🔥", weektop: "⭐", seasonhigh: "🚀",
+    club200: "💯", perfect: "🎯", blowout: "💥", nailbiter: "😅", heartbreak: "💔", robbed: "😤", stolen: "🍀", beatall: "⚔️", dud: "🧊", basement: "🪦" };
+  // one member's badges: [{def, list: [[badge, season, week, game, detail]...] newest first}] in the badge order
+  function badgeShelf(memberId) {
+    const B = IDX.history.badges;
+    if (!B) return [];
+    const mine = (B.earned[memberId] || []);
+    return B.defs.map(d => ({ d, list: mine.filter(e => e[0] === d.id).sort((a, b) => (b[1] || 0) - (a[1] || 0) || (b[2] || 0) - (a[2] || 0)) })).filter(x => x.list.length);
+  }
+  const badgeWhen = e => {
+    if (!e[1]) return "";
+    if (e[2] == null) return String(e[1]);
+    const p = new URLSearchParams({ week: e[2] });
+    if (e[1] !== IDX.current) p.set("season", e[1]);
+    if (e[3] != null) p.set("game", e[3]);
+    return `<a class="wk-link" href="#/matchups?${p}">${e[1]} wk ${e[2]}</a>`;
+  };
+  function badgeTiles(memberId) {
+    const shelf = badgeShelf(memberId);
+    if (!shelf.length) return `<div class="empty">No badges yet.</div>`;
+    return `<div class="bdg-shelf">${shelf.map(({ d, list }) => `<div class="bdg" title="${esc(d.desc)}">
+      <span class="bdg-i" aria-hidden="true">${BADGE_ICON[d.id] || "🏅"}</span>
+      <span class="bdg-t"><b>${esc(d.name)}${list.length > 1 ? ` <span class="bdg-n">×${list.length}</span>` : ""}</b>
+      <span class="team-mgr">${esc(list[0][4] || d.desc)}${list[0][1] ? " · " + badgeWhen(list[0]) : ""}</span></span></div>`).join("")}</div>`;
+  }
   const owners = ids => esc((ids || []).map(memberName).join(" & "));
   const whenLink = r => {
     const p = new URLSearchParams({ week: r.week });
@@ -1300,6 +1388,27 @@
   };
 
   const HISTORY = {
+    badges(H) {
+      const B = H.badges;
+      if (!B) return `<div class="empty">Badges appear after the next site update.</div>`;
+      const active = H.members.filter(m => m.active), all = H.members;
+      if (!state.badgeMember || !all.some(m => m.id === state.badgeMember)) state.badgeMember = (ME.member && all.some(m => m.id === ME.member) ? ME.member : (active[0] || all[0]).id);
+      const holders = id => all.map(m => ({ m, n: (B.earned[m.id] || []).filter(e => e[0] === id).length })).filter(x => x.n)
+        .sort((a, b) => (b.m.active - a.m.active) || b.n - a.n);
+      const cards = B.defs.map(d => {
+        const h = holders(d.id);
+        return `<div class="bdg-card${h.length ? "" : " none"}"><div class="bdg-head"><span class="bdg-i" aria-hidden="true">${BADGE_ICON[d.id] || "🏅"}</span>
+          <span><b>${esc(d.name)}</b><span class="team-mgr">${esc(d.desc)}</span></span>
+          <span class="bdg-rare">${h.length ? `${h.length} of ${all.length}` : "Nobody yet"}</span></div>
+          ${h.length ? `<div class="bdg-who">${h.map(x => `<span class="${x.m.active ? "" : "muted"}${x.m.id === state.badgeMember ? " me" : ""}">${esc(x.m.name)}${x.n > 1 ? " ×" + x.n : ""}</span>`).join("")}</div>` : ""}</div>`;
+      }).join("");
+      const pick = `<label class="field">Manager <select id="badge-member">${all.map(m => `<option value="${esc(m.id)}"${m.id === state.badgeMember ? " selected" : ""}>${esc(m.name)}${m.active ? "" : " (former)"}</option>`).join("")}</select></label>`;
+      const count = (B.earned[state.badgeMember] || []).length;
+      return section("Badge shelf", "Every badge a manager has earned, across all seasons. The line under each is the latest time.",
+          `${pick}<p class="sub" style="margin:8px 0 10px">${count} earned · ${badgeShelf(state.badgeMember).length} of ${B.defs.length} different badges</p>${badgeTiles(state.badgeMember)}`) +
+        section("Every badge", "How many of the league's managers have each one (all-time; former members in gray).", `<div class="bdg-grid">${cards}</div>`);
+    },
+
     overview(H) {
       const champs = H.champions.map(c => `<article class="champ-card">
         ${logoImg(c.logo, c.team, "lg")}
@@ -1569,6 +1678,7 @@
     main.innerHTML = `<div class="section-head me-head"><div class="me-id">${logo(t)}<div><h1>${esc(t.name)}</h1><p class="sub">${esc(t.manager)} · ${L.season} season</p></div></div>${switchBtn}</div>
       ${glance}
       <div class="me-grid"><div>${week}${watch}${byes}</div><div>${schedule}</div></div>
+      ${IDX.history.badges ? section(`Your badges <a class="wk-link" href="${href("history", {}, "badges")}">all badges ›</a>`, "Earned across every season you've played.", badgeTiles(ME.member)) : ""}
       ${roster}`;
   }
 
@@ -1826,6 +1936,7 @@
     if (e.target.id === "side-week") { state.sideWeek = Number(e.target.value); document.querySelector(".side").outerHTML = sidebar(); }
     if (e.target.id === "swap-team") { state.swapTeam = e.target.value; renderKeepScroll(renderInsights); }
     if (e.target.id === "draft-team") { state.draftTeam = e.target.value; renderKeepScroll(renderInsights); }
+    if (e.target.id === "badge-member") { state.badgeMember = e.target.value; renderKeepScroll(renderHistory); }
     if (e.target.id === "h2h-a") { state.h2hA = e.target.value; renderKeepScroll(renderHistory); }
     if (e.target.id === "h2h-b") { state.h2hB = e.target.value; renderKeepScroll(renderHistory); }
   });
@@ -1869,6 +1980,44 @@
     });
   }
 
+  function loadPlayers() {
+    if (window.LEAGUE_PLAYERS && window.LEAGUE_PLAYERS.all) return Promise.resolve(window.LEAGUE_PLAYERS.all);
+    return new Promise((resolve, reject) => {
+      const sc = document.createElement("script");
+      sc.src = "data/players.js?b=" + encodeURIComponent(IDX.updated || IDX.build || "");
+      sc.onload = () => (window.LEAGUE_PLAYERS && window.LEAGUE_PLAYERS.all ? resolve(window.LEAGUE_PLAYERS.all) : reject(new Error("empty")));
+      sc.onerror = () => reject(new Error("load failed"));
+      document.head.appendChild(sc);
+    });
+  }
+
+  // Player passport: every league team that has had this player, all seasons
+  async function renderPassport(box, pid) {
+    let P = null;
+    try { P = await loadPlayers(); } catch (_) { box.innerHTML = ""; return; }
+    const me = P.players[String(pid)];
+    if (!me || !me.s.length) { box.innerHTML = ""; return; }
+    const HOW = { T: "Traded for", W: "Picked up", K: "On the roster from week 1" };
+    const OUT = { X: "dropped", T: "traded away", E: "", N: "still there" };
+    const stints = me.s.slice().reverse();
+    const seasons = new Set(me.s.map(x => x[0])).size;
+    const owners = new Set(me.s.flatMap(x => (P.teams[x[0] + "|" + x[1]] || ["", []])[1])).size;
+    const started = me.s.reduce((n, x) => n + x[4], 0);
+    const rows = stints.map(x => {
+      const [yr, tid, first, last, st, starts, total, how, out] = x;
+      const t = P.teams[yr + "|" + tid] || ["Team " + tid, []];
+      const came = how[0] === "D" ? "Drafted " + how.replace("D", "R") : HOW[how] || "";
+      const span = first === last ? `wk ${first}` : `wk ${first}–${last}`;
+      const left = out === "X" ? `dropped after wk ${last}` : out === "T" ? `traded away after wk ${last}` : OUT[out];
+      return `<li class="pp-row"><span class="pp-yr">${yr}</span><span class="pp-body"><b>${esc(t[0])}</b> <span class="muted">${esc(t[1].map(memberName).join(" & "))}</span>
+        <span class="team-mgr">${esc(came)} · ${span}${left ? " · " + left : ""}</span></span>
+        <span class="pp-pts">${st.toFixed(1)}<small>${starts} start${starts === 1 ? "" : "s"}${total - st >= 0.05 ? ` · ${(total - st).toFixed(1)} benched` : ""}</small></span></li>`;
+    }).join("");
+    box.innerHTML = `<h3 class="pp-h">In this league</h3>
+      <p class="pp-sum">${me.s.length} stint${me.s.length === 1 ? "" : "s"} · ${owners} manager${owners === 1 ? "" : "s"} · ${seasons} season${seasons === 1 ? "" : "s"} · <b>${started.toFixed(1)}</b> pts in starting lineups</p>
+      <ol class="pp-list">${rows}</ol>`;
+  }
+
   // a box-score style one-liner from the raw stats
   function statLine(pos, r) {
     const n = id => Number(r[id] || 0);
@@ -1908,12 +2057,14 @@
       <div class="team-mgr">${esc(p.team)} · Week ${week}${L.season !== IDX.current ? ", " + L.season : ""} · ${esc((teamById[team] || {}).name || "")}${p.slot === "BE" || p.slot === "IR" ? " (bench)" : ""}</div></div>
       <div class="stat-pts">${fmt(p.pts)}<small>fantasy pts</small></div></div>
       <div class="stat-body"><div class="empty">Loading stats…</div></div>
+      <div class="pp"></div>
       <button type="button" class="linkbtn share-close">Close</button></div>`;
     document.body.appendChild(sheet);
     const close = () => { sheet.remove(); document.removeEventListener("keydown", onKey); };
     const onKey = e => { if (e.key === "Escape") close(); };
     document.addEventListener("keydown", onKey);
     sheet.addEventListener("click", e => { if (e.target === sheet || e.target.closest(".share-close")) close(); });
+    renderPassport(sheet.querySelector(".pp"), pid);
     let st = null;
     try { st = (await loadStats(L.season))[week + "|" + pid]; } catch (_) { /* shown below */ }
     const body = sheet.querySelector(".stat-body");
