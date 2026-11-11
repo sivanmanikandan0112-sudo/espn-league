@@ -559,9 +559,17 @@ a.bm-foot:hover { color: var(--accent); }
 .pk-who .pk-remember { flex-direction: row; align-items: center; gap: 6px; }
 .pk-who .cta { margin: 0; border: 0; cursor: pointer; font: inherit; font-weight: 700; padding: 10px 18px; }
 .pk-who .note { flex-basis: 100%; margin: 0; }
-.pk-games { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 10px; margin-top: 8px; }
-.pk-game { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: stretch; }
-.pk-vs { align-self: center; font-size: 12px; font-weight: 700; color: var(--ink-2); }
+.pk-games { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 16px; margin-top: 8px; }
+/* each matchup is its own card, so it's clear who plays whom */
+.pk-game { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: stretch;
+  padding: 10px 12px 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 16px; }
+.pk-game-h { grid-column: 1 / -1; font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
+.pk-vs { align-self: center; font-size: 12px; font-weight: 800; color: var(--ink-2); text-transform: uppercase; }
+@media (max-width: 640px) {
+  .pk-games { gap: 14px; }
+  .pk-game { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .pk-vs { justify-self: center; line-height: 1; }
+}
 .pk-team { display: flex; gap: 10px; align-items: center; min-width: 0; text-align: left; padding: 10px 12px; border-radius: 12px; cursor: pointer;
   background: var(--surface); border: 2px solid var(--line); color: var(--ink); font: inherit; }
 .pk-team > span { min-width: 0; }

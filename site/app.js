@@ -987,7 +987,7 @@
       let games = "";
       if (PK.ready) {
         const n = Object.keys(PK.sel).length;
-        games = `<div class="pk-games">${P.games.map(g => `<div class="pk-game">${[g.away, g.home].map(tid => {
+        games = `<div class="pk-games">${P.games.map((g, i) => `<div class="pk-game" role="group" aria-label="Matchup ${i + 1}"><div class="pk-game-h">Matchup ${i + 1}</div>${[g.away, g.home].map(tid => {
           const t = tb(tid), on = PK.sel[g.id] === tid;
           return `<button type="button" class="pk-team${on ? " on" : ""}" data-pk-game="${g.id}" data-pk-team="${tid}" aria-pressed="${on}">${logo(t)}<span><b>${esc(t.name)}</b><span class="team-mgr">${esc(t.manager)} · ${record(t)}</span></span></button>`;
         }).join('<span class="pk-vs">vs</span>')}</div>`).join("")}</div>
