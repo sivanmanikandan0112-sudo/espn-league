@@ -254,12 +254,10 @@ b.neg, .neg { color: var(--hot); }
 .tcell { display: flex; align-items: center; gap: 10px; min-width: 180px; }
 .tcell .logo { width: 30px; height: 30px; font-size: 11px; }
 .tname { display: block; font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
-.pbar { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; min-width: 120px; }
-.pbar-fill { display: block; height: 8px; border-radius: 4px; background: var(--accent); max-width: 70px; }
+.pbar { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.pbar-track { flex: none; display: block; width: 80px; height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.pbar-fill { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
 .pbar-fill.bye { background: var(--qb); } .pbar-fill.title { background: var(--wr); } .pbar-fill.eff { background: var(--te); }
-.pbar { position: relative; }
-.pbar::before { content: ""; width: 70px; height: 8px; border-radius: 4px; background: var(--surface-2); position: absolute; left: 0; }
-.pbar-fill { position: relative; z-index: 1; margin-right: auto; }
 .pbar-v { min-width: 48px; text-align: right; }
 
 /* history */
@@ -289,8 +287,7 @@ b.neg, .neg { color: var(--hot); }
   .tcell { min-width: 0; gap: 8px; }
   .tcell .team-mgr { display: none; }
   .tname { max-width: 130px; font-size: 13px; }
-  .pbar { min-width: 0; }
-  .pbar::before, .pbar-fill { display: none; }
+  .pbar-track { width: 56px; }
   .pbar-v { min-width: 0; }
 }
 
@@ -403,7 +400,7 @@ b.neg, .neg { color: var(--hot); }
   .tbl .n { text-align: left; }
   .tcell .team-mgr { display: block; }
   .tname { max-width: none; font-size: 15px; }
-  .pbar { min-width: 0; } .pbar::before, .pbar-fill { display: none; } .pbar-v { min-width: 0; text-align: left; font-weight: 700; }
+  .pbar { flex-direction: row-reverse; justify-content: flex-end; } .pbar-track { width: 48px; } .pbar-v { min-width: 0; text-align: left; font-weight: 700; }
   .member-row.open td { background: none; }
   .tbl tr.sub-row { display: block; margin-top: -4px; }
   .tbl tr.sub-row td::before { display: none; }

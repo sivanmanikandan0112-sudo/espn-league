@@ -1074,7 +1074,8 @@
       <tbody>${rows.map(r => `<tr>${cols.map((c, i) => `<td class="${c.num ? "n" : ""}${i === 0 ? " lead" : ""}${c.wide ? " wide" : ""}" data-label="${c.label}">${c.cell(r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
   }
   const teamCell = t => `<span class="tcell${isMine(t) ? " mine" : ""}">${logo(t)}<span><span class="tname">${esc(t.name)}</span><span class="team-mgr">${esc(t.manager)}</span></span></span>`;
-  const barCell = (v, cls) => `<span class="pbar"><span class="pbar-fill ${cls || ""}" style="width:${Math.min(100, v || 0)}%"></span><span class="pbar-v">${pct(v)}</span></span>`;
+  // the fill is a share of its own fixed-width track, so 50% is exactly half as long as 100%
+  const barCell = (v, cls) => `<span class="pbar"><span class="pbar-track"><span class="pbar-fill ${cls || ""}" style="width:${Math.max(0, Math.min(100, v || 0))}%"></span></span><span class="pbar-v">${pct(v)}</span></span>`;
   const signedPts = (n, goodHigh) => `<b class="${(goodHigh ? n > 0.05 : n < -0.05) ? "pos" : (goodHigh ? n < -0.05 : n > 0.05) ? "neg" : ""}">${signed(n)}</b>`;
   const tname = id => (teamById[id] || { name: "Team " + id }).name;
   const poss = name => name + (/s$/i.test(name.trim()) ? "’" : "’s"); // Avengers' / Club's
@@ -1380,7 +1381,7 @@
       const rows = D.teams.filter(t => t.efficiency != null).sort((a, b) => b.efficiency - a.efficiency);
       return section("Manager efficiency", { short: "Points started vs. the best possible lineup.", full: "Points started as a share of the best possible lineup each week, in hindsight. Regular season." }, table([
         { label: "Team", cell: teamCell },
-        { label: "Efficiency", num: 1, cell: t => `<span class="pbar"><span class="pbar-fill eff" style="width:${Math.max(0, (t.efficiency - 70) / 30 * 100)}%"></span><span class="pbar-v">${t.efficiency.toFixed(1)}%</span></span>` },
+        { label: "Efficiency", num: 1, cell: t => `<span class="pbar"><span class="pbar-track"><span class="pbar-fill eff" style="width:${Math.max(0, Math.min(100, (t.efficiency - 70) / 30 * 100))}%"></span></span><span class="pbar-v">${t.efficiency.toFixed(1)}%</span></span>` },
         { label: "Bench pts left", num: 1, cell: t => Number(t.benchLeft).toFixed(1) },
         { label: "Points for", num: 1, cell: t => fmt(t.pf) },
       ], rows));
