@@ -61,10 +61,15 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   the playoffs; before them, "if the season ended today" with each team's playoff odds.
 - **Player stat lines**: tap any player in a box score for his real stat line and the fantasy points each stat earned
   under that season's scoring. Stored per season in `data/<season>-stats.js`, loaded only when a player is opened.
-- **Player passport**: the same player panel shows "In this league": every league team that has had the player
-  in any season, how he got there (drafted with the pick, traded for, picked up), when he left (dropped, traded away)
-  and the points he scored in that team's starting lineup. Built from the weekly rosters (`player_passport` in
-  `stats.py`) into `data/players.js`, loaded only when a player is opened.
+- **Player history** (Insights → Player history): search any player who's been on a league roster to see every
+  league team that had him in any season, how he got there (drafted with the pick, traded for, picked up), when he
+  left (dropped, traded away) and his points in that team's starting lineup. With no player picked it lists the
+  most-traveled players (kickers and defenses aside). Built from the weekly rosters (`player_passport` in `stats.py`)
+  into `data/players.js`, loaded only when the tab is opened. The player panel links to it ("League history ›").
+- **Compare players** (Trades → Compare players): any two players on a league roster that season, side by side under
+  the league's scoring: points per game, last 3, total, games, best/worst week, 15+/20+ games, rest-of-season
+  projection and rank (or season finish), plus week-by-week bars. Only weeks on a league roster are known; weeks
+  without a game are left out. Open it from "Compare with…" in the player panel or "Compare these two" on Trade ideas.
 - **Badges** (History → Badges, and "Your badges" on My team): 18 achievements per member across every season
   (titles, top score of the week, 200 club, perfect lineup, nail-biters, heartbreakers, robbed/stolen wins, 5-game
   streaks, duds, last place…), each with how many managers have it (`badges` in `stats.py`, stored in `index.js`).

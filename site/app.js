@@ -1101,10 +1101,18 @@
     t.push(["efficiency", "Efficiency"]);
     if (D.draft) t.push(["draft", "Draft"]);
     if (D.draft && D.draft.redraft) t.push(["redraft", "Redraft"]);
+    t.push(["players", "Player history"]);
     return t;
   }
 
   const INSIGHTS = {
+    players() {
+      const pid = state.params.get("player") || "";
+      setTimeout(() => fillPlayerHistory(main.querySelector(".ph-box"), pid), 0);
+      return section("Player history", { short: "Every league team a player has been on, all seasons.", full: "Pick any player who has been on a league roster: every team that had him in any season, how he got there (drafted with the pick, traded for, picked up), when he left (dropped, traded away) and the points he scored in that team's starting lineup (bench points shown separately). Covers every season, whichever season is picked at the top." },
+        `<label class="field ph-pick">Player <input id="ph-search" list="ph-list" type="search" placeholder="Type a name" autocomplete="off"></label><datalist id="ph-list"></datalist><div class="ph-box"><div class="empty">Loading…</div></div>`);
+    },
+
     rules() {
       const R = D.rulesLab;
       const RULE_INFO = {
@@ -1413,11 +1421,12 @@
   }
 
   // ---------------------------------------------------------------- trades
-  const TRADE_TABS = [["", "Trade history"], ["block", "Trade block"], ["ideas", "Trade ideas"]];
+  const TRADE_TABS = [["", "Trade history"], ["block", "Trade block"], ["ideas", "Trade ideas"], ["compare", "Compare players"]];
 
   function renderTrades() {
     if (state.sub === "block") return renderBlock();
     if (state.sub === "ideas") return renderTradeIdeas();
+    if (state.sub === "compare") return renderCompare();
     const swap = '<div class="swap"><svg width="22" height="22" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>';
     const body = D.trades.map(tr => {
       const early = !tr.weeksSince;
@@ -1494,7 +1503,8 @@
       const side = (t, gets, gain, out) => `<div class="ti-side${isMine(t) ? " mine" : ""}"><div class="mini-team">${logo(t)}<span><div>${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span></div>
         <div class="ti-gets">Gets ${pl(gets)}</div>
         <div class="team-mgr">Replaces ${out ? `${esc(out.name)} (${out.ros.toFixed(0)} ROS)` : "an empty spot"} · <b class="pos">+${gain.toFixed(0)}</b> ROS pts</div></div>`;
-      return `<article class="ti-card">${side(d.a, d.pb, d.gainA, d.outA)}<div class="ti-swap" aria-hidden="true">⇄</div>${side(d.b, d.pa, d.gainB, d.outB)}</article>`;
+      return `<article class="ti-card">${side(d.a, d.pb, d.gainA, d.outA)}<div class="ti-swap" aria-hidden="true">⇄</div>${side(d.b, d.pa, d.gainB, d.outB)}
+        <a class="ti-cmp wk-link" href="${href("trades", { a: d.pa.id, b: d.pb.id }, "compare")}">Compare these two ›</a></article>`;
     };
     const me = D.teams.find(t => isMine(t));
     // your own partners: a looser bar (5+ points each way, values within 35%) so there's usually something to look at
@@ -1509,6 +1519,88 @@
         return spare.length ? ` Your best spare players (${spare.map(p => `${esc(p.name)}, ${p.ros.toFixed(0)} ROS`).join("; ")}) wouldn't start for the teams that need them, so a fair swap would take a 2-for-1 or a bigger name.` : "";
       })()}</div>`) : "") +
       section("Best fits in the league", me ? "" : "Tip: claim your team on My team to see your own best partners first.", top.length ? `<div class="ti-list">${top.map(card).join("")}</div>` : `<div class="empty">No clean fits right now.</div>`);
+  }
+
+  // ---------------------------------------------------------------- compare players
+  // Any two players who've been on a league roster this season, side by side under the league's scoring. Weekly
+  // points come from the box scores, so only weeks a player was on a league team are known.
+  function seasonPlayers() {
+    const m = {};
+    D.weeks.forEach(w => w.games.forEach(g => g.sides.forEach(sd => sd.lineup.forEach(p => {
+      const x = m[p.id] || (m[p.id] = { id: String(p.id), name: p.name, pos: p.pos, nfl: p.team, wk: {} });
+      x.nfl = p.team;
+      x.wk[w.week] = { pts: p.pts, team: sd.team, final: w.final };
+    }))));
+    D.teams.forEach(t => t.roster.forEach(r => { const x = m[r.id]; if (x) Object.assign(x, { owner: t.id, ros: r.ros, rosRank: r.rosRank, seasonPts: r.seasonPts, posRank: r.posRank, injury: r.injury }); }));
+    return m;
+  }
+  async function renderCompare() {
+    const head = `<div class="section-head"><div><h1>Compare players</h1>${expl("Two players side by side under this league's scoring.", `Any two players who've been on a league roster in ${L.season}, compared week by week with this league's scoring. Only weeks a player was on a league team are known (that's where the stats come from), and weeks he didn't play (bye, injury) are left out of the averages.`)}</div></div>${subnav("trades", TRADE_TABS, "compare")}`;
+    const M = seasonPlayers();
+    const ids = Object.keys(M);
+    const label = x => `${x.name} · ${x.pos} · ${x.nfl}`;
+    const a = M[state.params.get("a")], b = M[state.params.get("b")];
+    const picker = (key, x) => `<label class="field cmp-field">${key === "a" ? "Player 1" : "Player 2"} <input type="search" class="cmp-in" data-cmp="${key}" list="cmp-list" placeholder="Type a name" autocomplete="off" value="${x ? esc(label(x)) : ""}"></label>`;
+    const pickers = `<div class="cmp-pick">${picker("a", a)}<span class="cmp-vs">vs</span>${picker("b", b)}</div>
+      <datalist id="cmp-list">${ids.map(id => M[id]).sort((p, q) => p.name.localeCompare(q.name)).map(x => `<option value="${esc(label(x))}"></option>`).join("")}</datalist>`;
+    main.innerHTML = head + pickers + `<div class="cmp-body">${a && b ? '<div class="empty">Loading stats…</div>' : '<div class="empty">Pick two players to compare. Tip: tap a player in any box score and choose "Compare with…".</div>'}</div>`;
+    main.querySelectorAll(".cmp-in").forEach(inp => inp.addEventListener("change", () => {
+      const v = inp.value.trim().toLowerCase();
+      const hit = ids.find(id => label(M[id]).toLowerCase() === v) || ids.find(id => M[id].name.toLowerCase() === v) || ids.find(id => M[id].name.toLowerCase().includes(v));
+      if (!hit) return;
+      const p = new URLSearchParams(state.params);
+      p.set(inp.dataset.cmp, hit);
+      if (state.season !== IDX.current) p.set("season", state.season); else p.delete("season");
+      location.hash = href("trades", Object.fromEntries(p), "compare");
+    }));
+    if (!(a && b)) return;
+    let ST = {};
+    try { ST = await loadStats(L.season); } catch (_) { /* weeks without a stat line still show the box-score points */ }
+    const weeks = D.weeks.filter(w => w.final).map(w => w.week);
+    const played = (x, w) => x.wk[w] && (ST[w + "|" + x.id] || Math.abs(x.wk[w].pts) > 0.01);
+    const sum = x => {
+      const g = weeks.filter(w => played(x, w)).map(w => ({ w, pts: x.wk[w].pts }));
+      const tot = g.reduce((n, r) => n + r.pts, 0);
+      const best = g.reduce((m, r) => (!m || r.pts > m.pts ? r : m), null), worst = g.reduce((m, r) => (!m || r.pts < m.pts ? r : m), null);
+      const last = g.slice(-3);
+      return { g, n: g.length, tot, ppg: g.length ? tot / g.length : 0, best, worst, o15: g.filter(r => r.pts >= 15).length, o20: g.filter(r => r.pts >= 20).length,
+        last3: last.length ? last.reduce((n, r) => n + r.pts, 0) / last.length : 0, tracked: weeks.filter(w => x.wk[w]).length };
+    };
+    const A = sum(a), B = sum(b);
+    const owner = x => x.owner ? esc((teamById[x.owner] || {}).name || "") : "Free agent / not on a league team";
+    const row = (lbl, va, vb, fmtv, hiGood = true) => {
+      const better = va === vb || va == null || vb == null ? 0 : (va > vb) === hiGood ? 1 : 2;
+      return `<tr><td class="${better === 1 ? "cmp-win" : ""}">${va == null ? "—" : fmtv(va)}</td><th>${lbl}</th><td class="${better === 2 ? "cmp-win" : ""}">${vb == null ? "—" : fmtv(vb)}</td></tr>`;
+    };
+    const f1 = v => v.toFixed(1), f0 = v => String(v);
+    const cur = L.isCurrent && !L.over;
+    const card = x => `<div class="cmp-card"><span class="slot ${esc(x.pos)}">${esc(x.pos)}</span><div style="min-width:0"><b>${esc(x.name)}</b><span class="team-mgr">${esc(x.nfl)}${x.injury ? " · " + esc(x.injury.replace(/_/g, " ").toLowerCase()) : ""} · ${owner(x)}</span></div></div>`;
+    const table = `<table class="cmp-tbl"><thead><tr><th>${card(a)}</th><th></th><th>${card(b)}</th></tr></thead><tbody>
+      ${row("Points per game", A.ppg, B.ppg, f1)}
+      ${row("Last 3 games", A.n ? A.last3 : null, B.n ? B.last3 : null, f1)}
+      ${row("Total points", A.tot, B.tot, f1)}
+      ${row("Games", A.n, B.n, f0)}
+      ${row("Best week", A.best ? A.best.pts : null, B.best ? B.best.pts : null, f1)}
+      ${row("Worst week", A.worst ? A.worst.pts : null, B.worst ? B.worst.pts : null, f1)}
+      ${row("15+ point games", A.o15, B.o15, f0)}
+      ${row("20+ point games", A.o20, B.o20, f0)}
+      ${cur ? row("Rest-of-season proj.", a.ros, b.ros, f1) : row("Season finish", a.posRank, b.posRank, v => a.pos === b.pos ? "#" + v : String(v), false)}
+      ${cur ? row("ROS rank", a.rosRank, b.rosRank, v => "#" + v, false) : ""}
+    </tbody></table>`;
+    // week-by-week bars (two per week), missing weeks marked
+    const all = weeks.flatMap(w => [a, b].map(x => played(x, w) ? x.wk[w].pts : 0));
+    const max = Math.max(10, ...all), H = 150, bw = 9, gap = 6, W = weeks.length * (bw * 2 + gap) + 30;
+    const bar = (x, w, i, off, cls) => {
+      if (!played(x, w)) return `<text x="${30 + i * (bw * 2 + gap) + off + bw / 2}" y="${H - 4}" class="cmp-miss" text-anchor="middle">·</text>`;
+      const v = Math.max(0, x.wk[w].pts), h = Math.max(1, v / max * (H - 20));
+      return `<rect class="${cls}" x="${30 + i * (bw * 2 + gap) + off}" y="${H - h}" width="${bw}" height="${h}" rx="2"><title>${esc(x.name)}, week ${w}: ${x.wk[w].pts.toFixed(1)}</title></rect>`;
+    };
+    const ticks = [0, Math.round(max / 2), Math.round(max)].map(v => `<text x="24" y="${H - v / max * (H - 20) + 3}" text-anchor="end" class="cmp-axis">${v}</text><line x1="28" x2="${W}" y1="${H - v / max * (H - 20)}" y2="${H - v / max * (H - 20)}" class="cmp-grid"/>`).join("");
+    const chart = `<div class="cmp-chart"><div class="cmp-legend"><span><i class="cmp-a"></i>${esc(a.name)}</span><span><i class="cmp-b"></i>${esc(b.name)}</span><span class="muted">· = not on a league roster or didn't play</span></div>
+      <div class="cmp-scroll"><svg viewBox="0 0 ${W} ${H + 18}" width="${W}" height="${H + 18}" role="img" aria-label="Weekly points">${ticks}
+      ${weeks.map((w, i) => bar(a, w, i, 0, "cmp-a") + bar(b, w, i, bw, "cmp-b") + `<text x="${30 + i * (bw * 2 + gap) + bw}" y="${H + 14}" text-anchor="middle" class="cmp-axis">${w}</text>`).join("")}</svg></div></div>`;
+    const box = main.querySelector(".cmp-body");
+    if (box) box.innerHTML = table + section("Week by week", "", chart);
   }
 
   // ---------------------------------------------------------------- trade block
@@ -2356,7 +2448,7 @@
   }
 
   // Player passport: every league team that has had this player, all seasons
-  async function renderPassport(box, pid) {
+  async function renderPassport(box, pid, full) {
     let P = null;
     try { P = await loadPlayers(); } catch (_) { box.innerHTML = ""; return; }
     const me = P.players[String(pid)];
@@ -2377,9 +2469,41 @@
         <span class="team-mgr">${esc(came)} · ${span}${left ? " · " + left : ""}</span></span>
         <span class="pp-pts">${st.toFixed(1)}<small>${starts} start${starts === 1 ? "" : "s"}${total - st >= 0.05 ? ` · ${(total - st).toFixed(1)} benched` : ""}</small></span></li>`;
     }).join("");
-    box.innerHTML = `<h3 class="pp-h">In this league</h3>
+    box.innerHTML = `<h3 class="pp-h">${full ? `${esc(me.n)} <span class="muted">${esc(me.p)}</span>` : "In this league"}</h3>
       <p class="pp-sum">${me.s.length} stint${me.s.length === 1 ? "" : "s"} · ${owners} manager${owners === 1 ? "" : "s"} · ${seasons} season${seasons === 1 ? "" : "s"} · <b>${started.toFixed(1)}</b> pts in starting lineups</p>
       <ol class="pp-list">${rows}</ol>`;
+  }
+
+  // Insights → Player history: search + one player's stints, or the most-traveled players to start with
+  async function fillPlayerHistory(box, pid) {
+    if (!box) return;
+    let P = null;
+    try { P = await loadPlayers(); } catch (_) { box.innerHTML = `<div class="empty">Couldn't load player history. Try again in a minute.</div>`; return; }
+    const ids = Object.keys(P.players);
+    const label = id => { const x = P.players[id]; return `${x.n} · ${x.p}`; };
+    const dl = document.getElementById("ph-list");
+    if (dl && !dl.children.length) dl.innerHTML = ids.slice().sort((a, b) => P.players[a].n.localeCompare(P.players[b].n)).map(id => `<option value="${esc(label(id))}"></option>`).join("");
+    const input = document.getElementById("ph-search");
+    if (input) {
+      input.dataset.map = "1";
+      input.onchange = () => {
+        const v = input.value.trim().toLowerCase();
+        const hit = ids.find(id => label(id).toLowerCase() === v) || ids.find(id => P.players[id].n.toLowerCase() === v)
+          || ids.find(id => P.players[id].n.toLowerCase().includes(v));
+        if (hit) location.hash = href("insights", { player: hit }, "players");
+      };
+      if (pid && P.players[pid]) input.value = label(pid);
+    }
+    if (pid && P.players[pid]) {
+      box.innerHTML = `<div class="ph-one"></div><p style="margin-top:10px"><a class="wk-link" href="${href("insights", {}, "players")}">‹ Most-traveled players</a> · <a class="wk-link" href="${href("trades", { a: pid }, "compare")}">Compare this season ›</a></p>`;
+      return renderPassport(box.querySelector(".ph-one"), pid, true);
+    }
+    const managers = x => new Set(x.s.flatMap(s => (P.teams[s[0] + "|" + s[1]] || ["", []])[1])).size;
+    const rows = ids.filter(id => !["K", "D/ST"].includes(P.players[id].p)).map(id => ({ id, x: P.players[id], m: managers(P.players[id]), n: P.players[id].s.length, pts: P.players[id].s.reduce((a, s) => a + s[4], 0) }))
+      .sort((a, b) => b.m - a.m || b.n - a.n || b.pts - a.pts).slice(0, 12);
+    box.innerHTML = `<h3 class="pp-h" style="margin-top:6px">Most-traveled players</h3><p class="pp-sum">The players who've been through the most managers' hands (kickers and defenses aside, since they get streamed). Tap one for his full history.</p>
+      <div class="picks">${rows.map(r => `<a class="pick ph-row" href="${href("insights", { player: r.id }, "players")}"><span class="pick-no">${r.m}</span><span class="slot ${esc(r.x.p)}">${esc(r.x.p)}</span>
+        <span class="pick-name"><b>${esc(r.x.n)}</b><span class="team-mgr">${r.m} managers · ${r.n} stints · ${r.pts.toFixed(0)} pts started</span></span><span class="pick-v">›</span></a>`).join("")}</div>`;
   }
 
   // a box-score style one-liner from the raw stats
@@ -2421,14 +2545,14 @@
       <div class="team-mgr">${esc(p.team)} · Week ${week}${L.season !== IDX.current ? ", " + L.season : ""} · ${esc((teamById[team] || {}).name || "")}${p.slot === "BE" || p.slot === "IR" ? " (bench)" : ""}</div></div>
       <div class="stat-pts">${fmt(p.pts)}<small>fantasy pts</small></div></div>
       <div class="stat-body"><div class="empty">Loading stats…</div></div>
-      <div class="pp"></div>
+      <div class="stat-actions"><a class="cta stat-cmp" href="${href("trades", { a: p.id }, "compare")}">Compare with…</a>
+        <a class="linkbtn" href="${href("insights", { player: p.id }, "players")}">League history ›</a></div>
       <button type="button" class="linkbtn share-close">Close</button></div>`;
     document.body.appendChild(sheet);
     const close = () => { sheet.remove(); document.removeEventListener("keydown", onKey); };
     const onKey = e => { if (e.key === "Escape") close(); };
     document.addEventListener("keydown", onKey);
-    sheet.addEventListener("click", e => { if (e.target === sheet || e.target.closest(".share-close")) close(); });
-    renderPassport(sheet.querySelector(".pp"), pid);
+    sheet.addEventListener("click", e => { if (e.target === sheet || e.target.closest(".share-close") || e.target.closest(".stat-actions a")) close(); });
     let st = null;
     try { st = (await loadStats(L.season))[week + "|" + pid]; } catch (_) { /* shown below */ }
     const body = sheet.querySelector(".stat-body");
