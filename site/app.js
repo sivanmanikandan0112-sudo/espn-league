@@ -2180,11 +2180,13 @@
     const ros = pool.map(f => ({ f, gain: total(keep.concat(f)) - baseTotal })).filter(x => x.gain >= 3).sort((a, b) => b.gain - a.gain).slice(0, 4);
     // 3. short-handed weeks ahead (byes / injuries), the best fill-in for each
     const full = Math.max(...weeks.map(w => lineup(mine, w).pts));
+    // starters (as of next week) who are out a later week, and the best pickup at each position that's short
     const holes = weeks.slice(1, 6).map(w => {
       const have = lineup(mine, w), missing = mine.filter(p => base.used.has(p.id) && !(p.wk[w] > 0));
-      const best = pool.map(f => { const after = lineup(mine.concat(f), w); return { f, gain: after.pts - have.pts }; }).sort((a, b) => b.gain - a.gain)[0];
-      return { w, missing, best };
-    }).filter(h => h.missing.length && h.best && h.best.gain >= 2);
+      const picks = [...new Set(missing.map(p => p.pos))].map(pos => pool.filter(f => f.pos === pos)
+        .map(f => ({ f, gain: lineup(mine.concat(f), w).pts - have.pts })).sort((a, b) => b.gain - a.gain)[0]).filter(x => x && x.gain >= 2);
+      return { w, missing, picks };
+    }).filter(h => h.missing.length && h.picks.length);
     const line = (x, w, extra) => `<div class="pick wv-row">${who(x.f)}<span class="team-mgr">${esc(x.f.team)} · ${extra}</span></span><span class="pick-v"><b class="pos">+${x.gain.toFixed(1)}</b></span></div>`;
     const proj = (f, w) => (f.wk[w] || 0).toFixed(1);
     const nothing = msg => `<p class="muted wv-none">${msg}</p>`;
@@ -2192,9 +2194,10 @@
       <h3 class="wv-h">Up next: week ${next}</h3>
       ${thisWeek.length ? thisWeek.map(x => line(x, next, `proj ${proj(x.f, next)}${x.over ? ` · starts over ${esc(x.over)}` : ""}`)).join("") : nothing("Nobody available would beat your starters this week.")}
       <h3 class="wv-h">Rest of season</h3>
-      ${ros.length ? ros.map(x => line(x, null, `${x.f.ros.toFixed(0)} ROS pts${x.f.bye ? ` · bye wk ${x.f.bye}` : ""}`)).join("") : nothing("No pickup would add much over your current roster.")}
+      ${ros.length ? ros.map(x => line(x, null, `${x.f.ros.toFixed(0)} ROS pts${x.f.bye && x.f.bye >= Number(weeks[0]) ? ` · bye wk ${x.f.bye}` : ""}`)).join("") : nothing("No pickup would add much over your current roster.")}
       ${drop ? `<p class="note wv-drop">Easiest drop: <b>${esc(drop.name)}</b> (${esc(drop.pos)}${drop.injury ? ", " + esc(drop.injury.replace(/_/g, " ").toLowerCase()) : ""}, ${drop.ros.toFixed(0)} ROS): ${costs[0].cost < 0.5 ? "your best lineup wouldn't miss him" : `costs your best lineup ${costs[0].cost.toFixed(1)} pts the rest of the way`}.</p>` : ""}
-      ${holes.length ? `<h3 class="wv-h">Short-handed weeks ahead</h3>${holes.map(h => line(h.best, h.w, `wk ${h.w} fill-in for ${esc(h.missing.map(p => p.name).join(", "))} · proj ${proj(h.best.f, h.w)}`)).join("")}` : ""}`;
+      ${holes.length ? `<h3 class="wv-h">Short-handed weeks ahead</h3>${holes.map(h => `<p class="wv-week"><b>Week ${h.w}</b> · out: ${esc(h.missing.map(p => `${p.name} (${p.pos})`).join(", "))}</p>` +
+        h.picks.map(x => line(x, h.w, `${esc(x.f.pos)} fill-in for week ${h.w} · proj ${proj(x.f, h.w)}`)).join("")).join("")}` : ""}`;
     return section("Waiver targets", { short: "Pickups that would improve your lineup, by projected points.", full: `Free agents and players on waivers compared with your roster, using the same weekly projections as power value: ESPN's rest-of-season projection, minus byes and expected injury time. <b>+points</b> is how much your best lineup gains (that week, or added up over weeks ${weeks[0]}–${weeks[weeks.length - 1]} for rest of season, after dropping the suggested player). QB/RB/WR/TE only. Updates with every site refresh; claims are made in the ESPN app.` },
       `<div class="picks wv">${body}</div>`);
   }

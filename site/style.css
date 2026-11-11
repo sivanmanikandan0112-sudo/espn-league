@@ -1040,3 +1040,4 @@ body.has-ticker { padding-bottom: 38px; }
 .wv-none { margin: 2px 14px 10px; font-size: 13px; }
 .wv-drop { margin: 4px 14px 10px; }
 .wv-row .badge { white-space: nowrap; display: inline-block; }
+.wv-week { margin: 6px 14px 0; font-size: 13px; color: var(--ink-2); }
