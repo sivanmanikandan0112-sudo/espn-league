@@ -721,8 +721,8 @@ def build_history(seasons_data, names, current_members):
             "thisWeek": stats.this_week_history(seasons_data)}
 
 
-def record_book(seasons_data, top=5):
-    """League records across every season (all matchups, playoffs included)."""
+def record_rows(seasons_data):
+    """Every final game's team scores, results and player games (starters / bench), for the record books."""
     scores, games, players, bench = [], [], [], []
     for data in seasons_data:
         lg = data["league"]
@@ -746,7 +746,13 @@ def record_book(seasons_data, top=5):
                 win, lose = sorted((a, b), key=lambda s: -s["pts"])
                 games.append(dict(where, teamId=win["team"], winner=ref(win["team"]), loser=ref(lose["team"]), winPts=win["pts"],
                                   losePts=lose["pts"], margin=round(win["pts"] - lose["pts"], 2),
-                                  combined=round(win["pts"] + lose["pts"], 2)))
+                                  combined=round(win["pts"] + lose["pts"], 2), loserId=lose["team"]))
+    return scores, games, players, bench
+
+
+def record_book(seasons_data, top=5):
+    """League records across every season (all matchups, playoffs included)."""
+    scores, games, players, bench = record_rows(seasons_data)
     return {
         "highScores": sorted(scores, key=lambda x: -x["pts"])[:top],
         "lowScores": sorted(scores, key=lambda x: x["pts"])[:top],
@@ -756,6 +762,61 @@ def record_book(seasons_data, top=5):
         "playerGames": sorted(players, key=lambda x: -x["pts"])[:top],
         "benchGames": sorted(bench, key=lambda x: -x["pts"])[:top],
     }
+
+
+def personal_records(seasons_data, top=5):
+    """Each member's own record book across every season they played: the same lists as the league's, plus their
+    worst losses and longest winning streaks. Written to data/records.js (loaded when someone opens it)."""
+    scores, games, players, bench = record_rows(seasons_data)
+    members = {o for d in seasons_data for t in d["teams"] for o in t["owners"]}
+    has = lambda r, m: m in r["owners"]
+    out = {}
+    for m in members:
+        mine_games = [g for g in games if m in g["winner"]["owners"] or m in g["loser"]["owners"]]
+        wins = [g for g in mine_games if m in g["winner"]["owners"] and g["margin"] > 0]
+        losses = [g for g in mine_games if m in g["loser"]["owners"] and g["margin"] > 0]
+        out[m] = {
+            "highScores": sorted((r for r in scores if has(r, m)), key=lambda x: -x["pts"])[:top],
+            "lowScores": sorted((r for r in scores if has(r, m)), key=lambda x: x["pts"])[:top],
+            "bigWins": sorted(wins, key=lambda x: -x["margin"])[:top],
+            "worstLosses": sorted(losses, key=lambda x: -x["margin"])[:top],
+            "closest": sorted(mine_games, key=lambda x: x["margin"])[:top],
+            "playerGames": sorted((r for r in players if has(r, m)), key=lambda x: -x["pts"])[:top],
+            "benchGames": sorted((r for r in bench if has(r, m)), key=lambda x: -x["pts"])[:top],
+            "streaks": [],
+        }
+    # longest winning streaks (regular season, within a season)
+    for data in seasons_data:
+        lg = data["league"]
+        tm = {t["id"]: t for t in data["teams"]}
+        res = defaultdict(list)  # team -> [(week, won)]
+        for w in data["weeks"]:
+            if not w["final"] or w["week"] > lg["regularSeasonWeeks"]:
+                continue
+            for g in w["games"]:
+                if len(g["sides"]) != 2:
+                    continue
+                a, b = g["sides"]
+                res[a["team"]].append((w["week"], a["pts"] > b["pts"]))
+                res[b["team"]].append((w["week"], b["pts"] > a["pts"]))
+        for tid, rr in res.items():
+            best, run, start, best_start = 0, 0, None, None
+            for wk, won in rr:
+                if won:
+                    run += 1
+                    start = start or wk
+                    if run > best:
+                        best, best_start = run, start
+                else:
+                    run, start = 0, None
+            if best >= 2:
+                t = tm.get(tid)
+                for o in (t or {}).get("owners", []):
+                    out[o]["streaks"].append({"season": lg["season"], "len": best, "from": best_start, "to": best_start + best - 1,
+                                              "team": t["name"], "logo": t["logo"], "owners": t["owners"]})
+    for r in out.values():
+        r["streaks"] = sorted(r["streaks"], key=lambda x: (-x["len"], -x["season"]))[:top]
+    return out
 
 
 def rivalries(h2h, top=6):
@@ -812,6 +873,8 @@ def main():
     index = {"seasons": seasons, "current": args.season, "name": current["league"]["name"],
              "updated": current["updated"], "build": (os.environ.get("GITHUB_SHA") or "dev")[:7],
              "history": build_history(built, names, current_members)}
+    # each member's own record book (loaded when someone opens it on My team or the Record book)
+    write_js(os.path.join(DATA_DIR, "records.js"), "LEAGUE_RECORDS", "all", personal_records(built))
     # every player's stints on league teams, all seasons (loaded when a player is opened)
     write_js(os.path.join(DATA_DIR, "players.js"), "LEAGUE_PLAYERS", "all", stats.player_passport(built))
     with open(os.path.join(DATA_DIR, "index.js"), "w") as f:

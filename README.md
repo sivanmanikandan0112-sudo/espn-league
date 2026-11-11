@@ -74,6 +74,14 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   player's own games this season (`gameLogs` in the current season's data; seeded so it doesn't jump each minute).
 - **Share cards**: Share buttons on weekly recaps, matchups, trades and the bracket draw a 1080px image in the browser
   (canvas, no server) to share, copy or download.
+- **Trade ideas** (Trades → Trade ideas, current season): pairs of teams whose rosters fit. Each has a spare player
+  (beyond its starters at QB/RB/WR/TE) that would replace the other's weakest starter at that position by 10+ ROS
+  points, and the two spares are within 25% of each other in rest-of-season value. "Your best trade partners" (once
+  you've claimed your team) uses a looser bar (5+ points, 35%) and explains when there's no fit. Computed in the browser.
+- **Personal record books**: History → Record book has a picker (whole league or any member); a member's book lists
+  their highest/lowest scores, biggest wins, worst losses, closest games, longest win streaks and best player/bench
+  games across every season. My team shows the #1 of each as tiles linking to the box score. Built by
+  `personal_records` in `build.py` into `data/records.js`, loaded only when opened.
 - **Trades**: every trade with its grade: points each side's received players scored in its starting lineup after
   the trade. The current season's trades come from the league activity feed (exact). ESPN doesn't keep that feed for past
   seasons, so those trades are rebuilt from week-to-week roster swaps confirmed against the transaction log.

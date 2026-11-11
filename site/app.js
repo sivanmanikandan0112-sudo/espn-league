@@ -1413,10 +1413,11 @@
   }
 
   // ---------------------------------------------------------------- trades
-  const TRADE_TABS = [["", "Trade history"], ["block", "Trade block"]];
+  const TRADE_TABS = [["", "Trade history"], ["block", "Trade block"], ["ideas", "Trade ideas"]];
 
   function renderTrades() {
     if (state.sub === "block") return renderBlock();
+    if (state.sub === "ideas") return renderTradeIdeas();
     const swap = '<div class="swap"><svg width="22" height="22" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>';
     const body = D.trades.map(tr => {
       const early = !tr.weeksSince;
@@ -1443,6 +1444,71 @@
         ${expl(`Every ${L.season} deal, graded by points scored in the new team's lineup.`, `Every deal that went through in ${L.season}, newest first, graded by points the received players scored in the new team's starting lineup for as long as they stayed. Bench points don't count: a trade only pays off if you play them.`)}</div></div>
       ${subnav("trades", TRADE_TABS, "")}
       <div class="trades">${body || '<div class="empty">No trades this season.</div>'}</div>`;
+  }
+
+  // ---------------------------------------------------------------- trade ideas (matchmaker)
+  // Pairs teams whose rosters fit: each has a spare player (beyond its starters) at a position where the other's
+  // starter is weak, and the two spares are worth about the same rest-of-season. Both lineups get better.
+  const TRADE_POS = ["QB", "RB", "WR", "TE"];
+  function tradeIdeas(minGain = 10, tol = 0.25) {
+    if (!L.isCurrent || L.over) return null;
+    const spots = {};
+    (D.settings.slots || []).forEach(x => { if (TRADE_POS.includes(x.slot)) spots[x.slot] = x.count; });
+    const healthy = p => p.ros > 0 && p.injury !== "INJURY_RESERVE" && p.slot !== "IR";
+    const depth = {};
+    D.teams.forEach(t => {
+      depth[t.id] = {};
+      TRADE_POS.forEach(pos => {
+        const list = t.roster.filter(p => p.pos === pos && healthy(p)).sort((a, b) => b.ros - a.ros);
+        const n = spots[pos] || 1;
+        depth[t.id][pos] = { weakest: list[n - 1] || null, weakestRos: list[n - 1] ? list[n - 1].ros : 0, spares: list.slice(n, n + 2) };
+      });
+    });
+    const deals = [];
+    for (const a of D.teams) for (const b of D.teams) {
+      if (a.id >= b.id) continue;
+      let best = null;
+      for (const x of TRADE_POS) for (const y of TRADE_POS) {
+        if (x === y) continue;
+        for (const pa of depth[a.id][x].spares) for (const pb of depth[b.id][y].spares) {
+          const gainB = pa.ros - depth[b.id][x].weakestRos, gainA = pb.ros - depth[a.id][y].weakestRos;
+          if (gainA < minGain || gainB < minGain) continue;              // both starting lineups must improve
+          if (Math.abs(pa.ros - pb.ros) > tol * Math.max(pa.ros, pb.ros)) continue; // roughly even value
+          const score = Math.min(gainA, gainB);
+          if (!best || score > best.score) best = { a, b, pa, pb, x, y, gainA, gainB, score,
+            outA: depth[a.id][y].weakest, outB: depth[b.id][x].weakest };
+        }
+      }
+      if (best) deals.push(best);
+    }
+    return deals.sort((p, q) => q.score - p.score);
+  }
+  function renderTradeIdeas() {
+    const head = `<div class="section-head"><div><h1>Trade ideas</h1>${expl("Teams whose rosters fit, with a swap that makes both lineups better.", "For every pair of teams: one has a spare player (beyond its starters) at a position where the other team's weakest starter is much worse, and the other way around. The two players are worth about the same rest-of-season (ESPN's projected points, within 25%), and each one would beat the starter he replaces by 10+ points. Injured-reserve players aren't included. These are ideas, not verdicts: needs, byes and the playoff schedule still matter.")}</div></div>${subnav("trades", TRADE_TABS, "ideas")}`;
+    const deals = tradeIdeas();
+    if (!deals) { main.innerHTML = head + `<div class="empty">Trade ideas are for the current season, while trades are still open.</div>`; return; }
+    const deadline = D.settings.tradeDeadline ? new Date(D.settings.tradeDeadline) : null;
+    const closed = deadline && Date.now() > deadline.getTime();
+    const pl = p => `<span class="slot ${esc(p.pos)}">${esc(p.pos)}</span> <b>${esc(p.name)}</b> <span class="muted">${esc(p.team)} · ${p.ros.toFixed(0)} ROS</span>`;
+    const card = d => {
+      const side = (t, gets, gain, out) => `<div class="ti-side${isMine(t) ? " mine" : ""}"><div class="mini-team">${logo(t)}<span><div>${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span></div>
+        <div class="ti-gets">Gets ${pl(gets)}</div>
+        <div class="team-mgr">Replaces ${out ? `${esc(out.name)} (${out.ros.toFixed(0)} ROS)` : "an empty spot"} · <b class="pos">+${gain.toFixed(0)}</b> ROS pts</div></div>`;
+      return `<article class="ti-card">${side(d.a, d.pb, d.gainA, d.outA)}<div class="ti-swap" aria-hidden="true">⇄</div>${side(d.b, d.pa, d.gainB, d.outB)}</article>`;
+    };
+    const me = D.teams.find(t => isMine(t));
+    // your own partners: a looser bar (5+ points each way, values within 35%) so there's usually something to look at
+    const mine = me ? tradeIdeas(5, 0.35).filter(d => d.a === me || d.b === me).slice(0, 3) : [];
+    const top = deals.slice(0, 8);
+    main.innerHTML = head + (closed ? `<p class="note live">The trade deadline (${deadline.toLocaleDateString([], { month: "short", day: "numeric" })}) has passed; these are for fun.</p>` : deadline ? `<p class="note">Trade deadline: ${deadline.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}.</p>` : "") +
+      (me ? section("Your best trade partners", "Same idea with a slightly looser bar: both lineups gain 5+ points.", mine.length ? `<div class="ti-list">${mine.map(card).join("")}</div>` : `<div class="empty">No clean one-for-one fits for your roster right now.${(() => {
+        const spare = TRADE_POS.map(pos => {
+          const n = ((D.settings.slots || []).find(x => x.slot === pos) || {}).count || 1;
+          return me.roster.filter(p => p.pos === pos && p.ros > 0 && p.slot !== "IR" && p.injury !== "INJURY_RESERVE").sort((a, b) => b.ros - a.ros)[n];
+        }).filter(Boolean).sort((a, b) => b.ros - a.ros).slice(0, 2);
+        return spare.length ? ` Your best spare players (${spare.map(p => `${esc(p.name)}, ${p.ros.toFixed(0)} ROS`).join("; ")}) wouldn't start for the teams that need them, so a fair swap would take a 2-for-1 or a bigger name.` : "";
+      })()}</div>`) : "") +
+      section("Best fits in the league", me ? "" : "Tip: claim your team on My team to see your own best partners first.", top.length ? `<div class="ti-list">${top.map(card).join("")}</div>` : `<div class="empty">No clean fits right now.</div>`);
   }
 
   // ---------------------------------------------------------------- trade block
@@ -1691,22 +1757,91 @@
     },
 
     records(H) {
-      const R = H.records;
-      const teamLine = (r, val) => `<div class="rec"><span class="rec-v">${val}</span><span class="rec-who">${logoImg(r.logo, r.team)}<span><b>${esc(r.team)}</b><span class="team-mgr">${owners(r.owners)}</span></span></span>${whenLink(r)}</div>`;
-      const gameLine = (r, val) => `<div class="rec"><span class="rec-v">${val}</span><span class="rec-who"><span><b>${esc(r.winner.team)}</b> ${fmt(r.winPts)} – ${fmt(r.losePts)} <b>${esc(r.loser.team)}</b><span class="team-mgr">${owners(r.winner.owners)} over ${owners(r.loser.owners)}</span></span></span>${whenLink(r)}</div>`;
-      const playerLine = r => `<div class="rec"><span class="rec-v">${fmt(r.pts)}</span><span class="rec-who"><span class="slot ${esc(r.pos)}">${esc(r.pos)}</span><span><b>${esc(r.name)}</b><span class="team-mgr">${esc(r.team)} · ${owners(r.owners)}</span></span></span>${whenLink(r)}</div>`;
-      const card = (title, rows) => `<section class="rec-card"><h3>${title}</h3>${rows}</section>`;
-      return `<div class="rec-grid">
-        ${card("Highest scores", R.highScores.map(r => teamLine(r, fmt(r.pts))).join(""))}
-        ${card("Lowest scores", R.lowScores.map(r => teamLine(r, fmt(r.pts))).join(""))}
-        ${card("Biggest blowouts", R.blowouts.map(r => gameLine(r, "+" + r.margin.toFixed(1))).join(""))}
-        ${card("Closest games", R.closest.map(r => gameLine(r, r.margin.toFixed(2))).join(""))}
-        ${card("Highest-scoring games", R.shootouts.map(r => gameLine(r, r.combined.toFixed(1))).join(""))}
-        ${card("Best player games", R.playerGames.map(playerLine).join(""))}
-        ${card("Best games on the bench", R.benchGames.map(playerLine).join(""))}
-      </div>`;
+      const members = H.members.slice().sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
+      const who = state.params.get("member") || state.recMember || "";
+      state.recMember = members.some(m => m.id === who) ? who : "";
+      const pick = `<label class="field rec-pick">Record book <select id="rec-member"><option value="">Whole league</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === state.recMember ? " selected" : ""}>${esc(m.name)}${m.active ? "" : " (former)"}</option>`).join("")}</select></label>`;
+      if (state.recMember) {
+        const box = `<div class="rec-mine" data-rec-member="${esc(state.recMember)}"><div class="empty">Loading…</div></div>`;
+        setTimeout(() => fillPersonalBook(main.querySelector(".rec-mine")), 0);
+        return pick + box;
+      }
+      return pick + leagueRecordBook(H);
     },
   };
+
+  function loadRecords() {
+    if (window.LEAGUE_RECORDS && window.LEAGUE_RECORDS.all) return Promise.resolve(window.LEAGUE_RECORDS.all);
+    return new Promise((resolve, reject) => {
+      const sc = document.createElement("script");
+      sc.src = "data/records.js?b=" + encodeURIComponent(IDX.updated || IDX.build || "");
+      sc.onload = () => (window.LEAGUE_RECORDS && window.LEAGUE_RECORDS.all ? resolve(window.LEAGUE_RECORDS.all) : reject(new Error("empty")));
+      sc.onerror = () => reject(new Error("load failed"));
+      document.head.appendChild(sc);
+    });
+  }
+  const recTeamLine = (r, val) => `<div class="rec"><span class="rec-v">${val}</span><span class="rec-who">${logoImg(r.logo, r.team)}<span><b>${esc(r.team)}</b><span class="team-mgr">${owners(r.owners)}</span></span></span>${whenLink(r)}</div>`;
+  const recGameLine = (r, val) => `<div class="rec"><span class="rec-v">${val}</span><span class="rec-who"><span><b>${esc(r.winner.team)}</b> ${fmt(r.winPts)} – ${fmt(r.losePts)} <b>${esc(r.loser.team)}</b><span class="team-mgr">${owners(r.winner.owners)} over ${owners(r.loser.owners)}</span></span></span>${whenLink(r)}</div>`;
+  const recPlayerLine = r => `<div class="rec"><span class="rec-v">${fmt(r.pts)}</span><span class="rec-who"><span class="slot ${esc(r.pos)}">${esc(r.pos)}</span><span><b>${esc(r.name)}</b><span class="team-mgr">${esc(r.team)} · ${owners(r.owners)}</span></span></span>${whenLink(r)}</div>`;
+  const recCard = (title, rows) => `<section class="rec-card"><h3>${title}</h3>${rows || '<p class="muted" style="margin:6px 0">None yet.</p>'}</section>`;
+  function leagueRecordBook(H) {
+    const R = H.records;
+    return `<div class="rec-grid">
+        ${recCard("Highest scores", R.highScores.map(r => recTeamLine(r, fmt(r.pts))).join(""))}
+        ${recCard("Lowest scores", R.lowScores.map(r => recTeamLine(r, fmt(r.pts))).join(""))}
+        ${recCard("Biggest blowouts", R.blowouts.map(r => recGameLine(r, "+" + r.margin.toFixed(1))).join(""))}
+        ${recCard("Closest games", R.closest.map(r => recGameLine(r, r.margin.toFixed(2))).join(""))}
+        ${recCard("Highest-scoring games", R.shootouts.map(r => recGameLine(r, r.combined.toFixed(1))).join(""))}
+        ${recCard("Best player games", R.playerGames.map(recPlayerLine).join(""))}
+        ${recCard("Best games on the bench", R.benchGames.map(recPlayerLine).join(""))}
+      </div>`;
+  }
+  // one member's own record book (History → Record book with a manager picked)
+  function personalBookHtml(R, m) {
+    const lossLine = r => recGameLine(Object.assign({}, r, { teamId: r.loserId }), "−" + r.margin.toFixed(1));
+    const closeLine = r => recGameLine(Object.assign({}, r, (r.loser.owners || []).includes(m) ? { teamId: r.loserId } : {}), ((r.winner.owners || []).includes(m) ? "W " : "L ") + r.margin.toFixed(2));
+    const streakLine = r => `<div class="rec"><span class="rec-v">${r.len}</span><span class="rec-who">${logoImg(r.logo, r.team)}<span><b>${esc(r.team)}</b><span class="team-mgr">${r.len} straight wins · weeks ${r.from}–${r.to}</span></span></span><span class="when"><span>${r.season}</span></span></div>`;
+    return `<div class="rec-grid">
+        ${recCard("Highest scores", R.highScores.map(r => recTeamLine(r, fmt(r.pts))).join(""))}
+        ${recCard("Lowest scores", R.lowScores.map(r => recTeamLine(r, fmt(r.pts))).join(""))}
+        ${recCard("Biggest wins", R.bigWins.map(r => recGameLine(r, "+" + r.margin.toFixed(1))).join(""))}
+        ${recCard("Worst losses", R.worstLosses.map(lossLine).join(""))}
+        ${recCard("Closest games", R.closest.map(closeLine).join(""))}
+        ${recCard("Longest win streaks", R.streaks.map(streakLine).join(""))}
+        ${recCard("Best player games", R.playerGames.map(recPlayerLine).join(""))}
+        ${recCard("Best games on the bench", R.benchGames.map(recPlayerLine).join(""))}
+      </div>`;
+  }
+  async function fillPersonalBook(box) {
+    if (!box) return;
+    const m = box.dataset.recMember;
+    let all = null;
+    try { all = await loadRecords(); } catch (_) { box.innerHTML = `<div class="empty">Couldn't load the record book. Try again in a minute.</div>`; return; }
+    box.innerHTML = all[m] ? `<p class="sub" style="margin:0 0 10px">${esc(memberName(m))}'s records across every season, playoffs included.</p>` + personalBookHtml(all[m], m) : `<div class="empty">No games yet.</div>`;
+  }
+  // My team: the #1 of each list, linking to the full book
+  async function fillMyRecords(box) {
+    if (!box) return;
+    const m = box.dataset.recMember;
+    let all = null;
+    try { all = await loadRecords(); } catch (_) { box.innerHTML = ""; return; }
+    const R = all[m];
+    if (!R) { box.innerHTML = `<div class="empty">No games yet.</div>`; return; }
+    const tile = (label, val, sub, r) => `<a class="me-rec" href="${r && r.week != null ? whenLink(r).match(/href="([^"]+)"/)[1] : href("history", { member: m }, "records")}"><span class="kicker">${label}</span><b>${val}</b><span class="team-mgr">${sub}</span></a>`;
+    const at = r => `${r.season} · ${r.playoff ? "Playoffs" : "Wk"} ${r.week}`;
+    const tiles = [];
+    const hi = R.highScores[0], lo = R.lowScores[0], bw = R.bigWins[0], wl = R.worstLosses[0], pg = R.playerGames[0], st = R.streaks[0];
+    const cw = R.closest.find(g => (g.winner.owners || []).includes(m)), cl = R.closest.find(g => (g.loser.owners || []).includes(m));
+    if (hi) tiles.push(tile("Best score", fmt(hi.pts), at(hi), hi));
+    if (lo) tiles.push(tile("Worst score", fmt(lo.pts), at(lo), lo));
+    if (bw) tiles.push(tile("Biggest win", "+" + bw.margin.toFixed(1), `vs ${esc(bw.loser.team)} · ${at(bw)}`, bw));
+    if (wl) tiles.push(tile("Worst loss", "−" + wl.margin.toFixed(1), `vs ${esc(wl.winner.team)} · ${at(wl)}`, Object.assign({}, wl, { teamId: wl.loserId })));
+    if (cw) tiles.push(tile("Closest win", "+" + cw.margin.toFixed(2), `vs ${esc(cw.loser.team)} · ${at(cw)}`, cw));
+    if (cl) tiles.push(tile("Closest loss", "−" + cl.margin.toFixed(2), `vs ${esc(cl.winner.team)} · ${at(cl)}`, Object.assign({}, cl, { teamId: cl.loserId })));
+    if (pg) tiles.push(tile("Best player game", fmt(pg.pts), `${esc(pg.name)} · ${at(pg)}`, pg));
+    if (st) tiles.push(tile("Longest win streak", st.len + " wins", `${st.season} · weeks ${st.from}–${st.to}`, null));
+    box.innerHTML = `<div class="me-recs">${tiles.join("")}</div>`;
+  }
 
   function renderHistory() {
     const H = IDX.history;
@@ -1905,7 +2040,9 @@
       ${glance}
       <div class="me-grid"><div>${week}${watch}${byes}</div><div>${schedule}</div></div>
       ${IDX.history.badges ? section(`Your badges <a class="wk-link" href="${href("history", {}, "badges")}">all badges ›</a>`, "Earned across every season you've played.", badgeTiles(ME.member)) : ""}
+      ${section(`Your record book <a class="wk-link" href="${href("history", { member: ME.member }, "records")}">full record book ›</a>`, "Your bests and worsts across every season you've played. Tap one for the box score.", `<div class="me-recs-box" data-rec-member="${esc(ME.member)}"><div class="empty">Loading…</div></div>`)}
       ${roster}`;
+    fillMyRecords(main.querySelector(".me-recs-box"));
   }
 
   main.addEventListener("submit", async e => {
@@ -2162,6 +2299,7 @@
     if (e.target.id === "side-week") { state.sideWeek = Number(e.target.value); document.querySelector(".side").outerHTML = sidebar(); }
     if (e.target.id === "swap-team") { state.swapTeam = e.target.value; renderKeepScroll(renderInsights); }
     if (e.target.id === "draft-team") { state.draftTeam = e.target.value; renderKeepScroll(renderInsights); }
+    if (e.target.id === "rec-member") { location.hash = href("history", e.target.value ? { member: e.target.value } : {}, "records"); return; }
     if (e.target.id === "badge-member") { state.badgeMember = e.target.value; renderKeepScroll(renderHistory); }
     if (e.target.id === "h2h-a") { state.h2hA = e.target.value; renderKeepScroll(renderHistory); }
     if (e.target.id === "h2h-b") { state.h2hB = e.target.value; renderKeepScroll(renderHistory); }
