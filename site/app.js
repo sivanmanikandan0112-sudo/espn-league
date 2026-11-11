@@ -2231,7 +2231,7 @@
         if (m && m.wk[w] > 0) return;
         const pick = best(w)[0];
         if (!pick) return;
-        kdHtml += `<p class="wv-week"><b>Week ${w}</b> · ${esc(label)} on bye or out: plan a ${word}</p>` + kdLine(pick, w, `<b class="pos">${proj(pick, w)}</b>`);
+        kdHtml += `<p class="wv-week"><b>Week ${w}</b> · ${esc(label)} on bye: plan a ${word}</p>` + kdLine(pick, w, `<b class="pos">${proj(pick, w)}</b>`);
       });
     });
     const kdBlock = kdHtml ? `<h3 class="wv-h">Kickers & defenses</h3>${kdHtml}` : `<h3 class="wv-h">Kickers & defenses</h3>${nothing(`Your kicker and defense are set for week ${next}; no free agent is projected clearly better (+2 K, +3 D/ST).`)}`;

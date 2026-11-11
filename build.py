@@ -518,8 +518,20 @@ def add_free_agents(data, pool, season, latest, per_pos=25):
     # kickers and defenses: ESPN's matchup-based projection for each week (0 = bye), for free agents and for the
     # league's rostered ones, plus each week's opponent, so My team can flag byes and worthwhile streams
     opp = opponents(season)
-    weekly = lambda p: {str(w): round(v, 1) for w in weeks
-                        for v in [stat_line(p, season, 1, w, 1).get("appliedTotal") or 0.0] if v > 0}
+    def weekly(p):
+        # ESPN only publishes the matchup projection for the current week; later weeks use the player's
+        # rest-of-season average, with his team's bye week left out
+        bye, avg = byes.get(p.get("proTeamId")), stat_line(p, season, 1).get("appliedAverage") or 0.0
+        out = {}
+        for w in weeks:
+            v = stat_line(p, season, 1, w, 1).get("appliedTotal") or 0.0
+            if w == bye:
+                continue
+            if v <= 0 and w > weeks[0]:
+                v = avg
+            if v > 0:
+                out[str(w)] = round(v, 1)
+        return out
     by_id = {e["player"]["id"]: e for e in pool}
     kd = defaultdict(list)
     for e in pool:
