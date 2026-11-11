@@ -82,6 +82,18 @@ def pro_teams(season):
     return _PRO_SCHEDULE[season]
 
 
+def opponents(season):
+    """NFL team id -> {week: "vs NYG" / "@ DAL"} for every scheduled game."""
+    out = {}
+    for t in pro_teams(season):
+        for wk, games in (t.get("proGamesByScoringPeriod") or {}).items():
+            for g in games:
+                home = g.get("homeProTeamId") == t["id"]
+                opp = g.get("awayProTeamId") if home else g.get("homeProTeamId")
+                out.setdefault(t["id"], {})[str(wk)] = ("vs " if home else "@ ") + PRO.get(opp, "?")
+    return out
+
+
 def bye_weeks(season):
     return {t["id"]: t.get("byeWeek") for t in pro_teams(season)}
 
@@ -502,6 +514,34 @@ def add_free_agents(data, pool, season, latest, per_pos=25):
             "bye": byes.get(p.get("proTeamId")), "wk": {str(w): round(v, 1) for w, v in wk.items()},
         })
     data["freeAgents"] = [x for pos in POWER_POSITIONS for x in sorted(by_pos[pos], key=lambda x: -sum(x["wk"].values()))[:per_pos]]
+
+    # kickers and defenses: ESPN's matchup-based projection for each week (0 = bye), for free agents and for the
+    # league's rostered ones, plus each week's opponent, so My team can flag byes and worthwhile streams
+    opp = opponents(season)
+    weekly = lambda p: {str(w): round(v, 1) for w in weeks
+                        for v in [stat_line(p, season, 1, w, 1).get("appliedTotal") or 0.0] if v > 0}
+    by_id = {e["player"]["id"]: e for e in pool}
+    kd = defaultdict(list)
+    for e in pool:
+        p = e["player"]
+        pos = POS.get(p.get("defaultPositionId"))
+        if pos not in ("K", "D/ST") or e.get("onTeamId"):
+            continue
+        wk = weekly(p)
+        if not wk:
+            continue
+        inj = p.get("injuryStatus")
+        kd[pos].append({"id": p["id"], "name": p["fullName"], "pos": pos, "team": PRO.get(p.get("proTeamId"), ""),
+                        "waivers": e.get("status") == "WAIVERS", "injury": inj if inj not in (None, "ACTIVE", "NORMAL") else None,
+                        "wk": wk, "opp": {w: o for w, o in opp.get(p.get("proTeamId"), {}).items() if int(w) in weeks}})
+    for pos in ("K", "D/ST"):
+        data["freeAgents"] += sorted(kd[pos], key=lambda x: -sum(x["wk"].get(str(w), 0) for w in weeks[:3]))[:15]
+    for t in data["teams"]:
+        for r in t["roster"]:
+            if r["pos"] in ("K", "D/ST") and r["id"] in by_id:
+                pl = by_id[r["id"]]["player"]
+                r["wk"] = weekly(pl)
+                r["opp"] = {w: o for w, o in opp.get(pl.get("proTeamId"), {}).items() if int(w) in weeks}
 
 
 def add_bye_crunch(teams, slots, slot_counts, weeks, latest, byes):

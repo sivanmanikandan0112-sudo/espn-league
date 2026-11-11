@@ -1041,3 +1041,4 @@ body.has-ticker { padding-bottom: 38px; }
 .wv-drop { margin: 4px 14px 10px; }
 .wv-row .badge { white-space: nowrap; display: inline-block; }
 .wv-week { margin: 6px 14px 0; font-size: 13px; color: var(--ink-2); }
+.wv-alert b { color: var(--hot); }

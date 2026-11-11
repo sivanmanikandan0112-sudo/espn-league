@@ -132,7 +132,11 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   roster. Three parts: the pickups that would most improve next week's best lineup (and whom they'd start over), the
   best rest-of-season adds after dropping your least-needed bench player (shown with what that drop costs), and the
   best fill-in for each short-handed week ahead (byes/injuries). "Up next" is the current week until its first
-  game kicks off (`waiverWeeks`), then the week after. Kickers and defenses aren't included yet.
+  game kicks off (`waiverWeeks`), then the week after. **Kickers & defenses** use ESPN's matchup-based weekly projections (from the same
+  player download) and each week's opponent (`opponents` in `build.py`): a warning with the 3 best available when
+  yours is on bye/out next week, a heads-up for byes in the 3 weeks after, and a stream only when a free agent is
+  projected at least +3 (defense) / +2 (kicker) better next week, with what to swap and whether it's a free agent or a
+  waiver claim.
 - **Byes ahead** (Insights): for every week left, projected points each team's best lineup loses vs. full strength to
   byes (and players ESPN expects to miss), with K / D/ST flags when every kicker or defense is on bye
   (`add_bye_crunch` in `build.py`).

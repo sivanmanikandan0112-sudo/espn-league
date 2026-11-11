@@ -2198,8 +2198,46 @@
       ${drop ? `<p class="note wv-drop">Easiest drop: <b>${esc(drop.name)}</b> (${esc(drop.pos)}${drop.injury ? ", " + esc(drop.injury.replace(/_/g, " ").toLowerCase()) : ""}, ${drop.ros.toFixed(0)} ROS): ${costs[0].cost < 0.5 ? "your best lineup wouldn't miss him" : `costs your best lineup ${costs[0].cost.toFixed(1)} pts the rest of the way`}.</p>` : ""}
       ${holes.length ? `<h3 class="wv-h">Short-handed weeks ahead</h3>${holes.map(h => `<p class="wv-week"><b>Week ${h.w}</b> · out: ${esc(h.missing.map(p => `${p.name} (${p.pos})`).join(", "))}</p>` +
         h.picks.map(x => line(x, h.w, `${esc(x.f.pos)} fill-in for week ${h.w} · proj ${proj(x.f, h.w)}`)).join("")).join("")}` : ""}`;
-    return section("Waiver targets", { short: "Pickups that would improve your lineup, by projected points.", full: `Free agents and players on waivers compared with your roster, using the same weekly projections as power value: ESPN's rest-of-season projection, minus byes and expected injury time. <b>+points</b> is how much your best lineup gains (that week, or added up over weeks ${weeks[0]}–${weeks[weeks.length - 1]} for rest of season, after dropping the suggested player). QB/RB/WR/TE only. Updates with every site refresh; claims are made in the ESPN app.` },
-      `<div class="picks wv">${body}</div>`);
+    // kickers and defenses: a warning when yours is out (bye) next week or soon, and a stream only when a free agent
+    // is projected clearly better next week (+3 for a defense, +2 for a kicker: their weeks swing a lot)
+    const KD = [["D/ST", 16, 3, "defense"], ["K", 17, 2, "kicker"]];
+    const when = f => f.waivers ? "on waivers: put in a claim before it clears" : "free agent: add now";
+    const kdLine = (f, w, gainTxt, extra) => `<div class="pick wv-row">${who(f)}<span class="team-mgr">${esc(f.team)}${f.opp && f.opp[w] ? " " + esc(f.opp[w]) : ""} · proj ${proj(f, w)} · ${when(f)}${extra ? " · " + extra : ""}</span></span><span class="pick-v">${gainTxt}</span></div>`;
+    let kdHtml = "";
+    KD.forEach(([pos, , edge, word]) => {
+      const need = (D.settings.slots || []).some(x => x.slot === pos && x.count > 0);
+      if (!need) return;
+      const have = t.roster.filter(p => p.pos === pos);
+      const fas = FA.filter(f => f.pos === pos);
+      if (!fas.length) return;
+      const best = w => fas.slice().sort((a, b) => (b.wk[w] || 0) - (a.wk[w] || 0)).filter(f => (f.wk[w] || 0) > 0);
+      const mineBest = w => have.reduce((m, p) => ((p.wk || {})[w] || 0) > ((m && m.wk[w]) || 0) ? p : m, null);
+      const cur = mineBest(next), curPts = cur ? cur.wk[next] : 0;
+      const label = have.length ? have.map(p => p.name).join(" / ") : `no ${word}`;
+      if (!curPts) {
+        kdHtml += `<p class="wv-week wv-alert"><b>You need a ${word} for week ${next}</b> · ${esc(label)}${have.length ? " " + (have.length === 1 ? "is" : "are") + " out (bye or not playing)" : ""}</p>` +
+          best(next).slice(0, 3).map(f => kdLine(f, next, `<b class="pos">${proj(f, next)}</b>`)).join("");
+      } else {
+        const top = best(next)[0];
+        if (top && top.wk[next] - curPts >= edge) {
+          const swap = have.length > 1 ? `drop ${esc(have.slice().sort((a, b) => ((a.wk || {})[next] || 0) - ((b.wk || {})[next] || 0))[0].name)}` : `swap out ${esc(cur.name)}`;
+          kdHtml += `<p class="wv-week">Stream a ${word} for week ${next}: yours, ${esc(cur.name)}${cur.opp && cur.opp[next] ? " " + esc(cur.opp[next]) : ""}, is projected ${curPts.toFixed(1)}</p>` +
+            kdLine(top, next, `<b class="pos">+${(top.wk[next] - curPts).toFixed(1)}</b>`, swap);
+        }
+      }
+      // the next 3 weeks after that: byes coming up
+      weeks.slice(1, 4).forEach(w => {
+        const m = mineBest(w);
+        if (m && m.wk[w] > 0) return;
+        const pick = best(w)[0];
+        if (!pick) return;
+        kdHtml += `<p class="wv-week"><b>Week ${w}</b> · ${esc(label)} on bye or out: plan a ${word}</p>` + kdLine(pick, w, `<b class="pos">${proj(pick, w)}</b>`);
+      });
+    });
+    const kdBlock = kdHtml ? `<h3 class="wv-h">Kickers & defenses</h3>${kdHtml}` : `<h3 class="wv-h">Kickers & defenses</h3>${nothing(`Your kicker and defense are set for week ${next}; no free agent is projected clearly better (+2 K, +3 D/ST).`)}`;
+
+    return section("Waiver targets", { short: "Pickups that would improve your lineup, by projected points.", full: `Free agents and players on waivers compared with your roster, using the same weekly projections as power value: ESPN's rest-of-season projection, minus byes and expected injury time. <b>+points</b> is how much your best lineup gains (that week, or added up over weeks ${weeks[0]}–${weeks[weeks.length - 1]} for rest of season, after dropping the suggested player). Kickers and defenses use ESPN's matchup projection for each week: you're warned when yours is on bye, and a stream is suggested only when a free agent is projected at least 3 points (defense) or 2 points (kicker) better. Updates with every site refresh; claims are made in the ESPN app.` },
+      `<div class="picks wv">${body}${kdBlock}</div>`);
   }
 
   main.addEventListener("submit", async e => {
