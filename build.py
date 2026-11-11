@@ -451,7 +451,10 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
             if back and r["_sim"]["rosTotal"] <= 0:
                 r["returns"] = back
             sim_players.append({"key": r["id"], "pos": r["pos"], "wk": wk})
-            r["wk"] = {str(w): round(v, 1) for w, v in wk.items()}  # expected points each week left (waiver targets)
+            # expected points each week from the current one on (waiver targets; the site skips the current week
+            # once its first game has kicked off)
+            wk_now, _ = power.availability(r["_sim"], list(range(latest, final_week + 1)), latest, 18, byes.get(r["_sim"]["proTeam"]))
+            r["wk"] = {str(w): round(v, 1) for w, v in wk_now.items()}
         total, credit, starts, groups = power.team_power(sim_players, power_weeks, slots, slot_counts.get(23, 0), fallback)
         t["power"] = round(total)
         for r in t["roster"]:
@@ -473,7 +476,8 @@ def add_free_agents(data, pool, season, latest, per_pos=25):
     pw = data["league"].get("powerWeeks")
     if not pw:
         return
-    weeks = list(range(pw[0], pw[1] + 1))
+    weeks = list(range(latest, pw[1] + 1))
+    data["league"]["waiverWeeks"] = [latest, pw[1]]
     byes = bye_weeks(season)
     by_pos = defaultdict(list)
     for e in pool:

@@ -131,7 +131,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   the top 25 unrostered QB/RB/WR/TE by expected points, projected week by week like power value) compared with your
   roster. Three parts: the pickups that would most improve next week's best lineup (and whom they'd start over), the
   best rest-of-season adds after dropping your least-needed bench player (shown with what that drop costs), and the
-  best fill-in for each short-handed week ahead (byes/injuries). Kickers and defenses aren't included yet.
+  best fill-in for each short-handed week ahead (byes/injuries). "Up next" is the current week until its first
+  game kicks off (`waiverWeeks`), then the week after. Kickers and defenses aren't included yet.
 - **Byes ahead** (Insights): for every week left, projected points each team's best lineup loses vs. full strength to
   byes (and players ESPN expects to miss), with K / D/ST flags when every kicker or defense is on bye
   (`add_bye_crunch` in `build.py`).

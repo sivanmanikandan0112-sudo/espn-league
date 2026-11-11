@@ -2143,9 +2143,13 @@
   // (ESPN's rest-of-season projection spread over the weeks each player is expected to play: byes and injuries out).
   function waiverTargets(t) {
     const FA = D.freeAgents;
-    const pw = L.powerWeeks;
+    const pw = L.waiverWeeks || L.powerWeeks;
     if (!L.isCurrent || L.over || !FA || !FA.length || !pw) return "";
-    const weeks = []; for (let w = pw[0]; w <= pw[1]; w++) weeks.push(String(w));
+    // start with the current week until its first game kicks off, then look ahead from next week
+    const started = (D.nflGames || []).some(g => !g.tbd && g.date && Date.now() >= Date.parse(g.date));
+    const from = pw[0] === L.currentWeek && started ? pw[0] + 1 : pw[0];
+    const weeks = []; for (let w = from; w <= pw[1]; w++) weeks.push(String(w));
+    if (!weeks.length) return "";
     const slots = {}; let flex = 0;
     (D.settings.slots || []).forEach(x => { if (TRADE_POS.includes(x.slot)) slots[x.slot] = x.count; else if (x.slot === "FLEX") flex = x.count; });
     const mine = t.roster.filter(p => TRADE_POS.includes(p.pos)).map(p => ({ id: p.id, name: p.name, pos: p.pos, slot: p.slot, ros: p.ros || 0, injury: p.injury, wk: p.wk || {} }));
@@ -2191,7 +2195,7 @@
       ${ros.length ? ros.map(x => line(x, null, `${x.f.ros.toFixed(0)} ROS pts${x.f.bye ? ` · bye wk ${x.f.bye}` : ""}`)).join("") : nothing("No pickup would add much over your current roster.")}
       ${drop ? `<p class="note wv-drop">Easiest drop: <b>${esc(drop.name)}</b> (${esc(drop.pos)}${drop.injury ? ", " + esc(drop.injury.replace(/_/g, " ").toLowerCase()) : ""}, ${drop.ros.toFixed(0)} ROS): ${costs[0].cost < 0.5 ? "your best lineup wouldn't miss him" : `costs your best lineup ${costs[0].cost.toFixed(1)} pts the rest of the way`}.</p>` : ""}
       ${holes.length ? `<h3 class="wv-h">Short-handed weeks ahead</h3>${holes.map(h => line(h.best, h.w, `wk ${h.w} fill-in for ${esc(h.missing.map(p => p.name).join(", "))} · proj ${proj(h.best.f, h.w)}`)).join("")}` : ""}`;
-    return section("Waiver targets", { short: "Pickups that would improve your lineup, by projected points.", full: `Free agents and players on waivers compared with your roster, using the same weekly projections as power value: ESPN's rest-of-season projection, minus byes and expected injury time. <b>+points</b> is how much your best lineup gains (that week, or added up over weeks ${pw[0]}–${pw[1]} for rest of season, after dropping the suggested player). QB/RB/WR/TE only. Updates with every site refresh; claims are made in the ESPN app.` },
+    return section("Waiver targets", { short: "Pickups that would improve your lineup, by projected points.", full: `Free agents and players on waivers compared with your roster, using the same weekly projections as power value: ESPN's rest-of-season projection, minus byes and expected injury time. <b>+points</b> is how much your best lineup gains (that week, or added up over weeks ${weeks[0]}–${weeks[weeks.length - 1]} for rest of season, after dropping the suggested player). QB/RB/WR/TE only. Updates with every site refresh; claims are made in the ESPN app.` },
       `<div class="picks wv">${body}</div>`);
   }
 
