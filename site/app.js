@@ -2131,11 +2131,68 @@
 
     main.innerHTML = `<div class="section-head me-head"><div class="me-id">${logo(t)}<div><h1>${esc(t.name)}</h1><p class="sub">${esc(t.manager)} · ${L.season} season</p></div></div>${switchBtn}</div>
       ${glance}
-      <div class="me-grid"><div>${week}${watch}${byes}</div><div>${schedule}</div></div>
+      <div class="me-grid"><div>${week}${waiverTargets(t)}${watch}${byes}</div><div>${schedule}</div></div>
       ${IDX.history.badges ? section(`Your badges <a class="wk-link" href="${href("history", {}, "badges")}">all badges ›</a>`, "Earned across every season you've played.", badgeTiles(ME.member)) : ""}
       ${section(`Your record book <a class="wk-link" href="${href("history", { member: ME.member }, "records")}">full record book ›</a>`, "Your bests and worsts across every season you've played. Tap one for the box score.", `<div class="me-recs-box" data-rec-member="${esc(ME.member)}"><div class="empty">Loading…</div></div>`)}
       ${roster}`;
     fillMyRecords(main.querySelector(".me-recs-box"));
+  }
+
+  // ---------------------------------------------------------------- waiver targets (My team)
+  // Free agents / players on waivers compared with your roster, using the same weekly projections as power value
+  // (ESPN's rest-of-season projection spread over the weeks each player is expected to play: byes and injuries out).
+  function waiverTargets(t) {
+    const FA = D.freeAgents;
+    const pw = L.powerWeeks;
+    if (!L.isCurrent || L.over || !FA || !FA.length || !pw) return "";
+    const weeks = []; for (let w = pw[0]; w <= pw[1]; w++) weeks.push(String(w));
+    const slots = {}; let flex = 0;
+    (D.settings.slots || []).forEach(x => { if (TRADE_POS.includes(x.slot)) slots[x.slot] = x.count; else if (x.slot === "FLEX") flex = x.count; });
+    const mine = t.roster.filter(p => TRADE_POS.includes(p.pos)).map(p => ({ id: p.id, name: p.name, pos: p.pos, slot: p.slot, ros: p.ros || 0, injury: p.injury, wk: p.wk || {} }));
+    if (!mine.some(p => Object.keys(p.wk).length)) return "";
+    const lineup = (pl, w) => {
+      const av = pl.filter(p => (p.wk[w] || 0) > 0).sort((a, b) => b.wk[w] - a.wk[w]);
+      const used = new Set(); let pts = 0;
+      for (const [pos, n] of Object.entries(slots)) av.filter(p => p.pos === pos).slice(0, n).forEach(p => { used.add(p.id); pts += p.wk[w]; });
+      av.filter(p => !used.has(p.id) && p.pos !== "QB").slice(0, flex).forEach(p => { used.add(p.id); pts += p.wk[w]; });
+      return { pts, used };
+    };
+    const total = pl => weeks.reduce((n, w) => n + lineup(pl, w).pts, 0);
+    const next = weeks[0];
+    const base = lineup(mine, next), baseTotal = total(mine);
+    // the bench player you'd miss least over the rest of the season (an injured stash with no projection first)
+    const bench = mine.filter(p => !base.used.has(p.id));
+    const costs = bench.map(b => ({ b, cost: baseTotal - total(mine.filter(p => p !== b)) })).sort((x, y) => x.cost - y.cost || x.b.ros - y.b.ros);
+    const drop = costs.length ? costs[0].b : null;
+    const pool = FA.filter(f => TRADE_POS.includes(f.pos));
+    const tag = f => `${f.waivers ? '<span class="badge">Waivers</span>' : '<span class="badge new">Free agent</span>'}${f.injury ? ` <span class="badge cold">${esc(f.injury.replace(/_/g, " ").toLowerCase())}</span>` : ""}`;
+    const who = f => `<span class="slot ${esc(f.pos)}">${esc(f.pos)}</span><span class="pick-name"><b>${esc(f.name)}</b> ${tag(f)}`;
+    const out = (before, after, pl) => { const gone = [...before.used].filter(id => !after.used.has(id)); const p = pl.find(x => x.id === gone[0]); return p ? p.name : null; };
+    // 1. next week
+    const thisWeek = pool.map(f => { const after = lineup(mine.concat(f), next); return { f, gain: after.pts - base.pts, over: out(base, after, mine) }; })
+      .filter(x => x.gain >= 1).sort((a, b) => b.gain - a.gain).slice(0, 4);
+    // 2. rest of season, with the drop
+    const keep = drop ? mine.filter(p => p !== drop) : mine;
+    const ros = pool.map(f => ({ f, gain: total(keep.concat(f)) - baseTotal })).filter(x => x.gain >= 3).sort((a, b) => b.gain - a.gain).slice(0, 4);
+    // 3. short-handed weeks ahead (byes / injuries), the best fill-in for each
+    const full = Math.max(...weeks.map(w => lineup(mine, w).pts));
+    const holes = weeks.slice(1, 6).map(w => {
+      const have = lineup(mine, w), missing = mine.filter(p => base.used.has(p.id) && !(p.wk[w] > 0));
+      const best = pool.map(f => { const after = lineup(mine.concat(f), w); return { f, gain: after.pts - have.pts }; }).sort((a, b) => b.gain - a.gain)[0];
+      return { w, missing, best };
+    }).filter(h => h.missing.length && h.best && h.best.gain >= 2);
+    const line = (x, w, extra) => `<div class="pick wv-row">${who(x.f)}<span class="team-mgr">${esc(x.f.team)} · ${extra}</span></span><span class="pick-v"><b class="pos">+${x.gain.toFixed(1)}</b></span></div>`;
+    const proj = (f, w) => (f.wk[w] || 0).toFixed(1);
+    const nothing = msg => `<p class="muted wv-none">${msg}</p>`;
+    const body = `
+      <h3 class="wv-h">Up next: week ${next}</h3>
+      ${thisWeek.length ? thisWeek.map(x => line(x, next, `proj ${proj(x.f, next)}${x.over ? ` · starts over ${esc(x.over)}` : ""}`)).join("") : nothing("Nobody available would beat your starters this week.")}
+      <h3 class="wv-h">Rest of season</h3>
+      ${ros.length ? ros.map(x => line(x, null, `${x.f.ros.toFixed(0)} ROS pts${x.f.bye ? ` · bye wk ${x.f.bye}` : ""}`)).join("") : nothing("No pickup would add much over your current roster.")}
+      ${drop ? `<p class="note wv-drop">Easiest drop: <b>${esc(drop.name)}</b> (${esc(drop.pos)}${drop.injury ? ", " + esc(drop.injury.replace(/_/g, " ").toLowerCase()) : ""}, ${drop.ros.toFixed(0)} ROS): ${costs[0].cost < 0.5 ? "your best lineup wouldn't miss him" : `costs your best lineup ${costs[0].cost.toFixed(1)} pts the rest of the way`}.</p>` : ""}
+      ${holes.length ? `<h3 class="wv-h">Short-handed weeks ahead</h3>${holes.map(h => line(h.best, h.w, `wk ${h.w} fill-in for ${esc(h.missing.map(p => p.name).join(", "))} · proj ${proj(h.best.f, h.w)}`)).join("")}` : ""}`;
+    return section("Waiver targets", { short: "Pickups that would improve your lineup, by projected points.", full: `Free agents and players on waivers compared with your roster, using the same weekly projections as power value: ESPN's rest-of-season projection, minus byes and expected injury time. <b>+points</b> is how much your best lineup gains (that week, or added up over weeks ${pw[0]}–${pw[1]} for rest of season, after dropping the suggested player). QB/RB/WR/TE only. Updates with every site refresh; claims are made in the ESPN app.` },
+      `<div class="picks wv">${body}</div>`);
   }
 
   main.addEventListener("submit", async e => {

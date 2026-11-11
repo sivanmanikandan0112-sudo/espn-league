@@ -394,6 +394,7 @@ def build_season(season, is_current, names):
     # -- power / position strength
     if not over:
         add_power(data, teams, slot_counts, best_fa, latest, final_week, season)
+        add_free_agents(data, pool, season, latest)
     else:
         add_season_strength(data, teams, regular, slot_counts)
 
@@ -450,6 +451,7 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
             if back and r["_sim"]["rosTotal"] <= 0:
                 r["returns"] = back
             sim_players.append({"key": r["id"], "pos": r["pos"], "wk": wk})
+            r["wk"] = {str(w): round(v, 1) for w, v in wk.items()}  # expected points each week left (waiver targets)
         total, credit, starts, groups = power.team_power(sim_players, power_weeks, slots, slot_counts.get(23, 0), fallback)
         t["power"] = round(total)
         for r in t["roster"]:
@@ -462,6 +464,40 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
     for i, t in enumerate(sorted(teams.values(), key=lambda t: -t["power"])):
         t["powerRank"] = i + 1
     data["league"]["powerWeeks"] = [power_weeks[0], power_weeks[-1]]
+
+
+def add_free_agents(data, pool, season, latest, per_pos=25):
+    """Unrostered players (free agents and players on waivers) with their expected points each week left, the same
+    way roster players are projected for power (ESPN's rest-of-season projection, byes, injuries). My team compares
+    them with the claimed team's lineup to suggest pickups."""
+    pw = data["league"].get("powerWeeks")
+    if not pw:
+        return
+    weeks = list(range(pw[0], pw[1] + 1))
+    byes = bye_weeks(season)
+    by_pos = defaultdict(list)
+    for e in pool:
+        if e.get("onTeamId"):
+            continue
+        p = e["player"]
+        pos = POS.get(p.get("defaultPositionId"))
+        if pos not in POWER_POSITIONS:
+            continue
+        line = stat_line(p, season, 1)
+        sim = {"rosTotal": line.get("appliedTotal") or 0.0, "rosAvg": line.get("appliedAverage") or 0.0,
+               "seasonAvg": stat_line(p, season, 0).get("appliedAverage") or 0.0,
+               "injury": p.get("injuryStatus"), "proTeam": p.get("proTeamId")}
+        wk, back = power.availability(sim, weeks, latest, 18, byes.get(p.get("proTeamId")))
+        if not wk:
+            continue
+        inj = p.get("injuryStatus")
+        by_pos[pos].append({
+            "id": p["id"], "name": p["fullName"], "pos": pos, "team": PRO.get(p.get("proTeamId"), ""),
+            "waivers": e.get("status") == "WAIVERS", "injury": inj if inj not in (None, "ACTIVE", "NORMAL") else None,
+            "ros": round(sim["rosTotal"], 1), "pts": round(stat_line(p, season, 0).get("appliedTotal") or 0.0, 1),
+            "bye": byes.get(p.get("proTeamId")), "wk": {str(w): round(v, 1) for w, v in wk.items()},
+        })
+    data["freeAgents"] = [x for pos in POWER_POSITIONS for x in sorted(by_pos[pos], key=lambda x: -sum(x["wk"].values()))[:per_pos]]
 
 
 def add_bye_crunch(teams, slots, slot_counts, weeks, latest, byes):

@@ -127,6 +127,11 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 - **Watch guide** (Matchups → Watch guide): this week's real NFL games ranked by how much they matter to the league:
   every league starter in the game, weighted by ESPN's projection and by how close his fantasy matchup is (0.35 for a
   lopsided one up to 1.0 for a toss-up), scaled so the biggest game is 100. Kickoffs come from ESPN's NFL schedule.
+- **Waiver targets** (My team, current season): free agents and players on waivers (`add_free_agents` in `build.py`:
+  the top 25 unrostered QB/RB/WR/TE by expected points, projected week by week like power value) compared with your
+  roster. Three parts: the pickups that would most improve next week's best lineup (and whom they'd start over), the
+  best rest-of-season adds after dropping your least-needed bench player (shown with what that drop costs), and the
+  best fill-in for each short-handed week ahead (byes/injuries). Kickers and defenses aren't included yet.
 - **Byes ahead** (Insights): for every week left, projected points each team's best lineup loses vs. full strength to
   byes (and players ESPN expects to miss), with K / D/ST flags when every kicker or defense is on bye
   (`add_bye_crunch` in `build.py`).

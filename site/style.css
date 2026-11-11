@@ -1029,3 +1029,14 @@ body.has-ticker { padding-bottom: 38px; }
   .cmp-tbl thead th:nth-child(2) { width: 30%; }
   .cmp-card .slot { display: none; }
 }
+
+/* Waiver targets (My team) */
+.wv { padding-bottom: 4px; }
+.wv-h { margin: 0; padding: 10px 14px 4px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); border-top: 1px solid var(--line); }
+.wv-h:first-child { border-top: 0; }
+.wv-row { grid-template-columns: 40px minmax(0, 1fr) auto; }
+.wv-row .pick-name .team-mgr { display: block; white-space: normal; }
+.wv-row .badge { margin-left: 4px; }
+.wv-none { margin: 2px 14px 10px; font-size: 13px; }
+.wv-drop { margin: 4px 14px 10px; }
+.wv-row .badge { white-space: nowrap; display: inline-block; }
