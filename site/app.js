@@ -2177,7 +2177,13 @@
       .filter(x => x.gain >= 1).sort((a, b) => b.gain - a.gain).slice(0, 4);
     // 2. rest of season, with the drop
     const keep = drop ? mine.filter(p => p !== drop) : mine;
-    const ros = pool.map(f => ({ f, gain: total(keep.concat(f)) - baseTotal })).filter(x => x.gain >= 3).sort((a, b) => b.gain - a.gain).slice(0, 4);
+    // only players who help in 2+ weeks: a one-week bye fill-in belongs in "short-handed weeks" below
+    const keepWk = Object.fromEntries(weeks.map(w => [w, lineup(keep, w).pts]));
+    const ros = pool.map(f => {
+      const pl = keep.concat(f);
+      const helps = weeks.filter(w => lineup(pl, w).pts - keepWk[w] >= 1).length;
+      return { f, helps, gain: total(pl) - baseTotal };
+    }).filter(x => x.gain >= 3 && x.helps >= 2).sort((a, b) => b.gain - a.gain).slice(0, 4);
     // 3. short-handed weeks ahead (byes / injuries), the best fill-in for each
     const full = Math.max(...weeks.map(w => lineup(mine, w).pts));
     // starters (as of next week) who are out a later week, and the best pickup at each position that's short
@@ -2236,7 +2242,7 @@
     });
     const kdBlock = kdHtml ? `<h3 class="wv-h">Kickers & defenses</h3>${kdHtml}` : `<h3 class="wv-h">Kickers & defenses</h3>${nothing(`Your kicker and defense are set for week ${next}; no free agent is projected clearly better (+2 K, +3 D/ST).`)}`;
 
-    return section("Waiver targets", { short: "Pickups that would improve your lineup, by projected points.", full: `Free agents and players on waivers compared with your roster, using the same weekly projections as power value: ESPN's rest-of-season projection, minus byes and expected injury time. <b>+points</b> is how much your best lineup gains (that week, or added up over weeks ${weeks[0]}–${weeks[weeks.length - 1]} for rest of season, after dropping the suggested player). Kickers and defenses use ESPN's matchup projection for each week: you're warned when yours is on bye, and a stream is suggested only when a free agent is projected at least 3 points (defense) or 2 points (kicker) better. Updates with every site refresh; claims are made in the ESPN app.` },
+    return section("Waiver targets", { short: "Pickups that would improve your lineup, by projected points.", full: `Free agents and players on waivers compared with your roster, using the same weekly projections as power value: ESPN's rest-of-season projection, minus byes and expected injury time. <b>+points</b> is how much your best lineup gains (that week, or added up over weeks ${weeks[0]}–${weeks[weeks.length - 1]} for rest of season, after dropping the suggested player). Rest of season only lists players who'd improve your lineup in at least two weeks; a one-week bye fill-in shows under short-handed weeks instead. Kickers and defenses use ESPN's matchup projection for each week: you're warned when yours is on bye, and a stream is suggested only when a free agent is projected at least 3 points (defense) or 2 points (kicker) better. Updates with every site refresh; claims are made in the ESPN app.` },
       `<div class="picks wv">${body}${kdBlock}</div>`);
   }
 
