@@ -240,7 +240,12 @@ async function triviaQuiz(env, st) {
   if (have) return have;
   const [ix, rec] = await Promise.all(["index.js", "records.js"].map(f => fetch(SITE_DATA(env) + f, { cf: { cacheTtl: 300 } }).then(r => r.text())));
   const I = parseAssigned(ix), R = parseAssigned(rec);
-  const questions = makeQuiz({ ...I.history, seasonsList: I.seasons }, R, st.season, st.week);
+  const asked = new Set();
+  for (let w = 1; w < st.week; w++) {
+    const old = await env.PICKEM.get(`trivia-q:${st.season}:${w}`, "json");
+    if (old) old.questions.forEach(q => asked.add(q.q));
+  }
+  const questions = makeQuiz({ ...I.history, seasonsList: I.seasons }, R, st.season, st.week, 5, asked);
   if (questions.length < 5) throw new Error("Couldn't build this week's trivia.");
   const quiz = { season: st.season, week: st.week, made: new Date().toISOString(), questions };
   await env.PICKEM.put(key, JSON.stringify(quiz));
@@ -259,7 +264,7 @@ async function handleTrivia(req, env, url) {
   const board = (await env.PICKEM.get(`trivia-board:${st.season}`, "json")) || {};
   if (req.method === "GET" && url.pathname === "/trivia") {
     const submitted = Object.keys(board).filter(m => board[m].weeks && board[m].weeks[st.week] != null);
-    return json(env, req, { season: st.season, week: st.week, questions: quiz.questions.map(q => ({ q: q.q, options: q.options })), submitted, board });
+    return json(env, req, { season: st.season, week: st.week, questions: quiz.questions.map(q => ({ q: q.q, options: q.options, level: q.level })), submitted, board });
   }
   if (req.method !== "POST") return json(env, req, { error: "Not found" }, 404);
   let body;

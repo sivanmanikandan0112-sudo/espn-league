@@ -1063,6 +1063,8 @@
     if (r.submitted) { TV.result = r.result; TV.score = r.score; } else { TV.result = null; TV.score = null; }
     TV.msg = r.newPin ? "Welcome! The PIN you entered becomes yours for the season when you submit." : "";
   }
+  const TV_LEVEL = ["", "Easy", "Medium", "Tricky", "Hard", "Expert"];
+  const tvLevel = q => q.level ? `<span class="tv-lvl l${q.level}">${TV_LEVEL[q.level]}</span>` : "";
   function triviaView(head) {
     head = head || (sub => `<div class="section-head"><div><h1>League trivia</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("games", GAMES_TABS, "trivia")}`);
     const T = TV.data;
@@ -1079,7 +1081,7 @@
       { label: "Perfect weeks", num: 1, cell: r => Object.values(r.weeks).filter(x => x === 5).length },
     ], board)) : "";
     if (T.over) { main.innerHTML = head("The season is over. Trivia is back next season.") + leaderboard; return; }
-    const sub = `Week ${T.week}: 5 questions about your league's own history, new every week when the matchup week changes (early Wednesday). You get <b>one try</b>, so no peeking at the History tab.`;
+    const sub = `Week ${T.week}: 5 questions about your league's own history, ${T.questions.some(q => q.level) ? "from easy to expert, " : ""}new every week when the matchup week changes (early Wednesday). You get <b>one try</b>, so no peeking at the History tab.`;
     const who = `<div class="panel pk-who">
         <label class="field">Who are you? <select id="tv-member"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
         <label class="field">PIN <input id="tv-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="4 digits" value="${esc(PK.pin)}"></label>
@@ -1090,13 +1092,13 @@
     if (TV.ready && TV.result) {
       quiz = `<div class="tv-score"><b>You got ${TV.score} of 5</b>${TV.score === 5 ? " · perfect week!" : ""}</div><div class="tv-qs">${T.questions.map((q, i) => {
         const r = TV.result[i], right = r.yours === r.answer;
-        return `<div class="tv-q ${right ? "right" : "wrong"}"><div class="tv-q-h"><span class="tv-n">${i + 1}</span><span>${esc(q.q)}</span><span class="tv-mark">${right ? "✓" : "✗"}</span></div>
+        return `<div class="tv-q ${right ? "right" : "wrong"}"><div class="tv-q-h"><span class="tv-n">${i + 1}</span><span>${tvLevel(q)}${esc(q.q)}</span><span class="tv-mark">${right ? "✓" : "✗"}</span></div>
           <div class="tv-opts">${q.options.map((o, j) => `<span class="tv-opt${j === r.answer ? " answer" : ""}${j === r.yours && !right ? " picked" : ""}">${esc(o)}</span>`).join("")}</div>
           <p class="note tv-why">${esc(r.why)}</p></div>`;
       }).join("")}</div>`;
     } else if (TV.ready) {
       const n = TV.sel.filter(x => x != null).length;
-      quiz = `<div class="tv-qs">${T.questions.map((q, i) => `<div class="tv-q" role="group" aria-label="Question ${i + 1}"><div class="tv-q-h"><span class="tv-n">${i + 1}</span><span>${esc(q.q)}</span></div>
+      quiz = `<div class="tv-qs">${T.questions.map((q, i) => `<div class="tv-q" role="group" aria-label="Question ${i + 1}"><div class="tv-q-h"><span class="tv-n">${i + 1}</span><span>${tvLevel(q)}${esc(q.q)}</span></div>
           <div class="tv-opts">${q.options.map((o, j) => `<button type="button" class="tv-opt${TV.sel[i] === j ? " on" : ""}" data-tv-q="${i}" data-tv-o="${j}" aria-pressed="${TV.sel[i] === j}">${esc(o)}</button>`).join("")}</div></div>`).join("")}</div>
         <div class="pk-save"><button type="button" class="cta" data-tv="submit"${n < T.questions.length ? " disabled" : ""}>Submit answers (${n} of ${T.questions.length})</button></div>`;
     }
@@ -2685,6 +2687,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-13", [
+      ["Trivia from easy to expert", "Games → League trivia", "Starting week 11, the 5 questions go in order of difficulty, Easy to Expert, and never repeat a question from earlier in the season.", "#/games/trivia"],
       ["Waiver wire challenge", "Games → Pick 4", "Pick 4 with only players who are free agents in our league: a weekly hunt for the pickups worth adding.", "#/games/pick4?view=fa"],
       ["Pick 4", "Games → Pick 4", "A weekly side game: a QB, RB, WR and TE from any NFL team under a salary cap, scored with this week's real points. Each spot locks at its player's kickoff.", "#/games/pick4"],
       ["Insights regrouped", "Insights", "14 sub-tabs became 6 pages: Playoff race (with Hot & cold), Luck (with Close games and Vs. projection), Schedule (with Byes ahead), Lineups, Draft (grades or the hindsight redraft) and What ifs (Rules lab and Schedule swap). Player history moved to History. Old links still work.", "#/insights"],

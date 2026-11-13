@@ -10,7 +10,8 @@ function rng(seed) {
 const pts = n => Number(n).toFixed(2).replace(/\.?0+$/, "");
 const wk = r => `week ${r.week}${r.playoff ? " (playoffs)" : ""} of ${r.season}`;
 
-export function makeQuiz(H, R, season, week, count = 5) {
+export function makeQuiz(H, R, season, week, count = 5, asked = new Set()) {
+  // asked: questions from earlier weeks this season, never repeated
   const rand = rng(season * 1000 + week * 7 + 13);
   const pick = a => a[Math.floor(rand() * a.length)];
   const shuffle = a => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
@@ -23,7 +24,7 @@ export function makeQuiz(H, R, season, week, count = 5) {
     const pool = shuffle((yr ? inSeason(yr) : members.map(m => m.id)).filter(id => id !== answerId && !exclude.includes(id)));
     if (pool.length < 3) return null;
     const opts = shuffle([answerId, ...pool.slice(0, 3)]);
-    return { q, options: opts.map(name), answer: opts.indexOf(answerId), why };
+    return { q, options: opts.map(name), answer: opts.indexOf(answerId), why, yr };
   };
   const recs = key => Object.entries(R || {}).flatMap(([id, r]) => (r[key] || []).map(x => ({ id, ...x })));
 
@@ -35,8 +36,10 @@ export function makeQuiz(H, R, season, week, count = 5) {
         `${m.name} ran “${s.team}” in ${s.season} and went ${s.w}–${s.l}${s.t ? "–" + s.t : ""}.`);
     },
     highScore() {
-      const r = pick(recs("highScores"));
-      return r && who(`Who scored ${pts(r.pts)} points in ${wk(r)}?`, r.id, r.season, `${name(r.id)} (${r.team}) put up ${pts(r.pts)} that week.`);
+      const all = recs("highScores"), r = pick(all);
+      if (r) r.top = r.pts >= Math.max(...all.map(x => x.pts)); // the all-time high is the one people remember
+      const q = r && who(`Who scored ${pts(r.pts)} points in ${wk(r)}?`, r.id, r.season, `${name(r.id)} (${r.team}) put up ${pts(r.pts)} that week.`);
+      return q && { ...q, top: r.top };
     },
     lowScore() {
       const r = pick(recs("lowScores"));
@@ -92,20 +95,39 @@ export function makeQuiz(H, R, season, week, count = 5) {
       if (wrong.length < 3) return null;
       const opts = shuffle([right, ...wrong]);
       return { q: `What is ${name(a)}'s all-time record against ${name(b)}?`, options: opts, answer: opts.indexOf(right),
-        why: `${name(a)} is ${right} against ${name(b)}, scoring ${pts(v[3])} to ${pts(v[4])}.` };
+        why: `${name(a)} is ${right} against ${name(b)}, scoring ${pts(v[3])} to ${pts(v[4])}.`, sweep: !v[0] || !v[1] };
     },
   };
 
-  const out = [], seenQ = new Set();
-  const order = shuffle(Object.keys(T));
-  // one of each kind first, then any kind again if some came up empty
-  for (let pass = 0; pass < 3 && out.length < count; pass++) {
-    for (const k of order) {
-      if (out.length >= count) break;
+  // difficulty, 1 (easy) to 5 (expert): how memorable the kind of fact is, plus how long ago it happened
+  const BASE = { champion: 1, teamName: 1.5, mostPoints: 2.5, highScore: 2.5, blowout: 3, playerGame: 3, lowScore: 3.5,
+    streak: 4, benchGame: 4.2, headToHead: 4.5 };
+  const difficulty = c => {
+    const age = c.yr ? Math.max(0, season - c.yr) : 0;
+    let d = BASE[c.kind] + (c.kind === "champion" ? 0.3 : 0.5) * age;
+    if (c.kind === "teamName" && age === 0) d = 1; // this season's names are on every page
+    if (c.top) d -= 0.75;
+    if (c.sweep) d -= 0.75; // a one-sided rivalry (6-0) is easier to remember than 2-1
+    return Math.max(1, Math.min(5.5, d));
+  };
+  // a big pool of candidates, then one per level 1..5 (closest to it, different kinds where possible), easiest first
+  const pool = [], seenQ = new Set();
+  for (let pass = 0; pass < 8; pass++) {
+    for (const k of Object.keys(T)) {
       let q = null;
       try { q = T[k](); } catch (_) { q = null; }
-      if (q && !seenQ.has(q.q)) { seenQ.add(q.q); out.push({ kind: k, ...q }); }
+      if (q && !seenQ.has(q.q) && !asked.has(q.q)) { seenQ.add(q.q); const c = { kind: k, ...q }; c.d = difficulty(c); pool.push(c); }
     }
   }
-  return out;
+  const out = [], kinds = new Set();
+  for (let level = 1; level <= count; level++) {
+    const left = pool.filter(c => !out.includes(c));
+    if (!left.length) break;
+    const score = c => Math.abs(c.d - level) + (kinds.has(c.kind) ? 1 : 0) + rand() * 0.6; // a little randomness so the same kinds don't take the same level every week
+    const best = left.reduce((a, b) => (score(b) < score(a) ? b : a));
+    kinds.add(best.kind);
+    out.push(best);
+  }
+  out.sort((a, b) => a.d - b.d);
+  return out.map((c, i) => ({ kind: c.kind, q: c.q, options: c.options, answer: c.answer, why: c.why, level: i + 1, d: Math.round(c.d * 10) / 10 }));
 }

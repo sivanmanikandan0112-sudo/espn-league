@@ -1151,3 +1151,10 @@ button.tv-opt:hover { border-color: var(--ink-2); }
   .p3-row { grid-template-columns: minmax(0, 1fr) auto 56px; }
   .p3-rp { display: none; }
 }
+.tv-lvl { display: inline-block; margin-right: 8px; padding: 1px 7px; border-radius: 6px; font-size: 10px; font-weight: 800; letter-spacing: .05em;
+  text-transform: uppercase; vertical-align: 2px; background: var(--surface-2); color: var(--ink-2); }
+.tv-lvl.l1 { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); color: var(--accent); }
+.tv-lvl.l2 { background: color-mix(in srgb, var(--qb) 18%, var(--surface)); color: var(--qb); }
+.tv-lvl.l3 { background: color-mix(in srgb, var(--te) 18%, var(--surface)); color: var(--te); }
+.tv-lvl.l4 { background: color-mix(in srgb, var(--wr) 20%, var(--surface)); color: var(--wr); }
+.tv-lvl.l5 { background: color-mix(in srgb, var(--hot) 20%, var(--surface)); color: var(--hot); }

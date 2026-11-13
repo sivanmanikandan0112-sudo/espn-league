@@ -233,7 +233,9 @@ day has been seen on that device (`lhq:wn-seen`).
 (`#/games/trivia`). Trivia is 5 multiple-choice questions a week about the league's own history (team names, record
 scores, best player and bench games, blowouts, champions, season points leaders, win streaks, head-to-head records).
 The worker builds them from the site's public `data/index.js` and `data/records.js` (`worker/src/trivia.js`, seeded by
-season + week), freezes them in KV as `trivia-q:<season>:<week>` on the first request, and only returns the answers
+season + week), one per difficulty level from Easy to Expert in order: each candidate is rated by how memorable its kind
+of fact is (`BASE`, from this season's team names up to exact head-to-head records) plus half a level per season ago,
+and questions already asked earlier in the season are never repeated, freezes them in KV as `trivia-q:<season>:<week>` on the first request, and only returns the answers
 after a member submits. One try per week, same name + PIN as pick'em; the season leaderboard is one KV value,
 `trivia-board:<season>`. A new quiz starts when ESPN moves to the next matchup week.
 
