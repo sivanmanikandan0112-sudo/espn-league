@@ -250,6 +250,11 @@ his replacement haven't kicked off; other members' players stay hidden until the
 value per week (`p3-entries:...`); finished weeks are scored once into `p3-season:<season>` (ties go to the cheaper
 lineup). Change the price/cap rules with `P3_PER_PT`, `P3_MIN_PROJ` and `P3_CAP_SHARE` in `worker/src/index.js`.
 
+**Waiver wire challenge** (the second view on the same page, `#/games/pick4?view=fa`, API `?mode=fa` / `"mode": "fa"`):
+the same game, but the slate is only players who were unrostered in this league (free agents or on waivers) when the
+week's slate opened, projected 3+. Same $400/point prices; the cap is 80% of the priciest free-agent QB + RB + WR + TE.
+Its own KV keys (`p3fa-slate`, `p3fa-entries`, `p3fa-season`) and leaderboard (`P3_MODES` in the worker).
+
 ## Weekly pick'em
 
 Games → Pick'em. Picks for a week open when ESPN moves on to it (early Wednesday) and lock at that week's first

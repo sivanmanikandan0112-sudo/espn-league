@@ -1151,22 +1151,34 @@
   // scoring. Prices are a flat $ per ESPN-projected point, frozen when the week opens. Each spot locks at its own
   // player's kickoff; until then it can be swapped for anyone who hasn't played yet. The worker enforces all of it.
   const P3_SLOTS = ["QB", "RB", "WR", "TE"];
-  const P3 = { data: null, at: 0, sel: {}, saved: {}, ready: false, auto: false, msg: "", err: false, pos: "QB", q: "" };
+  // two versions on one page, switched like Draft grades / Hindsight redraft: "all" (any NFL player) and "fa"
+  // (waiver wire challenge: only players who were unrostered in this league when the week opened)
+  const P3 = { mode: "all", data: null, at: 0, sel: {}, saved: {}, ready: false, auto: false, msg: "", err: false, pos: "QB", q: "" };
+  const p3Path = path => path + (P3.mode === "fa" && path === "/pick3" ? "?mode=fa" : "");
+  const p3Head = () => {
+    const fa = P3.mode === "fa";
+    const sw = `<nav class="pg-by ins-switch" aria-label="Game">${[["all", "Pick 4"], ["fa", "Waiver wire challenge"]].map(([k, label]) =>
+      `<a href="${href("games", k === "fa" ? { view: "fa" } : {}, "pick4")}" class="${k === P3.mode ? "active" : ""}"${k === P3.mode ? ' aria-current="true"' : ""}>${label}</a>`).join("")}</nav>`;
+    return `<div class="section-head"><div><h1>${fa ? "Waiver wire challenge" : "Pick 4"}</h1></div></div>${subnav("games", GAMES_TABS, "pick4")}${sw}`;
+  };
   const money = n => "$" + Math.round(n).toLocaleString();
   async function renderPick3() {
-    const head = sub => `<div class="section-head"><div><h1>Pick 4</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("games", GAMES_TABS, "pick4")}`;
+    const mode = state.params.get("view") === "fa" ? "fa" : "all";
+    if (mode !== P3.mode) Object.assign(P3, { mode, data: null, at: 0, sel: {}, saved: {}, ready: false, auto: false, msg: "", err: false, pos: "QB", q: "" });
+    const head = sub => p3Head() + (sub ? `<p class="sub">${sub}</p>` : "");
     if (state.season !== IDX.current) { main.innerHTML = head("") + `<div class="empty">Pick 4 runs in the current season. <a href="#/games/pick4">Go to this week's Pick 4</a></div>`; return; }
     if (!LIVE_API_BASE()) { main.innerHTML = head("") + '<div class="empty">Pick 4 needs the live worker, which isn\'t set up.</div>'; return; }
     if (!P3.data || Date.now() - P3.at > 60000) {
       if (!P3.data) main.innerHTML = head("") + '<div class="empty">Loading this week\'s players…</div>';
-      const d = await pkApi("/pick3").catch(() => ({ error: "Couldn't reach the server. Try again." }));
+      const d = await pkApi(p3Path("/pick3")).catch(() => ({ error: "Couldn't reach the server. Try again." }));
+      if (d.mode && d.mode !== P3.mode) return; // switched while loading
       if (P3.data && d.week !== P3.data.week) { P3.sel = {}; P3.saved = {}; P3.ready = false; P3.auto = false; }
       P3.data = d; P3.at = Date.now();
       if (state.tab !== "games" || state.sub !== "pick4") return;
     }
     if (!P3.ready && !P3.auto && PK.member && PK.pin && P3.data && !P3.data.error) {
       P3.auto = true;
-      const r = await pkApi("/pick3/mine", { member: PK.member, pin: PK.pin }).catch(() => ({ error: "x" }));
+      const r = await pkApi("/pick3/mine", { member: PK.member, pin: PK.pin, mode: P3.mode }).catch(() => ({ error: "x" }));
       if (!r.error) p3Load(r);
       if (state.tab !== "games" || state.sub !== "pick4") return;
     }
@@ -1180,7 +1192,7 @@
     P3.msg = r.newPin ? "Welcome! The PIN you entered becomes yours for the season when you save." : "";
   }
   function pick3View() {
-    const head = sub => `<div class="section-head"><div><h1>Pick 4</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("games", GAMES_TABS, "pick4")}`;
+    const head = sub => p3Head() + (sub ? `<p class="sub">${sub}</p>` : "");
     const T = P3.data;
     if (!T || T.error) { main.innerHTML = head("") + `<div class="empty">${esc((T && T.error) || "Couldn't load Pick 4.")} <button type="button" class="linkbtn" data-p3="reload">Try again</button></div>`; return; }
     const members = pkMembers();
@@ -1200,7 +1212,7 @@
       { label: "Weeks played", num: 1, cell: r => r.weeks },
       { label: "Best week", num: 1, cell: r => r.best.toFixed(1) },
     ], leaders)) : "";
-    if (T.over) { main.innerHTML = head("The season is over. Pick 4 is back next season.") + leaderboard; return; }
+    if (T.over) { main.innerHTML = head("The season is over. Back next season.") + leaderboard; return; }
 
     const now = Date.now();
     const byId = Object.fromEntries(T.players.map(p => [p.id, p]));
@@ -1209,7 +1221,9 @@
     const lockedSlot = k => P3.saved[k] && played(byId[P3.saved[k].id]);
     const spent = P3_SLOTS.reduce((n, k) => n + (P3.sel[k] ? byId[P3.sel[k]].sal : 0), 0);
     const left = T.cap - spent;
-    const intro = expl(`Pick a QB, RB, WR and TE for ${money(T.cap)} or less. Score = their real points this week.`,
+    const intro = P3.mode === "fa" ? expl(`Only players who were free agents in our league this week. Pick a QB, RB, WR and TE for ${money(T.cap)} or less.`,
+      `The same game as Pick 4, but the only players allowed are the ${T.players.length} who were free agents or on waivers in our league when this week opened (${esc(new Date(T.made).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}), projected for 3+ points. Prices use the same ${money(T.perPt)} per projected point at every position, and the cap is 80% of the priciest free-agent QB + RB + WR + TE. Your score is their real points this week under our scoring; each spot locks at its player's kickoff. Whoever wins found the free agents worth adding: see Waiver targets on My team to actually claim one. Ties go to the cheaper lineup.`)
+      : expl(`Pick a QB, RB, WR and TE for ${money(T.cap)} or less. Score = their real points this week.`,
       `This week's ${T.players.length} players are priced at ${money(T.perPt)} per point ESPN projects for them this week (under our scoring), the same rate at every position, and prices are set once when the week opens. Pick a QB, RB, WR and TE from any NFL team for ${money(T.cap)} or less; your score is their real points this week under our scoring. Each spot locks when that player's game kicks off; until then you can swap in anyone who hasn't played yet, right up to the last game. Ties go to the cheaper lineup.`);
     const who = `<div class="panel pk-who">
         <label class="field">Who are you? <select id="p3-member"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
@@ -1273,7 +1287,7 @@
     const remember = document.getElementById("p3-remember").checked;
     if (!member) { P3.msg = "Choose your name first."; P3.err = true; return pick3View(); }
     if (!/^\d{4}$/.test(pin)) { P3.msg = "Enter a 4-digit PIN."; P3.err = true; return pick3View(); }
-    const r = await pkApi("/pick3/mine", { member, pin });
+    const r = await pkApi("/pick3/mine", { member, pin, mode: P3.mode });
     if (r.error) { P3.msg = r.error; P3.err = true; P3.ready = false; return pick3View(); }
     if (member !== PK.member) { PK.ready = false; PK.sel = {}; TV.ready = false; TV.result = null; TV.sel = []; TV.auto = false; }
     PK.member = member; PK.pin = pin;
@@ -1285,10 +1299,10 @@
   async function p3Save() {
     const btn = main.querySelector('[data-p3="save"]');
     if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
-    const r = await pkApi("/pick3/save", { member: PK.member, pin: PK.pin, picks: P3.sel });
+    const r = await pkApi("/pick3/save", { member: PK.member, pin: PK.pin, picks: P3.sel, mode: P3.mode });
     if (r.error) { P3.msg = r.error; P3.err = true; return pick3View(); }
     P3.saved = r.picks; P3.msg = `Saved: ${money(r.salary)} of ${money(P3.data.cap)}.`; P3.err = false;
-    P3.data = await pkApi("/pick3"); P3.at = Date.now();
+    P3.data = await pkApi(p3Path("/pick3")); P3.at = Date.now();
     pick3View();
   }
   main.addEventListener("click", e => {
@@ -2671,6 +2685,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-13", [
+      ["Waiver wire challenge", "Games → Pick 4", "Pick 4 with only players who are free agents in our league: a weekly hunt for the pickups worth adding.", "#/games/pick4?view=fa"],
       ["Pick 4", "Games → Pick 4", "A weekly side game: a QB, RB, WR and TE from any NFL team under a salary cap, scored with this week's real points. Each spot locks at its player's kickoff.", "#/games/pick4"],
       ["Insights regrouped", "Insights", "14 sub-tabs became 6 pages: Playoff race (with Hot & cold), Luck (with Close games and Vs. projection), Schedule (with Byes ahead), Lineups, Draft (grades or the hindsight redraft) and What ifs (Rules lab and Schedule swap). Player history moved to History. Old links still work.", "#/insights"],
       ["What's new", "this page", "Every feature added to the site, by day. A dot on the header link means something's new since your last look.", "#/whatsnew"],
