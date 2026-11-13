@@ -496,6 +496,7 @@ def add_free_agents(data, pool, season, latest, per_pos=25):
     pw = data["league"].get("powerWeeks")
     if not pw:
         return
+    pool = [e for e in pool if e.get("player")]  # ESPN occasionally returns an entry with no player
     weeks = list(range(latest, pw[1] + 1))
     data["league"]["waiverWeeks"] = [latest, pw[1]]
     byes = bye_weeks(season)
