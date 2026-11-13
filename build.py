@@ -364,6 +364,12 @@ def build_season(season, is_current, names):
                     if e["lineupSlotId"] in (20, 21):
                         continue
                     projected += week_proj[e["playerId"]]
+                # autopilot: the lineup ESPN's projections would have started from the same roster (IR excluded),
+                # scored with what those players actually did
+                auto = None
+                if any(week_proj.get(r["id"]) for r in lineup):
+                    pool = [r for r in lineup if r["slot"] != "IR"]
+                    auto = round(sum(r["pts"] or 0 for r in stats.best_lineup(pool, slot_counts, lambda r: week_proj.get(r["id"], 0.0))), 2)
                 if not over and w == current_week:
                     for r in lineup:
                         r["proj"] = round(week_proj.get(r["id"], 0.0), 1)
@@ -375,7 +381,7 @@ def build_season(season, is_current, names):
                 for r in lineup:
                     names_seen[r["id"]] = r
                 g["sides"].append({
-                    "team": s["teamId"], "pts": round(pts or 0, 2), "projected": round(projected, 2),
+                    "team": s["teamId"], "pts": round(pts or 0, 2), "projected": round(projected, 2), "auto": auto,
                     "proj": round(s.get("totalProjectedPointsLive") or 0, 2) if live else None,
                     "winProb": s.get("winProbability") if live else None,
                     "lineup": lineup,
@@ -427,9 +433,11 @@ def build_season(season, is_current, names):
     data["scheduleSwap"] = stats.schedule_swap(data)
     form = stats.hot_and_cold(data)
     vsproj = stats.vs_projection(data)
+    auto = stats.autopilot(data)
     for tid, t in teams.items():
         t["form"] = form.get(tid)
         t["vsProj"] = vsproj.get(tid)
+        t["autopilot"] = auto.get(tid)
     add_draft(data, season, actual, slot_counts)
     data["rulesLab"] = stats.rules_lab(data, data["_stats"], slot_counts)
     if is_current and not over:

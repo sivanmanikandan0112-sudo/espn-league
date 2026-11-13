@@ -45,7 +45,9 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
     *Schedule swap* (every team's record on every other team's schedule, best and worst),
     *Hot & cold* (last 3 weeks vs. season average, adjusted for the league-wide swing),
     *Vs. projection* (points scored vs. ESPN's pre-game projection for the lineup started),
-    *Efficiency* (points started vs. best lineup).
+    *Efficiency* (points started vs. best lineup), plus *You vs. autopilot*: each team's real lineups vs. the lineup
+    ESPN's pre-game projections would have started from the same roster (IR excluded), with games those calls swung
+    (`stats.autopilot`, from each side's `auto` score built in `build_season`).
   - *Rules lab*: every team's record this season (completed regular-season weeks, same lineups, each player's real
     stats rescored from the stat lines) under half-PPR, full PPR and standard ESPN scoring, with an extra weekly
     win/loss against the league median, or as best ball (best possible lineup counts). Plus what the league's own
@@ -100,7 +102,9 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 - **My team** (`#/myteam`): claim your team once with your pick'em name + PIN (checked by the worker's
   `/pickem/claim`; remembered on the device). The page shows your matchup and win chance, standing/power/odds/luck/
   lineup/draft tiles, your NFL games to watch, byes ahead, full schedule (results, then remaining opponents) and roster
-  with ROS ranks. Your team is also highlighted on Standings, Matchups (your game first), Insights tables and the
+  with ROS ranks, and **Player news**: ESPN's fantasy news blurbs (Rotowire) for your rostered players, fetched
+  in the browser from `site.api.espn.com/apis/fantasy/v2/games/ffl/news/players` (last 14 days, 3 per player, "New"
+  since your previous visit on that device). Your team is also highlighted on Standings, Matchups (your game first), Insights tables and the
   watch guide. Works in past seasons too (member ids are ESPN accounts). On phones Settings moves to a gear in the header.
 - **This week in league history** (Weekly matchups): a swipeable strip of the same week's notable moments from the
   other seasons (top/low score, closest game, blowout, best player game), with all-time ranks; each card opens that
@@ -213,9 +217,19 @@ npx wrangler secret put GITHUB_TOKEN   # optional: fine-grained token, this repo
 Then put the Worker's URL in `site/config.js` (`liveApi`). When the ESPN cookies expire, re-run the two
 `sh worker/set-secrets.sh` (and `gh secret set -f .env` for the GitHub build).
 
+## Games tab
+
+`#/games`: Pick'em (moved from Matchups; old `#/matchups/pickem` links redirect) and **League trivia**
+(`#/games/trivia`). Trivia is 5 multiple-choice questions a week about the league's own history (team names, record
+scores, best player and bench games, blowouts, champions, season points leaders, win streaks, head-to-head records).
+The worker builds them from the site's public `data/index.js` and `data/records.js` (`worker/src/trivia.js`, seeded by
+season + week), freezes them in KV as `trivia-q:<season>:<week>` on the first request, and only returns the answers
+after a member submits. One try per week, same name + PIN as pick'em; the season leaderboard is one KV value,
+`trivia-board:<season>`. A new quiz starts when ESPN moves to the next matchup week.
+
 ## Weekly pick'em
 
-Matchups → Pick'em. Picks for a week open when ESPN moves on to it (early Wednesday) and lock at that week's first
+Games → Pick'em. Picks for a week open when ESPN moves on to it (early Wednesday) and lock at that week's first
 NFL kickoff; the worker enforces this and hides everyone's picks until the lock. Each member claims their name with a
 4-digit PIN the first time they pick (stored hashed in the worker's `PICKEM` KV namespace). One point per correct
 pick; the leaderboard and weekly winners count games once they're final.

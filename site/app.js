@@ -97,7 +97,7 @@
     const hash = location.hash.replace(/^#/, "") || "/";
     const [path, qs] = hash.split("?");
     const params = new URLSearchParams(qs || "");
-    const tab = ["myteam", "matchups", "insights", "trades", "history", "settings"].find(t => path.startsWith("/" + t)) || "standings";
+    const tab = ["myteam", "matchups", "games", "insights", "trades", "history", "settings"].find(t => path.startsWith("/" + t)) || "standings";
     const season = Number(params.get("season")) || IDX.current;
     state.tab = tab;
     state.sub = path.split("/")[2] || "";
@@ -123,6 +123,7 @@
     renderChrome();
     renderTicker();
     if (tab === "matchups") renderMatchups();
+    else if (tab === "games") renderGames();
     else if (tab === "insights") renderInsights();
     else if (tab === "trades") renderTrades();
     else if (tab === "history") renderHistory();
@@ -540,7 +541,7 @@
     if (sp) pkApi("/pickem").then(d => {
       if (d && d.open && document.body.contains(sp)) {
         const lock = new Date(d.lockAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-        sp.innerHTML = `Week ${d.week} pick'em is open until ${esc(lock)}. <a class="wk-link" href="${href("matchups", {}, "pickem")}">Make your picks</a>`;
+        sp.innerHTML = `Week ${d.week} pick'em is open until ${esc(lock)}. <a class="wk-link" href="${href("games")}">Make your picks</a>`;
         sp.hidden = false;
       } else if (document.body.contains(sp)) {
         const card = sp.closest(".since"); sp.remove();
@@ -578,7 +579,13 @@
     return `<section class="recap"><div class="section-head"><h2>Week ${w} recap</h2><button type="button" class="share-btn" data-share="recap" data-week="${w}">${SHARE_ICON}Share</button></div><div class="recap-grid">${items.join("")}</div></section>`;
   }
 
-  const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"], ["pickem", "Pick'em"]];
+  const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"]];
+  // Games: pick'em and league trivia (name + PIN), separate from the stats tabs
+  const GAMES_TABS = [["", "Pick'em"], ["trivia", "League trivia"]];
+  function renderGames() {
+    if (state.sub === "trivia") return renderTrivia();
+    return renderPickem();
+  }
 
   // Big plays from the live worker (TDs, field goals, turnovers, defensive plays, big gains), newest first.
   function feedFor(week, gameId) {
@@ -751,7 +758,7 @@
 
   function renderMatchups() {
     if (state.sub === "bracket") return renderBracket();
-    if (state.sub === "pickem") return renderPickem();
+    if (state.sub === "pickem") { location.replace("#/games"); return; } // old link: pick'em moved to Games
     if (state.sub === "watch") return renderWatch();
     if (state.sub === "plays") return renderPlays();
     const weeks = D.weeks.map(x => x.week);
@@ -907,9 +914,9 @@
   }
 
   async function renderPickem() {
-    const head = (title, sub) => `<div class="section-head"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("matchups", MATCHUP_TABS, "pickem")}`;
+    const head = (title, sub) => `<div class="section-head"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("games", GAMES_TABS, "")}`;
     if (state.season !== IDX.current) {
-      main.innerHTML = head("Pick'em", "") + `<div class="empty">Pick'em started in ${IDX.current}. <a href="#/matchups/pickem">Go to this season's pick'em</a></div>`;
+      main.innerHTML = head("Pick'em", "") + `<div class="empty">Pick'em started in ${IDX.current}. <a href="#/games">Go to this season's pick'em</a></div>`;
       return;
     }
     if (!LIVE_API_BASE()) { main.innerHTML = head("Pick'em", "") + '<div class="empty">Pick\'em needs the live worker, which isn\'t set up.</div>'; return; }
@@ -917,14 +924,14 @@
       if (!PK.data) main.innerHTML = head("Pick'em", "") + '<div class="empty">Loading pick\'em…</div>';
       PK.data = await pkApi("/pickem");
       PK.at = Date.now();
-      if (state.tab !== "matchups" || state.sub !== "pickem") return;
+      if (state.tab !== "games" || state.sub !== "") return;
     }
     pickemView();
   }
 
   function pickemView() {
     const P = PK.data;
-    const head = (title, sub) => `<div class="section-head"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("matchups", MATCHUP_TABS, "pickem")}`;
+    const head = (title, sub) => `<div class="section-head"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("games", GAMES_TABS, "")}`;
     if (!P || P.error) { main.innerHTML = head("Pick'em", "") + `<div class="empty">${esc((P && P.error) || "Couldn't load pick'em.")} <button type="button" class="linkbtn" data-pk="reload">Try again</button></div>`; return; }
     const cur = window.LEAGUE_DATA[IDX.current];
     const tb = id => (cur.teams.find(t => t.id === id) || { name: "Team " + id, logo: "", manager: "" });
@@ -1024,6 +1031,118 @@
     main.innerHTML = body;
   }
 
+  // ---------------------------------------------------------------- league trivia (Games)
+  // 5 multiple-choice questions a week about the league's own history, from the live worker. One try each week,
+  // with the same name + PIN as pick'em; answers come back only after you submit.
+  const TV = { data: null, at: 0, sel: [], result: null, score: null, ready: false, msg: "", err: false, auto: false };
+  async function renderTrivia() {
+    const head = sub => `<div class="section-head"><div><h1>League trivia</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("games", GAMES_TABS, "trivia")}`;
+    if (state.season !== IDX.current) { main.innerHTML = head("") + `<div class="empty">Trivia runs in the current season. <a href="#/games/trivia">Go to this week's trivia</a></div>`; return; }
+    if (!LIVE_API_BASE()) { main.innerHTML = head("") + '<div class="empty">Trivia needs the live worker, which isn\'t set up.</div>'; return; }
+    if (!TV.data || Date.now() - TV.at > 60000) {
+      if (!TV.data) main.innerHTML = head("") + '<div class="empty">Loading this week\'s trivia…</div>';
+      const d = await pkApi("/trivia");
+      if (TV.data && d.week !== TV.data.week) { TV.sel = []; TV.result = null; TV.score = null; } // a new week's quiz
+      TV.data = d; TV.at = Date.now();
+      if (state.tab !== "games" || state.sub !== "trivia") return;
+    }
+    // remembered name + PIN: load your answers without asking
+    if (!TV.ready && !TV.auto && PK.member && PK.pin) {
+      TV.auto = true;
+      const r = await pkApi("/trivia/mine", { member: PK.member, pin: PK.pin });
+      if (!r.error) tvLoad(r);
+      if (state.tab !== "games" || state.sub !== "trivia") return;
+    }
+    triviaView(head);
+  }
+  function tvLoad(r) {
+    TV.ready = true; TV.err = false;
+    if (r.submitted) { TV.result = r.result; TV.score = r.score; } else { TV.result = null; TV.score = null; }
+    TV.msg = r.newPin ? "Welcome! The PIN you entered becomes yours for the season when you submit." : "";
+  }
+  function triviaView(head) {
+    head = head || (sub => `<div class="section-head"><div><h1>League trivia</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("games", GAMES_TABS, "trivia")}`);
+    const T = TV.data;
+    if (!T || T.error) { main.innerHTML = head("") + `<div class="empty">${esc((T && T.error) || "Couldn't load trivia.")} <button type="button" class="linkbtn" data-tv="reload">Try again</button></div>`; return; }
+    const members = pkMembers();
+    const nameOf = id => (members.find(m => m.id === id) || { name: memberName(id) }).name;
+    const board = Object.entries(T.board || {}).map(([m, r]) => ({ m, total: r.total, weeks: r.weeks || {} }))
+      .sort((a, b) => b.total - a.total || Object.keys(a.weeks).length - Object.keys(b.weeks).length || nameOf(a.m).localeCompare(nameOf(b.m)));
+    const leaderboard = board.length ? section("Season leaderboard", "One point per right answer, every week added up.", table([
+      { label: "Player", cell: r => `<b>${esc(nameOf(r.m))}</b>${r.m === PK.member ? ' <span class="badge new">You</span>' : ""}` },
+      { label: "Points", num: 1, cell: r => `<b>${r.total}</b>` },
+      { label: `Week ${T.week}`, num: 1, cell: r => r.weeks[T.week] != null ? `${r.weeks[T.week]}/5` : '<span class="muted">—</span>' },
+      { label: "Weeks played", num: 1, cell: r => Object.keys(r.weeks).length },
+      { label: "Perfect weeks", num: 1, cell: r => Object.values(r.weeks).filter(x => x === 5).length },
+    ], board)) : "";
+    if (T.over) { main.innerHTML = head("The season is over. Trivia is back next season.") + leaderboard; return; }
+    const sub = `Week ${T.week}: 5 questions about your league's own history, new every week when the matchup week changes (early Wednesday). You get <b>one try</b>, so no peeking at the History tab.`;
+    const who = `<div class="panel pk-who">
+        <label class="field">Who are you? <select id="tv-member"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
+        <label class="field">PIN <input id="tv-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="4 digits" value="${esc(PK.pin)}"></label>
+        <label class="field pk-remember"><input id="tv-remember" type="checkbox"${store.get("pk-pin", "") ? " checked" : ""}> Remember me on this device</label>
+        <button type="button" class="cta" data-tv="continue">${TV.ready ? "Switch" : "Start"}</button>
+        <p class="note">Same name and PIN as pick'em.</p></div>`;
+    let quiz = "";
+    if (TV.ready && TV.result) {
+      quiz = `<div class="tv-score"><b>You got ${TV.score} of 5</b>${TV.score === 5 ? " · perfect week!" : ""}</div><div class="tv-qs">${T.questions.map((q, i) => {
+        const r = TV.result[i], right = r.yours === r.answer;
+        return `<div class="tv-q ${right ? "right" : "wrong"}"><div class="tv-q-h"><span class="tv-n">${i + 1}</span><span>${esc(q.q)}</span><span class="tv-mark">${right ? "✓" : "✗"}</span></div>
+          <div class="tv-opts">${q.options.map((o, j) => `<span class="tv-opt${j === r.answer ? " answer" : ""}${j === r.yours && !right ? " picked" : ""}">${esc(o)}</span>`).join("")}</div>
+          <p class="note tv-why">${esc(r.why)}</p></div>`;
+      }).join("")}</div>`;
+    } else if (TV.ready) {
+      const n = TV.sel.filter(x => x != null).length;
+      quiz = `<div class="tv-qs">${T.questions.map((q, i) => `<div class="tv-q" role="group" aria-label="Question ${i + 1}"><div class="tv-q-h"><span class="tv-n">${i + 1}</span><span>${esc(q.q)}</span></div>
+          <div class="tv-opts">${q.options.map((o, j) => `<button type="button" class="tv-opt${TV.sel[i] === j ? " on" : ""}" data-tv-q="${i}" data-tv-o="${j}" aria-pressed="${TV.sel[i] === j}">${esc(o)}</button>`).join("")}</div></div>`).join("")}</div>
+        <div class="pk-save"><button type="button" class="cta" data-tv="submit"${n < T.questions.length ? " disabled" : ""}>Submit answers (${n} of ${T.questions.length})</button></div>`;
+    }
+    const msg = TV.msg ? `<p class="note${TV.err ? " live" : ""}">${esc(TV.msg)}</p>` : "";
+    const done = (T.submitted || []).map(nameOf).sort();
+    const subm = `<p class="note">Done this week (${done.length} of ${members.length}): ${done.length ? esc(done.join(", ")) : "nobody yet"}</p>`;
+    main.innerHTML = head(sub) + who + msg + quiz + subm + leaderboard;
+  }
+  async function tvContinue() {
+    const member = document.getElementById("tv-member").value;
+    const pin = document.getElementById("tv-pin").value.trim();
+    const remember = document.getElementById("tv-remember").checked;
+    if (!member) { TV.msg = "Choose your name first."; TV.err = true; return triviaView(); }
+    if (!/^\d{4}$/.test(pin)) { TV.msg = "Enter a 4-digit PIN."; TV.err = true; return triviaView(); }
+    const r = await pkApi("/trivia/mine", { member, pin });
+    if (r.error) { TV.msg = r.error; TV.err = true; TV.ready = false; return triviaView(); }
+    if (member !== PK.member) { TV.sel = []; PK.ready = false; PK.sel = {}; }
+    PK.member = member; PK.pin = pin;
+    store.set("pk-member", member);
+    store.set("pk-pin", remember ? pin : "");
+    tvLoad(r);
+    triviaView();
+  }
+  async function tvSubmit() {
+    const btn = main.querySelector('[data-tv="submit"]');
+    if (btn) { btn.disabled = true; btn.textContent = "Checking…"; }
+    const r = await pkApi("/trivia/submit", { member: PK.member, pin: PK.pin, answers: TV.sel });
+    if (r.error) { TV.msg = r.error; TV.err = true; return triviaView(); }
+    TV.result = r.result; TV.score = r.score; TV.msg = r.already ? "You'd already answered this week; here's how you did." : ""; TV.err = false;
+    TV.data = await pkApi("/trivia"); TV.at = Date.now();
+    triviaView();
+  }
+  main.addEventListener("click", e => {
+    const o = e.target.closest("[data-tv-o]");
+    if (o) {
+      const q = Number(o.dataset.tvQ), j = Number(o.dataset.tvO);
+      TV.sel[q] = j; TV.msg = "";
+      o.closest(".tv-opts").querySelectorAll(".tv-opt").forEach(b => { const on = b === o; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+      const btn = main.querySelector('[data-tv="submit"]'), n = TV.sel.filter(x => x != null).length, of = TV.data.questions.length;
+      if (btn) { btn.textContent = `Submit answers (${n} of ${of})`; btn.disabled = n < of; }
+      return;
+    }
+    const a = e.target.closest("[data-tv]");
+    if (!a) return;
+    if (a.dataset.tv === "continue") tvContinue();
+    if (a.dataset.tv === "submit") tvSubmit();
+    if (a.dataset.tv === "reload") { TV.data = null; renderTrivia(); }
+  });
+
   async function pkContinue() {
     const member = document.getElementById("pk-member").value;
     const pin = document.getElementById("pk-pin").value.trim();
@@ -1032,6 +1151,7 @@
     if (!/^\d{4}$/.test(pin)) { PK.msg = "Enter a 4-digit PIN."; PK.err = true; return pickemView(); }
     const r = await pkApi("/pickem/mine", { member, pin });
     if (r.error) { PK.msg = r.error; PK.err = true; PK.ready = false; return pickemView(); }
+    if (member !== PK.member) { TV.ready = false; TV.result = null; TV.score = null; TV.sel = []; TV.auto = false; }
     PK.member = member; PK.pin = pin; PK.ready = true; PK.err = false;
     PK.sel = {};
     Object.entries(r.picks || {}).forEach(([g, t]) => { PK.sel[g] = Number(t); });
@@ -1072,6 +1192,28 @@
   function table(cols, rows) {
     return `<div class="table-wrap"><table class="tbl"><thead><tr>${cols.map(c => `<th class="${c.num ? "n" : ""}">${c.label}</th>`).join("")}</tr></thead>
       <tbody>${rows.map(r => `<tr>${cols.map((c, i) => `<td class="${c.num ? "n" : ""}${i === 0 ? " lead" : ""}${c.wide ? " wide" : ""}" data-label="${c.label}">${c.cell(r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  }
+  // Efficiency tab: each team's real lineups vs. the lineup ESPN's projections would have started ("autopilot")
+  function autopilotSection() {
+    const rows = D.teams.filter(t => t.autopilot && t.autopilot.weeks).sort((a, b) => b.autopilot.diff - a.autopilot.diff);
+    if (!rows.length) return "";
+    const swung = a => {
+      const n = a.won - a.lost;
+      const parts = [];
+      if (a.won) parts.push(`won ${a.won}`);
+      if (a.lost) parts.push(`lost ${a.lost}`);
+      return parts.length ? `<b class="${n > 0 ? "pos" : n < 0 ? "neg" : ""}">${n > 0 ? "+" : ""}${n}</b> <span class="muted">(${parts.join(", ")})</span>` : '<span class="muted">0</span>';
+    };
+    const call = (x, good) => x && (good ? x[1] > 0.05 : x[1] < -0.05) ? `Wk ${x[0]} ${signedPts(x[1], true)}` : '<span class="muted">none</span>';
+    return section("You vs. autopilot", { short: "Your lineup calls vs. starting ESPN's projected best lineup every week.", full: "Autopilot starts the best lineup by ESPN's pre-game projections from the roster you actually had that week, and never makes a call of its own. <b>Your calls</b> is how many more (or fewer) points your real lineups scored than autopilot would have. <b>Games swung</b> counts games your calls won that autopilot would have lost, minus games autopilot would have won that you lost (the opponent's real score stays the same). Unlike efficiency, which compares you with a perfect lineup in hindsight, this only uses what was known before kickoff, so it measures your judgment. Regular season." }, table([
+      { label: "Team", cell: teamCell },
+      { label: "Your calls", num: 1, cell: t => signedPts(t.autopilot.diff, true) },
+      { label: "Your lineups", num: 1, cell: t => t.autopilot.real.toFixed(1) },
+      { label: "Autopilot", num: 1, cell: t => t.autopilot.auto.toFixed(1) },
+      { label: "Games swung", num: 1, cell: t => swung(t.autopilot) },
+      { label: "Best call", num: 1, cell: t => call(t.autopilot.best, true) },
+      { label: "Worst call", num: 1, cell: t => call(t.autopilot.worst, false) },
+    ], rows));
   }
   const teamCell = t => `<span class="tcell${isMine(t) ? " mine" : ""}">${logo(t)}<span><span class="tname">${esc(t.name)}</span><span class="team-mgr">${esc(t.manager)}</span></span></span>`;
   // the fill is a share of its own fixed-width track, so 50% is exactly half as long as 100%
@@ -1384,7 +1526,7 @@
         { label: "Efficiency", num: 1, cell: t => `<span class="pbar"><span class="pbar-track"><span class="pbar-fill eff" style="width:${Math.max(0, Math.min(100, (t.efficiency - 70) / 30 * 100))}%"></span></span><span class="pbar-v">${t.efficiency.toFixed(1)}%</span></span>` },
         { label: "Bench pts left", num: 1, cell: t => Number(t.benchLeft).toFixed(1) },
         { label: "Points for", num: 1, cell: t => fmt(t.pf) },
-      ], rows));
+      ], rows)) + autopilotSection();
     },
 
     draft() {
@@ -2131,11 +2273,49 @@
 
     main.innerHTML = `<div class="section-head me-head"><div class="me-id">${logo(t)}<div><h1>${esc(t.name)}</h1><p class="sub">${esc(t.manager)} · ${L.season} season</p></div></div>${switchBtn}</div>
       ${glance}
-      <div class="me-grid"><div>${week}${waiverTargets(t)}${watch}${byes}</div><div>${schedule}</div></div>
+      <div class="me-grid"><div>${week}${cur ? section("Player news", "The latest from ESPN on your players. New since your last visit is marked.", '<div class="me-news-box"><div class="empty">Loading…</div></div>') : ""}${waiverTargets(t)}${watch}${byes}</div><div>${schedule}</div></div>
       ${IDX.history.badges ? section(`Your badges <a class="wk-link" href="${href("history", {}, "badges")}">all badges ›</a>`, "Earned across every season you've played.", badgeTiles(ME.member)) : ""}
       ${section(`Your record book <a class="wk-link" href="${href("history", { member: ME.member }, "records")}">full record book ›</a>`, "Your bests and worsts across every season you've played. Tap one for the box score.", `<div class="me-recs-box" data-rec-member="${esc(ME.member)}"><div class="empty">Loading…</div></div>`)}
       ${roster}`;
     fillMyRecords(main.querySelector(".me-recs-box"));
+    if (cur) fillNews(main.querySelector(".me-news-box"), t);
+  }
+
+  // ---------------------------------------------------------------- player news (My team)
+  // ESPN's fantasy news blurbs for the players on your roster, newest first. "New" = published since your
+  // previous visit (remembered per device).
+  const NEWS = { at: 0, key: "", items: null, seen: null };
+  async function fillNews(box, t) {
+    if (!box) return;
+    const ids = t.roster.filter(p => p.id > 0).map(p => p.id);
+    const key = ids.join(",");
+    if (NEWS.seen == null) { NEWS.seen = store.get("news-seen", 0); store.set("news-seen", Date.now()); }
+    if (NEWS.key !== key || Date.now() - NEWS.at > 10 * 60e3) {
+      try {
+        const r = await fetch("https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?limit=100&" + ids.map(id => "playerId=" + id).join("&"));
+        const d = await r.json();
+        NEWS.items = (d.feed || []).filter(a => a.type === "Rotowire" && a.headline && a.playerId);
+        NEWS.at = Date.now(); NEWS.key = key;
+      } catch (_) {
+        if (!NEWS.items) { box.innerHTML = '<div class="panel">Couldn\'t reach ESPN for news. Try again in a bit.</div>'; return; }
+      }
+    }
+    if (!box.isConnected) return;
+    const byId = Object.fromEntries(t.roster.map(p => [p.id, p]));
+    const cutoff = Date.now() - 14 * 864e5, per = {};
+    const items = NEWS.items.filter(a => byId[a.playerId] && Date.parse(a.published) >= cutoff)
+      .sort((a, b) => Date.parse(b.published) - Date.parse(a.published))
+      .filter(a => (per[a.playerId] = (per[a.playerId] || 0) + 1) <= 3);
+    if (!items.length) { box.innerHTML = '<div class="panel">No news on your players in the last two weeks.</div>'; return; }
+    const ago = ms => { const m = Math.round((Date.now() - ms) / 60e3); return m < 60 ? `${Math.max(1, m)}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`; };
+    const row = a => {
+      const p = byId[a.playerId], when = Date.parse(a.published), isNew = when > NEWS.seen;
+      return `<div class="news-item${isNew ? " new" : ""}"><div class="news-top"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span><b>${esc(p.name)}</b>
+        ${isNew ? '<span class="badge new">New</span>' : ""}<span class="news-when muted">${ago(when)}</span></div>
+        <p class="news-h">${esc(a.headline)}</p>${a.story ? `<details class="news-more"><summary>More</summary><p>${esc(a.story)}</p></details>` : ""}</div>`;
+    };
+    const first = items.slice(0, 6), rest = items.slice(6);
+    box.innerHTML = `<div class="news-list">${first.map(row).join("")}${rest.length ? `<details class="news-rest"><summary>${rest.length} more</summary>${rest.map(row).join("")}</details>` : ""}</div>`;
   }
 
   // ---------------------------------------------------------------- waiver targets (My team)

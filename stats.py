@@ -18,19 +18,24 @@ def is_starter(p):
 
 def optimal_points(lineup, slot_counts):
     """Best possible starting score from the players a team had that week (hindsight)."""
+    return sum(p["pts"] for p in best_lineup(lineup, slot_counts, lambda p: p["pts"]))
+
+
+def best_lineup(lineup, slot_counts, key):
+    """The starters a team would pick ranking its players by key (points in hindsight, or projection)."""
     slots = []
     for sid, n in slot_counts.items():
         if sid in SLOT_ELIGIBLE:
             slots += [SLOT_ELIGIBLE[sid]] * n
     slots.sort(key=len)  # fill the most restrictive slots first
-    pool = sorted(lineup, key=lambda p: -p["pts"])
-    used, total = set(), 0.0
+    pool = sorted(lineup, key=lambda p: -key(p))
+    used, picked = set(), []
     for elig in slots:
         for p in pool:
             if p["id"] not in used and p["pos"] in elig:
-                used.add(p["id"]); total += p["pts"]
+                used.add(p["id"]); picked.append(p)
                 break
-    return total
+    return picked
 
 
 def regular_weeks(season):
@@ -467,6 +472,35 @@ def hot_and_cold(season, recent=3):
                   "lastW": sum(1 for g in last if g[1] > g[3]), "lastL": sum(1 for g in last if g[1] < g[3]),
                   "weeks": [g[0] for g in last], "lastPts": [round(g[1], 1) for g in last]}
     return out
+
+
+def autopilot(season):
+    """Each team's real lineups vs. ESPN's projected-best lineup from the same roster ("autopilot"), regular
+    season: points gained or lost by the manager's own start/sit calls, and games those calls swung."""
+    agg = {}
+    for w in regular_weeks(season):
+        for g in w["games"]:
+            if len(g["sides"]) != 2:
+                continue
+            a, b = g["sides"]
+            for me, opp in ((a, b), (b, a)):
+                if me.get("auto") is None:
+                    continue
+                t = agg.setdefault(me["team"], {"real": 0.0, "auto": 0.0, "weeks": 0, "won": 0, "lost": 0, "best": None, "worst": None})
+                d = me["pts"] - me["auto"]
+                t["real"] += me["pts"]; t["auto"] += me["auto"]; t["weeks"] += 1
+                real_win, auto_win = me["pts"] > opp["pts"], me["auto"] > opp["pts"]
+                if real_win and not auto_win:
+                    t["won"] += 1  # your calls won a game autopilot would have lost
+                elif auto_win and not real_win:
+                    t["lost"] += 1
+                if t["best"] is None or d > t["best"][1]:
+                    t["best"] = [w["week"], round(d, 1)]
+                if t["worst"] is None or d < t["worst"][1]:
+                    t["worst"] = [w["week"], round(d, 1)]
+    return {tid: {"real": round(t["real"], 1), "auto": round(t["auto"], 1), "diff": round(t["real"] - t["auto"], 1),
+                  "weeks": t["weeks"], "won": t["won"], "lost": t["lost"], "best": t["best"], "worst": t["worst"]}
+            for tid, t in agg.items()}
 
 
 def vs_projection(season):

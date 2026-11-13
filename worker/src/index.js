@@ -1,3 +1,4 @@
+import { makeQuiz } from "./trivia.js";
 // League HQ live worker.
 //
 //   GET /live   -> the current week's matchups, lineups and player stat lines, straight from ESPN,
@@ -222,6 +223,72 @@ async function handlePickem(req, env, url) {
     if (err) return json(env, req, { error: err }, 403);
     await env.PICKEM.put(`picks:${st.season}:${st.week}:${member}`, JSON.stringify({ picks, at: new Date().toISOString() }));
     return json(env, req, { ok: true, picks, count: Object.keys(picks).length, of: st.games.length });
+  }
+  return json(env, req, { error: "Not found" }, 404);
+}
+
+// ---------------------------------------------------------------- weekly league trivia
+// 5 questions a week from the site's own history files, frozen in KV on first request. One try per member per
+// week (same name + PIN as pick'em); the season leaderboard is one KV value updated on each submit.
+
+const SITE_DATA = env => env.SITE_DATA || "https://sivanmanikandan0112-sudo.github.io/espn-league/data/";
+const parseAssigned = t => JSON.parse(t.slice(t.indexOf('={"') + 1, t.lastIndexOf("}") + 1));
+
+async function triviaQuiz(env, st) {
+  const key = `trivia-q:${st.season}:${st.week}`;
+  const have = await env.PICKEM.get(key, "json");
+  if (have) return have;
+  const [ix, rec] = await Promise.all(["index.js", "records.js"].map(f => fetch(SITE_DATA(env) + f, { cf: { cacheTtl: 300 } }).then(r => r.text())));
+  const I = parseAssigned(ix), R = parseAssigned(rec);
+  const questions = makeQuiz({ ...I.history, seasonsList: I.seasons }, R, st.season, st.week);
+  if (questions.length < 5) throw new Error("Couldn't build this week's trivia.");
+  const quiz = { season: st.season, week: st.week, made: new Date().toISOString(), questions };
+  await env.PICKEM.put(key, JSON.stringify(quiz));
+  return quiz;
+}
+
+function triviaResult(quiz, answers) {
+  return quiz.questions.map((q, i) => ({ yours: answers[i], answer: q.answer, why: q.why }));
+}
+
+async function handleTrivia(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Trivia storage isn't set up yet." }, 503);
+  const st = await pickemWeek(env);
+  if (st.over) return json(env, req, { season: st.season, over: true, board: (await env.PICKEM.get(`trivia-board:${st.season}`, "json")) || {} });
+  const quiz = await triviaQuiz(env, st);
+  const board = (await env.PICKEM.get(`trivia-board:${st.season}`, "json")) || {};
+  if (req.method === "GET" && url.pathname === "/trivia") {
+    const submitted = Object.keys(board).filter(m => board[m].weeks && board[m].weeks[st.week] != null);
+    return json(env, req, { season: st.season, week: st.week, questions: quiz.questions.map(q => ({ q: q.q, options: q.options })), submitted, board });
+  }
+  if (req.method !== "POST") return json(env, req, { error: "Not found" }, 404);
+  let body;
+  try { body = await req.json(); } catch (_) { return json(env, req, { error: "Bad request" }, 400); }
+  const member = String(body.member || "");
+  if (!st.members.includes(member)) return json(env, req, { error: "That name isn't in the league." }, 400);
+  const mineKey = `trivia:${st.season}:${st.week}:${member}`;
+  if (url.pathname === "/trivia/mine") {
+    if (!(await env.PICKEM.get(`pin:${st.season}:${member}`))) return json(env, req, { submitted: false, newPin: true });
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    const v = await env.PICKEM.get(mineKey, "json");
+    return json(env, req, v ? { submitted: true, score: v.score, result: triviaResult(quiz, v.answers) } : { submitted: false });
+  }
+  if (url.pathname === "/trivia/submit") {
+    const answers = quiz.questions.map((q, i) => Number((body.answers || [])[i]));
+    if (answers.some((a, i) => !(a >= 0 && a < quiz.questions[i].options.length))) return json(env, req, { error: "Answer every question first." }, 400);
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    const prev = await env.PICKEM.get(mineKey, "json");
+    if (prev) return json(env, req, { submitted: true, already: true, score: prev.score, result: triviaResult(quiz, prev.answers) });
+    const score = answers.filter((a, i) => a === quiz.questions[i].answer).length;
+    await env.PICKEM.put(mineKey, JSON.stringify({ answers, score, at: new Date().toISOString() }));
+    const b = (await env.PICKEM.get(`trivia-board:${st.season}`, "json")) || {};
+    const row = b[member] = b[member] || { total: 0, weeks: {} };
+    row.weeks[st.week] = score;
+    row.total = Object.values(row.weeks).reduce((n, x) => n + x, 0);
+    await env.PICKEM.put(`trivia-board:${st.season}`, JSON.stringify(b));
+    return json(env, req, { submitted: true, score, result: triviaResult(quiz, answers) });
   }
   return json(env, req, { error: "Not found" }, 404);
 }
@@ -625,6 +692,10 @@ export default {
     if (req.method === "OPTIONS") return new Response(null, { headers: cors(env, req) });
     if (url.pathname.startsWith("/block")) {
       try { return await handleBlock(req, env, url); }
+      catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
+    }
+    if (url.pathname.startsWith("/trivia")) {
+      try { return await handleTrivia(req, env, url); }
       catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
     }
     if (url.pathname.startsWith("/pickem")) {

@@ -7,6 +7,7 @@ LEAGUE_ID = "1262273109"
 SITE_ORIGIN = "https://sivanmanikandan0112-sudo.github.io"
 GITHUB_REPO = "sivanmanikandan0112-sudo/espn-league"
 GITHUB_WORKFLOW = "refresh.yml"
+SITE_DATA = "https://sivanmanikandan0112-sudo.github.io/espn-league/data/"
 
 # Every minute: the live big-play feed (during NFL games), and a check that rebuilds the full site as soon as
 # rosters, lineups, trades, records or settings change on ESPN (plus every 5 min during games, every 30 min always).
