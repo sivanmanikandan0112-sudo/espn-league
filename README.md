@@ -237,6 +237,19 @@ season + week), freezes them in KV as `trivia-q:<season>:<week>` on the first re
 after a member submits. One try per week, same name + PIN as pick'em; the season leaderboard is one KV value,
 `trivia-board:<season>`. A new quiz starts when ESPN moves to the next matchup week.
 
+## Pick 4
+
+Games → Pick 4 (`#/games/pick4`, worker `/pick3`, `/pick3/mine`, `/pick3/save`). Each week: one QB, RB, WR and TE
+from any NFL team under a salary cap, scored with their real fantasy points that week under league scoring (ESPN's
+`appliedTotal`). When the week's slate is first requested the worker freezes it in KV (`p3-slate4:<season>:<week>`):
+every QB/RB/WR/TE with a game, not out/IR/suspended, projected 5+ by ESPN for the week, priced at **$400 per projected
+point** (rounded to $100) at every position, so no position is cheaper per expected point. The cap is 80% of the
+priciest QB + RB + WR + TE (rounded to $500): you can't take every star, and any lineup that spends the cap projects
+about the same, so the game is about who beats his projection. A spot can change only while both the player in it and
+his replacement haven't kicked off; other members' players stay hidden until their game starts. Entries are one KV
+value per week (`p3-entries:...`); finished weeks are scored once into `p3-season:<season>` (ties go to the cheaper
+lineup). Change the price/cap rules with `P3_PER_PT`, `P3_MIN_PROJ` and `P3_CAP_SHARE` in `worker/src/index.js`.
+
 ## Weekly pick'em
 
 Games → Pick'em. Picks for a week open when ESPN moves on to it (early Wednesday) and lock at that week's first

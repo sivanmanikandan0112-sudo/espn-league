@@ -293,6 +293,181 @@ async function handleTrivia(req, env, url) {
   return json(env, req, { error: "Not found" }, 404);
 }
 
+// ---------------------------------------------------------------- Pick 3 (Games)
+// A weekly side game: pick one QB, RB, WR and TE from any NFL team under a salary cap; score = their real fantasy points
+// under the league's scoring. Salaries come from ESPN's projection for the week (league scoring), frozen when the week's
+// slate is first opened, at the same price per projected point for every position. Each pick locks at its own
+// player's kickoff: you can change a spot only while both the player in it and the one replacing him haven't played.
+
+const P3_PER_PT = 400;        // $ per projected point, every position
+const P3_MIN_PROJ = 5;        // players projected under this aren't on the slate
+const P3_CAP_SHARE = 0.8;     // cap = 80% of the priciest QB + RB + WR + TE: a star or two, then mid-priced players
+const P3_SLOTS = ["QB", "RB", "WR", "TE"];
+const P3_GAME_HOURS = 3.5;    // a game counts as over this long after kickoff (for the "final" label only)
+
+async function espnFiltered(env, yr, params, filter) {
+  const url = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${yr}/segments/0/leagues/${env.LEAGUE_ID}?${params}`;
+  const r = await fetch(url, { headers: { Cookie: `espn_s2=${env.ESPN_S2}; SWID=${env.ESPN_SWID}`, "User-Agent": "league-hq-live",
+    "X-Fantasy-Filter": JSON.stringify(filter) } });
+  if (r.status === 401) throw new Error("ESPN login expired");
+  if (!r.ok) throw new Error(`ESPN ${r.status}`);
+  return r.json();
+}
+
+// scoring period -> pro team id -> { at: kickoff ms, opp: "vs NYG" / "@ DAL" }
+async function proGames(yr) {
+  return cached(`pro-games-${yr}`, 6 * 3600, async () => {
+    const r = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${yr}?view=proTeamSchedules_wl`);
+    const d = await r.json();
+    const out = {};
+    for (const t of d.settings.proTeams) {
+      for (const [sp, games] of Object.entries(t.proGamesByScoringPeriod || {})) {
+        const g = games[0];
+        if (!g) continue;
+        const home = g.homeProTeamId === t.id, other = home ? g.awayProTeamId : g.homeProTeamId;
+        (out[sp] = out[sp] || {})[t.id] = { at: g.date, opp: `${home ? "vs" : "@"} ${PRO[other] || "?"}` };
+      }
+    }
+    return out;
+  });
+}
+
+async function p3Slate(env, st) {
+  const key = `p3-slate4:${st.season}:${st.week}`; // "4": QB/RB/WR/TE slates
+  const have = await env.PICKEM.get(key, "json");
+  if (have) return have;
+  const status = (await espn(env, st.season, "view=mStatus")).status;
+  const sp = status.latestScoringPeriod;
+  const games = (await proGames(st.season))[String(sp)] || {};
+  // the same query the site build uses for the player pool (it carries this week's projections)
+  const d = await espnFiltered(env, st.season, `view=kona_player_info&scoringPeriodId=${sp}`, { players: {
+    filterSlotIds: { value: [0, 2, 4, 6] }, limit: 600, sortPercOwned: { sortPriority: 1, sortAsc: false } } });
+  const players = [];
+  for (const e of d.players || []) {
+    const p = e.player || {};
+    const pos = POS[p.defaultPositionId];
+    if (!P3_SLOTS.includes(pos)) continue;
+    if (["OUT", "INJURY_RESERVE", "SUSPENSION"].includes(p.injuryStatus)) continue;
+    const g = games[p.proTeamId];
+    if (!g) continue; // bye
+    const line = (p.stats || []).find(x => x.statSourceId === 1 && x.scoringPeriodId === sp && x.seasonId === st.season);
+    const proj = line ? line.appliedTotal || 0 : 0;
+    if (proj < P3_MIN_PROJ) continue;
+    players.push({ id: p.id, n: p.fullName, pos, team: PRO[p.proTeamId] || "", opp: g.opp, at: g.at,
+      proj: Math.round(proj * 10) / 10, sal: Math.max(1000, Math.round(proj * P3_PER_PT / 100) * 100) });
+  }
+  players.sort((a, b) => b.sal - a.sal || a.n.localeCompare(b.n));
+  const top = P3_SLOTS.map(pos => (players.find(x => x.pos === pos) || { sal: 0 }).sal);
+  if (top.some(x => !x)) throw new Error("This week's Pick 3 slate isn't ready yet (no ESPN projections). Try again soon.");
+  const cap = Math.round(P3_CAP_SHARE * top.reduce((a, b) => a + b, 0) / 500) * 500;
+  const slate = { season: st.season, week: st.week, sp, cap, perPt: P3_PER_PT, made: new Date().toISOString(), players };
+  await env.PICKEM.put(key, JSON.stringify(slate));
+  return slate;
+}
+
+// real fantasy points (league scoring) for these players in scoring period sp, cached a minute
+async function p3Points(env, yr, sp, ids) {
+  if (!ids.length) return {};
+  const key = `p3-pts-${yr}-${sp}-${ids.slice().sort((a, b) => a - b).join(",")}`;
+  return cached(key, 60, async () => {
+    const d = await espnFiltered(env, yr, `view=kona_player_info&scoringPeriodId=${sp}`, { players: { filterIds: { value: ids } } });
+    const out = {};
+    for (const e of d.players || []) {
+      const p = e.player || {};
+      const line = (p.stats || []).find(x => x.statSourceId === 0 && x.scoringPeriodId === sp && x.seasonId === yr);
+      out[p.id] = line ? Math.round((line.appliedTotal || 0) * 100) / 100 : 0;
+    }
+    return out;
+  });
+}
+
+async function p3Finalize(env, st) {
+  // weeks with entries that are now over get their final scores written into the season record once
+  const sKey = `p3-season:${st.season}`;
+  const S = (await env.PICKEM.get(sKey, "json")) || { weeks: {}, open: [] };
+  const due = S.open.filter(w => w < st.week);
+  if (!due.length) return S;
+  for (const w of due) {
+    const E = (await env.PICKEM.get(`p3-entries:${st.season}:${w}`, "json")) || {};
+    const slate = await env.PICKEM.get(`p3-slate4:${st.season}:${w}`, "json");
+    if (!slate) continue;
+    const ids = [...new Set(Object.values(E).flatMap(x => P3_SLOTS.map(k => x[k]).filter(Boolean)))];
+    const pts = await p3Points(env, st.season, slate.sp, ids);
+    const sal = id => (slate.players.find(p => p.id === id) || { sal: 0 }).sal;
+    S.weeks[w] = Object.fromEntries(Object.entries(E).map(([m, x]) => [m, {
+      pts: Math.round(P3_SLOTS.reduce((n, k) => n + (pts[x[k]] || 0), 0) * 100) / 100,
+      sal: P3_SLOTS.reduce((n, k) => n + sal(x[k]), 0) }]));
+  }
+  S.open = S.open.filter(w => !due.includes(w));
+  await env.PICKEM.put(sKey, JSON.stringify(S));
+  return S;
+}
+
+async function handlePick3(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Pick 3 storage isn't set up yet." }, 503);
+  const st = await pickemWeek(env);
+  const S = await p3Finalize(env, st);
+  if (st.over) return json(env, req, { season: st.season, over: true, history: S.weeks });
+  const slate = await p3Slate(env, st);
+  const now = Date.now();
+  const byId = Object.fromEntries(slate.players.map(p => [p.id, p]));
+  const started = id => byId[id] && now >= byId[id].at;
+  const eKey = `p3-entries:${st.season}:${st.week}`;
+  const E = (await env.PICKEM.get(eKey, "json")) || {};
+  if (req.method === "GET" && url.pathname === "/pick3") {
+    const ids = [...new Set(Object.values(E).flatMap(x => P3_SLOTS.map(k => x[k]).filter(id => id && started(id))))];
+    const pts = await p3Points(env, st.season, slate.sp, ids);
+    // other people's players show only once that player's game has started (it's locked by then)
+    const entries = Object.fromEntries(Object.entries(E).map(([m, x]) => [m, Object.fromEntries(P3_SLOTS.map(k => [k,
+      !x[k] ? null : started(x[k]) ? { id: x[k], pts: pts[x[k]] || 0 } : { hidden: true }]))]));
+    return json(env, req, { season: st.season, week: st.week, cap: slate.cap, perPt: slate.perPt, now, players: slate.players, entries, history: S.weeks });
+  }
+  if (req.method !== "POST") return json(env, req, { error: "Not found" }, 404);
+  let body;
+  try { body = await req.json(); } catch (_) { return json(env, req, { error: "Bad request" }, 400); }
+  const member = String(body.member || "");
+  if (!st.members.includes(member)) return json(env, req, { error: "That name isn't in the league." }, 400);
+  const mine = E[member] || {};
+  const withPts = async x => {
+    const ids = P3_SLOTS.map(k => x[k]).filter(id => id && started(id));
+    const pts = await p3Points(env, st.season, slate.sp, ids);
+    return Object.fromEntries(P3_SLOTS.map(k => [k, x[k] ? { id: x[k], pts: started(x[k]) ? pts[x[k]] || 0 : null } : null]));
+  };
+  if (url.pathname === "/pick3/mine") {
+    if (!(await env.PICKEM.get(`pin:${st.season}:${member}`))) return json(env, req, { picks: {}, newPin: true });
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    return json(env, req, { picks: await withPts(mine) });
+  }
+  if (url.pathname === "/pick3/save") {
+    const want = {};
+    for (const k of P3_SLOTS) {
+      const id = Number((body.picks || {})[k]) || null;
+      if (id && (!byId[id] || byId[id].pos !== k)) return json(env, req, { error: `That ${k} isn't on this week's slate.` }, 400);
+      want[k] = id;
+    }
+    for (const k of P3_SLOTS) {
+      if (want[k] === (mine[k] || null)) continue;
+      if (mine[k] && started(mine[k])) return json(env, req, { error: `${byId[mine[k]].n}'s game has started, so your ${k} is locked.` }, 409);
+      if (want[k] && started(want[k])) return json(env, req, { error: `${byId[want[k]].n}'s game has already started. Pick someone who hasn't played yet.` }, 409);
+    }
+    const total = P3_SLOTS.reduce((n, k) => n + (want[k] ? byId[want[k]].sal : 0), 0);
+    if (total > slate.cap) return json(env, req, { error: `That's $${total.toLocaleString()}, over the $${slate.cap.toLocaleString()} cap.` }, 400);
+    if (!P3_SLOTS.some(k => want[k])) return json(env, req, { error: "Pick at least one player." }, 400);
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    const fresh = (await env.PICKEM.get(eKey, "json")) || {};
+    fresh[member] = { ...want, at: new Date().toISOString() };
+    await env.PICKEM.put(eKey, JSON.stringify(fresh));
+    if (!S.open.includes(st.week)) {
+      const S2 = (await env.PICKEM.get(`p3-season:${st.season}`, "json")) || { weeks: {}, open: [] };
+      if (!S2.open.includes(st.week)) { S2.open.push(st.week); await env.PICKEM.put(`p3-season:${st.season}`, JSON.stringify(S2)); }
+    }
+    return json(env, req, { ok: true, picks: await withPts(fresh[member]), salary: total });
+  }
+  return json(env, req, { error: "Not found" }, 404);
+}
+
 // ---------------------------------------------------------------- live big-play feed
 // Every minute during NFL games, compare each rostered player's scoring with the last snapshot and turn the
 // changes into plays (TDs, field goals, turnovers, defensive plays, big gains). Stored in KV only when a play
@@ -692,6 +867,10 @@ export default {
     if (req.method === "OPTIONS") return new Response(null, { headers: cors(env, req) });
     if (url.pathname.startsWith("/block")) {
       try { return await handleBlock(req, env, url); }
+      catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
+    }
+    if (url.pathname.startsWith("/pick3")) {
+      try { return await handlePick3(req, env, url); }
       catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
     }
     if (url.pathname.startsWith("/trivia")) {

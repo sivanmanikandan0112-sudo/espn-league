@@ -583,9 +583,10 @@
 
   const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"]];
   // Games: pick'em and league trivia (name + PIN), separate from the stats tabs
-  const GAMES_TABS = [["", "Pick'em"], ["trivia", "League trivia"]];
+  const GAMES_TABS = [["", "Pick'em"], ["pick4", "Pick 4"], ["trivia", "League trivia"]];
   function renderGames() {
     if (state.sub === "trivia") return renderTrivia();
+    if (state.sub === "pick4") return renderPick3();
     return renderPickem();
   }
 
@@ -1112,7 +1113,7 @@
     if (!/^\d{4}$/.test(pin)) { TV.msg = "Enter a 4-digit PIN."; TV.err = true; return triviaView(); }
     const r = await pkApi("/trivia/mine", { member, pin });
     if (r.error) { TV.msg = r.error; TV.err = true; TV.ready = false; return triviaView(); }
-    if (member !== PK.member) { TV.sel = []; PK.ready = false; PK.sel = {}; }
+    if (member !== PK.member) { TV.sel = []; PK.ready = false; PK.sel = {}; P3.ready = false; P3.auto = false; P3.sel = {}; P3.saved = {}; }
     PK.member = member; PK.pin = pin;
     store.set("pk-member", member);
     store.set("pk-pin", remember ? pin : "");
@@ -1145,6 +1146,176 @@
     if (a.dataset.tv === "reload") { TV.data = null; renderTrivia(); }
   });
 
+  // ---------------------------------------------------------------- Pick 4 (Games)
+  // A QB, RB, WR and TE from any NFL team under a salary cap; score = their real points this week under league
+  // scoring. Prices are a flat $ per ESPN-projected point, frozen when the week opens. Each spot locks at its own
+  // player's kickoff; until then it can be swapped for anyone who hasn't played yet. The worker enforces all of it.
+  const P3_SLOTS = ["QB", "RB", "WR", "TE"];
+  const P3 = { data: null, at: 0, sel: {}, saved: {}, ready: false, auto: false, msg: "", err: false, pos: "QB", q: "" };
+  const money = n => "$" + Math.round(n).toLocaleString();
+  async function renderPick3() {
+    const head = sub => `<div class="section-head"><div><h1>Pick 4</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("games", GAMES_TABS, "pick4")}`;
+    if (state.season !== IDX.current) { main.innerHTML = head("") + `<div class="empty">Pick 4 runs in the current season. <a href="#/games/pick4">Go to this week's Pick 4</a></div>`; return; }
+    if (!LIVE_API_BASE()) { main.innerHTML = head("") + '<div class="empty">Pick 4 needs the live worker, which isn\'t set up.</div>'; return; }
+    if (!P3.data || Date.now() - P3.at > 60000) {
+      if (!P3.data) main.innerHTML = head("") + '<div class="empty">Loading this week\'s players…</div>';
+      const d = await pkApi("/pick3").catch(() => ({ error: "Couldn't reach the server. Try again." }));
+      if (P3.data && d.week !== P3.data.week) { P3.sel = {}; P3.saved = {}; P3.ready = false; P3.auto = false; }
+      P3.data = d; P3.at = Date.now();
+      if (state.tab !== "games" || state.sub !== "pick4") return;
+    }
+    if (!P3.ready && !P3.auto && PK.member && PK.pin && P3.data && !P3.data.error) {
+      P3.auto = true;
+      const r = await pkApi("/pick3/mine", { member: PK.member, pin: PK.pin }).catch(() => ({ error: "x" }));
+      if (!r.error) p3Load(r);
+      if (state.tab !== "games" || state.sub !== "pick4") return;
+    }
+    pick3View();
+  }
+  function p3Load(r) {
+    P3.ready = true; P3.err = false;
+    P3.saved = Object.fromEntries(P3_SLOTS.map(k => [k, r.picks && r.picks[k] ? r.picks[k] : null]));
+    P3.sel = Object.fromEntries(P3_SLOTS.map(k => [k, P3.saved[k] ? P3.saved[k].id : null]));
+    P3.pos = P3_SLOTS.find(k => !P3.sel[k]) || P3.pos; // open the picker on the first empty spot
+    P3.msg = r.newPin ? "Welcome! The PIN you entered becomes yours for the season when you save." : "";
+  }
+  function pick3View() {
+    const head = sub => `<div class="section-head"><div><h1>Pick 4</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div></div>${subnav("games", GAMES_TABS, "pick4")}`;
+    const T = P3.data;
+    if (!T || T.error) { main.innerHTML = head("") + `<div class="empty">${esc((T && T.error) || "Couldn't load Pick 4.")} <button type="button" class="linkbtn" data-p3="reload">Try again</button></div>`; return; }
+    const members = pkMembers();
+    const nameOf = id => (members.find(m => m.id === id) || { name: memberName(id) }).name;
+    const hist = T.history || {};
+    // season leaderboard: finished weeks (points, weekly wins; ties go to the cheaper lineup)
+    const board = {};
+    Object.entries(hist).forEach(([w, rows]) => {
+      const list = Object.entries(rows).map(([m, r]) => ({ m, ...r })).sort((a, b) => b.pts - a.pts || a.sal - b.sal);
+      list.forEach((r, i) => { const b = board[r.m] = board[r.m] || { m: r.m, total: 0, weeks: 0, wins: 0, best: 0 }; b.total += r.pts; b.weeks++; b.best = Math.max(b.best, r.pts); if (i === 0) b.wins++; });
+    });
+    const leaders = Object.values(board).sort((a, b) => b.total - a.total);
+    const leaderboard = leaders.length ? section("Season leaderboard", "Points from every finished week added up.", table([
+      { label: "Player", cell: r => `<b>${esc(nameOf(r.m))}</b>` },
+      { label: "Points", num: 1, cell: r => `<b>${r.total.toFixed(1)}</b>` },
+      { label: "Weeks won", num: 1, cell: r => r.wins },
+      { label: "Weeks played", num: 1, cell: r => r.weeks },
+      { label: "Best week", num: 1, cell: r => r.best.toFixed(1) },
+    ], leaders)) : "";
+    if (T.over) { main.innerHTML = head("The season is over. Pick 4 is back next season.") + leaderboard; return; }
+
+    const now = Date.now();
+    const byId = Object.fromEntries(T.players.map(p => [p.id, p]));
+    const played = p => p && now >= p.at;
+    const kick = p => new Date(p.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+    const lockedSlot = k => P3.saved[k] && played(byId[P3.saved[k].id]);
+    const spent = P3_SLOTS.reduce((n, k) => n + (P3.sel[k] ? byId[P3.sel[k]].sal : 0), 0);
+    const left = T.cap - spent;
+    const intro = expl(`Pick a QB, RB, WR and TE for ${money(T.cap)} or less. Score = their real points this week.`,
+      `This week's ${T.players.length} players are priced at ${money(T.perPt)} per point ESPN projects for them this week (under our scoring), the same rate at every position, and prices are set once when the week opens. Pick a QB, RB, WR and TE from any NFL team for ${money(T.cap)} or less; your score is their real points this week under our scoring. Each spot locks when that player's game kicks off; until then you can swap in anyone who hasn't played yet, right up to the last game. Ties go to the cheaper lineup.`);
+    const who = `<div class="panel pk-who">
+        <label class="field">Who are you? <select id="p3-member"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
+        <label class="field">PIN <input id="p3-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="4 digits" value="${esc(PK.pin)}"></label>
+        <label class="field pk-remember"><input id="p3-remember" type="checkbox"${store.get("pk-pin", "") ? " checked" : ""}> Remember me on this device</label>
+        <button type="button" class="cta" data-p3="continue">${P3.ready ? "Switch" : "Start"}</button>
+        <p class="note">Same name and PIN as pick'em.</p></div>`;
+    let game = "";
+    if (P3.ready) {
+      const changed = P3_SLOTS.some(k => (P3.sel[k] || null) !== (P3.saved[k] ? P3.saved[k].id : null));
+      const slot = k => {
+        const p = P3.sel[k] && byId[P3.sel[k]], lock = lockedSlot(k), sv = P3.saved[k];
+        if (!p) return `<button type="button" class="p3-slot empty${P3.pos === k ? " on" : ""}" data-p3-pos="${k}"><span class="slot ${k}">${k}</span><span class="p3-sn">Pick a ${k}</span></button>`;
+        const pts = lock && sv && sv.pts != null ? `<b class="p3-pts">${sv.pts.toFixed(1)} pts</b>` : `<span class="p3-sal">${money(p.sal)}</span>`;
+        return `<div class="p3-slot${lock ? " locked" : ""}${P3.pos === k ? " on" : ""}"><span class="slot ${k}">${k}</span><span class="p3-sn"><b>${esc(p.n)}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${lock ? "locked 🔒" : esc(kick(p))} · proj ${p.proj.toFixed(1)}</span></span>${pts}
+          ${lock ? "" : `<button type="button" class="linkbtn" data-p3-pos="${k}">Change</button><button type="button" class="linkbtn" data-p3-clear="${k}" aria-label="Remove ${esc(p.n)}">✕</button>`}</div>`;
+      };
+      const pct = Math.min(100, 100 * spent / T.cap);
+      const q = P3.q.trim().toLowerCase();
+      const list = T.players.filter(p => p.pos === P3.pos && (!q || p.n.toLowerCase().includes(q) || p.team.toLowerCase() === q));
+      const curSal = P3.sel[P3.pos] ? byId[P3.sel[P3.pos]].sal : 0;
+      // keep enough back for the cheapest player still available at every other empty spot
+      const cheapest = k => Math.min(...T.players.filter(p => p.pos === k && !played(p)).map(p => p.sal));
+      const reserve = P3_SLOTS.filter(k => k !== P3.pos && !P3.sel[k]).reduce((n, k) => n + (isFinite(cheapest(k)) ? cheapest(k) : 0), 0);
+      const rows = list.map(p => {
+        const picked = P3.sel[P3.pos] === p.id, gone = played(p), cost = p.sal - curSal;
+        const over = !picked && cost > left, tight = !picked && !over && cost > left - reserve;
+        const why = gone ? "played" : lockedSlot(P3.pos) ? "spot locked" : over ? "over cap" : tight ? "no room left" : "";
+        return `<button type="button" class="p3-row${picked ? " on" : ""}" data-p3-pick="${p.id}"${why && !picked ? " disabled" : ""}>
+          <span class="p3-rn"><b>${esc(p.n)}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${gone ? "played" : esc(kick(p))}</span></span>
+          <span class="p3-rp">proj ${p.proj.toFixed(1)}</span><span class="p3-rs">${money(p.sal)}</span><span class="p3-rw">${picked ? "✓" : why ? esc(why) : "Add"}</span></button>`;
+      }).join("");
+      game = `<div class="p3-wrap"><div class="p3-lineup">
+          <div class="p3-cap"><div class="p3-cap-t"><span>Spent <b>${money(spent)}</b> of ${money(T.cap)}</span><span class="${left < 0 ? "neg" : ""}">${money(left)} left</span></div><div class="p3-bar"><span style="width:${pct}%"></span></div></div>
+          ${P3_SLOTS.map(slot).join("")}
+          <div class="pk-save"><button type="button" class="cta" data-p3="save"${changed ? "" : " disabled"}>${changed ? "Save lineup" : "Saved"}</button></div>
+        </div>
+        <div class="p3-pick"><nav class="pg-by p3-tabs" aria-label="Position">${P3_SLOTS.map(k => `<a href="#" data-p3-pos="${k}" class="${P3.pos === k ? "active" : ""}">${k}</a>`).join("")}</nav>
+          <input id="p3-q" type="search" placeholder="Search ${P3.pos}s or a team (e.g. KC)" value="${esc(P3.q)}" autocomplete="off">
+          <div class="p3-list">${rows || '<div class="empty">No players match.</div>'}</div></div></div>`;
+    }
+    const msg = P3.msg ? `<p class="note${P3.err ? " live" : ""}">${esc(P3.msg)}</p>` : "";
+    // this week: everyone's lineup; other people's players show once their game has started
+    const entries = Object.entries(T.entries || {}).map(([m, e]) => ({ m, e, pts: P3_SLOTS.reduce((n, k) => n + (e[k] && e[k].pts ? e[k].pts : 0), 0) }))
+      .sort((a, b) => b.pts - a.pts);
+    const week = entries.length ? section(`Week ${T.week} so far`, "Players show once their game starts; until then they're hidden.", `<div class="p3-board">${entries.map(({ m, e, pts }) =>
+      `<div class="p3-entry"><div class="p3-eh"><b>${esc(nameOf(m))}</b><span>${pts.toFixed(1)}</span></div>${P3_SLOTS.map(k => {
+        const x = e[k];
+        if (!x) return `<div class="p3-ep muted"><span class="slot ${k}">${k}</span>none</div>`;
+        if (x.hidden) return `<div class="p3-ep muted"><span class="slot ${k}">${k}</span>hidden until kickoff</div>`;
+        const p = byId[x.id];
+        return `<div class="p3-ep"><span class="slot ${k}">${k}</span><span class="p3-sn">${esc(p ? p.n : "?")}</span><b>${(x.pts || 0).toFixed(1)}</b></div>`;
+      }).join("")}</div>`).join("")}</div>`) : "";
+    main.innerHTML = head("").replace("</h1>", "</h1>" + intro) + who + msg + game + week + leaderboard;
+    const qi = main.querySelector("#p3-q");
+    if (qi && P3.focusQ) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); P3.focusQ = false; }
+  }
+  async function p3Continue() {
+    const member = document.getElementById("p3-member").value;
+    const pin = document.getElementById("p3-pin").value.trim();
+    const remember = document.getElementById("p3-remember").checked;
+    if (!member) { P3.msg = "Choose your name first."; P3.err = true; return pick3View(); }
+    if (!/^\d{4}$/.test(pin)) { P3.msg = "Enter a 4-digit PIN."; P3.err = true; return pick3View(); }
+    const r = await pkApi("/pick3/mine", { member, pin });
+    if (r.error) { P3.msg = r.error; P3.err = true; P3.ready = false; return pick3View(); }
+    if (member !== PK.member) { PK.ready = false; PK.sel = {}; TV.ready = false; TV.result = null; TV.sel = []; TV.auto = false; }
+    PK.member = member; PK.pin = pin;
+    store.set("pk-member", member);
+    store.set("pk-pin", remember ? pin : "");
+    p3Load(r);
+    pick3View();
+  }
+  async function p3Save() {
+    const btn = main.querySelector('[data-p3="save"]');
+    if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+    const r = await pkApi("/pick3/save", { member: PK.member, pin: PK.pin, picks: P3.sel });
+    if (r.error) { P3.msg = r.error; P3.err = true; return pick3View(); }
+    P3.saved = r.picks; P3.msg = `Saved: ${money(r.salary)} of ${money(P3.data.cap)}.`; P3.err = false;
+    P3.data = await pkApi("/pick3"); P3.at = Date.now();
+    pick3View();
+  }
+  main.addEventListener("click", e => {
+    if (!(state.tab === "games" && state.sub === "pick4")) return;
+    const pos = e.target.closest("[data-p3-pos]");
+    if (pos) { e.preventDefault(); P3.pos = pos.dataset.p3Pos; P3.q = ""; return pick3View(); }
+    const clr = e.target.closest("[data-p3-clear]");
+    if (clr) { P3.sel[clr.dataset.p3Clear] = null; P3.msg = ""; return pick3View(); }
+    const pk = e.target.closest("[data-p3-pick]");
+    if (pk && !pk.disabled) {
+      const id = Number(pk.dataset.p3Pick);
+      P3.sel[P3.pos] = P3.sel[P3.pos] === id ? null : id; P3.msg = "";
+      const next = P3_SLOTS.find(k => !P3.sel[k]);
+      if (next && P3.sel[P3.pos]) { P3.pos = next; P3.q = ""; }
+      return pick3View();
+    }
+    const a = e.target.closest("[data-p3]");
+    if (!a) return;
+    if (a.dataset.p3 === "continue") p3Continue();
+    if (a.dataset.p3 === "save") p3Save();
+    if (a.dataset.p3 === "reload") { P3.data = null; renderPick3(); }
+  });
+  main.addEventListener("input", e => {
+    if (e.target.id !== "p3-q") return;
+    P3.q = e.target.value; P3.focusQ = true; pick3View();
+  });
+
   async function pkContinue() {
     const member = document.getElementById("pk-member").value;
     const pin = document.getElementById("pk-pin").value.trim();
@@ -1153,7 +1324,7 @@
     if (!/^\d{4}$/.test(pin)) { PK.msg = "Enter a 4-digit PIN."; PK.err = true; return pickemView(); }
     const r = await pkApi("/pickem/mine", { member, pin });
     if (r.error) { PK.msg = r.error; PK.err = true; PK.ready = false; return pickemView(); }
-    if (member !== PK.member) { TV.ready = false; TV.result = null; TV.score = null; TV.sel = []; TV.auto = false; }
+    if (member !== PK.member) { TV.ready = false; TV.result = null; TV.score = null; TV.sel = []; TV.auto = false; P3.ready = false; P3.auto = false; P3.sel = {}; P3.saved = {}; }
     PK.member = member; PK.pin = pin; PK.ready = true; PK.err = false;
     PK.sel = {};
     Object.entries(r.picks || {}).forEach(([g, t]) => { PK.sel[g] = Number(t); });
@@ -2500,6 +2671,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-13", [
+      ["Pick 4", "Games → Pick 4", "A weekly side game: a QB, RB, WR and TE from any NFL team under a salary cap, scored with this week's real points. Each spot locks at its player's kickoff.", "#/games/pick4"],
       ["Insights regrouped", "Insights", "14 sub-tabs became 6 pages: Playoff race (with Hot & cold), Luck (with Close games and Vs. projection), Schedule (with Byes ahead), Lineups, Draft (grades or the hindsight redraft) and What ifs (Rules lab and Schedule swap). Player history moved to History. Old links still work.", "#/insights"],
       ["What's new", "this page", "Every feature added to the site, by day. A dot on the header link means something's new since your last look.", "#/whatsnew"],
       ["You vs. autopilot", "Insights → Lineups", "Your real lineups compared with the lineup ESPN's projections would have started from the same roster, and the games your calls swung.", "#/insights/lineups"],
