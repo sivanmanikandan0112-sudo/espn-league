@@ -37,7 +37,11 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   Position bars rate each position group on its own, by player position, on the same spots for every team:
   best QB, best 3 RBs, best 3 WRs (their two spots + FLEX) and best TE each week, in the same simulation. They
   rate the groups, so they don't sum to the power value (a FLEX-capable player counts in his own group).
-- **Insights** (its own tabs, each linkable as `#/insights/<name>`, code in `stats.py`):
+- **Insights** (6 pages, code in `stats.py`): *Playoff race* (`race`, with Hot & cold), *Luck* (`luck`: Luck, Close
+  games, Vs. projection), *Schedule* (`schedule`: strength of schedule, Byes ahead), *Lineups* (`lineups`: Efficiency,
+  You vs. autopilot), *Draft* (`draft`, `?view=redraft` for the hindsight redraft) and *What ifs* (`whatif`: Rules lab,
+  Schedule swap). Old single-view links (`#/insights/close`, `/rules`, `/byes`, ...) redirect to their page with
+  `?at=<view>` to scroll there (`INSIGHT_GROUPS` / `INSIGHT_ALIAS` in `site/app.js`). The views:
   - *Playoff race*: playoff / bye / title odds from 10,000 simulated finishes (team strengths shrunk halfway to
     the league average, `STRENGTH_SHRINK`; the week in progress uses ESPN's live win probabilities).
     Past seasons show final results.
@@ -63,7 +67,7 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   the playoffs; before them, "if the season ended today" with each team's playoff odds.
 - **Player stat lines**: tap any player in a box score for his real stat line and the fantasy points each stat earned
   under that season's scoring. Stored per season in `data/<season>-stats.js`, loaded only when a player is opened.
-- **Player history** (Insights → Player history): search any player who's been on a league roster to see every
+- **Player history** (History → Player history, `#/history/players`): search any player who's been on a league roster to see every
   league team that had him in any season, how he got there (drafted with the pick, traded for, picked up), when he
   left (dropped, traded away) and his points in that team's starting lineup. With no player picked it lists the
   most-traveled players (kickers and defenses aside). Built from the weekly rosters (`player_passport` in `stats.py`)
@@ -141,7 +145,7 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   yours is on bye/out next week, a heads-up for byes in the 3 weeks after, and a stream only when a free agent is
   projected at least +3 (defense) / +2 (kicker) better next week, with what to swap and whether it's a free agent or a
   waiver claim.
-- **Byes ahead** (Insights): for every week left, projected points each team's best lineup loses vs. full strength to
+- **Byes ahead** (Insights → Schedule): for every week left, projected points each team's best lineup loses vs. full strength to
   byes (and players ESPN expects to miss), with K / D/ST flags when every kicker or defense is on bye
   (`add_bye_crunch` in `build.py`).
 - **Phones**: below 640px wide the site switches to an app-style layout (bottom tab bar, one-line header, tables as

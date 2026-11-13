@@ -1101,3 +1101,8 @@ button.tv-opt:hover { border-color: var(--ink-2); }
 .wn-list a:hover { color: var(--accent); }
 .wn-list p { margin: 2px 0 0; color: var(--ink-2); font-size: 14px; }
 .wn-where { font-size: 12px; color: var(--ink-2); margin-left: 6px; white-space: nowrap; }
+
+/* insights pages: related views stacked */
+.ins-part { scroll-margin-top: 12px; }
+.ins-part + .ins-part { margin-top: 10px; }
+.ins-switch { margin: 16px 0 4px; }

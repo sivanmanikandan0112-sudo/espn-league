@@ -1233,31 +1233,32 @@
       `<a href="${href(tab, {}, k)}" class="${k === cur ? "active" : ""}"${k === cur ? ' aria-current="page"' : ""}>${label}</a>`).join("")}</nav>`;
   }
 
+  // Insights pages. Each groups related views as stacked sections; the old one-view sub-tabs still work as links
+  // (they open the page that holds them now, scrolled to that section).
+  const INSIGHT_GROUPS = [
+    ["race", "Playoff race", ["race", "form"]],
+    ["luck", "Luck", ["luck", "close", "projection"]],
+    ["schedule", "Schedule", ["schedule", "byes"]],
+    ["lineups", "Lineups", ["efficiency"]],
+    ["draft", "Draft", ["draft"]],
+    ["whatif", "What ifs", ["rules", "swap"]],
+  ];
+  const INSIGHT_ALIAS = { form: "race", close: "luck", projection: "luck", byes: "schedule", efficiency: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
+  function insightHas(k) {
+    return ({
+      form: () => D.teams.some(x => x.form), projection: () => D.teams.some(x => x.vsProj),
+      byes: () => D.teams.some(x => x.byeCrunch && x.byeCrunch.length), draft: () => !!D.draft,
+      redraft: () => !!(D.draft && D.draft.redraft), rules: () => !!(D.rulesLab && D.rulesLab.weeks),
+      swap: () => !!(D.scheduleSwap && D.scheduleSwap.weeks),
+    }[k] || (() => true))();
+  }
   function insightTabs() {
     const hasOdds = D.teams.some(t => t.odds);
-    const t = [["race", hasOdds || !L.over ? "Playoff race" : "Final results"]];
-    t.push(["luck", "Luck"], ["close", "Close games"]);
-    if (D.teams.some(x => x.form)) t.push(["form", "Hot & cold"]);
-    t.push(["schedule", "Schedule"]);
-    if (D.scheduleSwap && D.scheduleSwap.weeks) t.push(["swap", "Schedule swap"]);
-    if (D.rulesLab && D.rulesLab.weeks) t.push(["rules", "Rules lab"]);
-    if (D.teams.some(x => x.vsProj)) t.push(["projection", "Vs. projection"]);
-    if (D.teams.some(x => x.byeCrunch && x.byeCrunch.length)) t.push(["byes", "Byes ahead"]);
-    t.push(["efficiency", "Efficiency"]);
-    if (D.draft) t.push(["draft", "Draft"]);
-    if (D.draft && D.draft.redraft) t.push(["redraft", "Redraft"]);
-    t.push(["players", "Player history"]);
-    return t;
+    return INSIGHT_GROUPS.filter(([, , keys]) => keys.some(insightHas))
+      .map(([k, label]) => [k, k === "race" && !(hasOdds || !L.over) ? "Final results" : label]);
   }
 
   const INSIGHTS = {
-    players() {
-      const pid = state.params.get("player") || "";
-      setTimeout(() => fillPlayerHistory(main.querySelector(".ph-box"), pid), 0);
-      return section("Player history", { short: "Every league team a player has been on, all seasons.", full: "Pick any player who has been on a league roster: every team that had him in any season, how he got there (drafted with the pick, traded for, picked up), when he left (dropped, traded away) and the points he scored in that team's starting lineup (bench points shown separately). Covers every season, whichever season is picked at the top." },
-        `<label class="field ph-pick">Player <input id="ph-search" list="ph-list" type="search" placeholder="Type a name" autocomplete="off"></label><datalist id="ph-list"></datalist><div class="ph-box"><div class="empty">Loading…</div></div>`);
-    },
-
     rules() {
       const R = D.rulesLab;
       const RULE_INFO = {
@@ -1281,7 +1282,7 @@
       const move = r => { const d = r.ra - r.rv; return d ? `<span class="rl-move ${d > 0 ? "up" : "down"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : `<span class="rl-move">–</span>`; };
       const po = r => !cut ? "" : r.rv <= cut && r.ra > cut ? '<span class="badge new">Now in</span>' : r.rv > cut && r.ra <= cut ? '<span class="badge cold">Now out</span>' : r.rv <= cut ? '<span class="badge">In</span>' : "";
       const winDiff = r => { const d = (r.v[0] + r.v[2] / 2) - (r.a[0] + r.a[2] / 2); return d; };
-      const toggle = `<nav class="pg-by rl-by" aria-label="Rules to compare">${vers.map(v => `<a href="${href("insights", { rule: v.key }, "rules")}" class="${v.key === key ? "active" : ""}"${v.key === key ? ' aria-current="true"' : ""}>${esc(v.name)}</a>`).join("")}</nav>`;
+      const toggle = `<nav class="pg-by rl-by" aria-label="Rules to compare">${vers.map(v => `<a href="${href("insights", { rule: v.key, at: "rules" }, "whatif")}" class="${v.key === key ? "active" : ""}"${v.key === key ? ' aria-current="true"' : ""}>${esc(v.name)}</a>`).join("")}</nav>`;
       const cols = [
         { label: "Team", cell: r => teamCell(r.t) },
         { label: "Rank", num: 1, cell: r => `<b>#${r.rv}</b> ${move(r)}` },
@@ -1556,13 +1557,34 @@
   };
 
   function renderInsights() {
+    const extra = Object.fromEntries([...state.params].filter(([k]) => k !== "season"));
     if (state.sub === "trades") { location.replace(href("trades")); return; } // trade grades moved to the Trades tab
+    if (state.sub === "players") { location.replace(href("history", extra, "players")); return; } // player history moved to History
+    if (INSIGHT_ALIAS[state.sub]) { // an old single-view link: open its page at that section
+      const to = Object.assign(extra, state.sub === "redraft" ? { view: "redraft" } : { at: state.sub });
+      location.replace(href("insights", to, INSIGHT_ALIAS[state.sub]));
+      return;
+    }
     const tabs = insightTabs();
     const sub = tabs.some(([k]) => k === state.sub) ? state.sub : tabs[0][0];
+    const keys = INSIGHT_GROUPS.find(([k]) => k === sub)[2].filter(insightHas);
+    let body;
+    if (sub === "draft" && insightHas("redraft")) {
+      // the real draft's grades or the hindsight redraft, one at a time
+      const view = state.params.get("view") === "redraft" ? "redraft" : "draft";
+      const sw = `<nav class="pg-by ins-switch" aria-label="Draft view">${[["draft", "Draft grades"], ["redraft", "Hindsight redraft"]].map(([k, label]) =>
+        `<a href="${href("insights", k === "redraft" ? { view: k } : {}, "draft")}" class="${k === view ? "active" : ""}"${k === view ? ' aria-current="true"' : ""}>${label}</a>`).join("")}</nav>`;
+      body = sw + INSIGHTS[view]();
+    } else {
+      body = keys.map(k => `<div class="ins-part" id="ins-${k}">${INSIGHTS[k]()}</div>`).join("");
+    }
     main.innerHTML = `<div class="section-head"><div><h1>Insights</h1><p class="sub">${L.over ? L.season + " season in review." : "Who's in, who's lucky, who's setting good lineups, and who drafted well."}</p></div></div>
-      ${subnav("insights", tabs, sub)}${INSIGHTS[sub]()}`;
+      ${subnav("insights", tabs, sub)}${body}`;
     const a = main.querySelector(".subnav .active");
     if (a) a.scrollIntoView({ block: "nearest", inline: "center" });
+    const at = state.params.get("at");
+    const part = at && main.querySelector("#ins-" + CSS.escape(at));
+    if (part && part !== main.querySelector(".ins-part")) setTimeout(() => part.scrollIntoView({ block: "start" }), 0);
   }
 
   // ---------------------------------------------------------------- trades
@@ -1880,7 +1902,7 @@
   });
 
   // ---------------------------------------------------------------- history
-  const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Head to head"], ["rivalries", "Rivalries"], ["records", "Record book"], ["badges", "Badges"]];
+  const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Head to head"], ["rivalries", "Rivalries"], ["records", "Record book"], ["badges", "Badges"], ["players", "Player history"]];
   const BADGE_ICON = { champ: "🏆", runner: "🥈", seed1: "👑", pfking: "💰", comeback: "🔄", streak: "🔥", weektop: "⭐", seasonhigh: "🚀",
     club200: "💯", perfect: "🎯", blowout: "💥", nailbiter: "😅", heartbreak: "💔", robbed: "😤", stolen: "🍀", beatall: "⚔️", dud: "🧊", basement: "🪦" };
   // one member's badges: [{def, list: [[badge, season, week, game, detail]...] newest first}] in the badge order
@@ -1917,6 +1939,12 @@
   };
 
   const HISTORY = {
+    players() {
+      const pid = state.params.get("player") || "";
+      setTimeout(() => fillPlayerHistory(main.querySelector(".ph-box"), pid), 0);
+      return section("Player history", { short: "Every league team a player has been on, all seasons.", full: "Pick any player who has been on a league roster: every team that had him in any season, how he got there (drafted with the pick, traded for, picked up), when he left (dropped, traded away) and the points he scored in that team's starting lineup (bench points shown separately). Covers every season." },
+        `<label class="field ph-pick">Player <input id="ph-search" list="ph-list" type="search" placeholder="Type a name" autocomplete="off"></label><datalist id="ph-list"></datalist><div class="ph-box"><div class="empty">Loading…</div></div>`);
+    },
     badges(H) {
       const B = H.badges;
       if (!B) return `<div class="empty">Badges appear after the next site update.</div>`;
@@ -2472,8 +2500,9 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-13", [
+      ["Insights regrouped", "Insights", "14 sub-tabs became 6 pages: Playoff race (with Hot & cold), Luck (with Close games and Vs. projection), Schedule (with Byes ahead), Lineups, Draft (grades or the hindsight redraft) and What ifs (Rules lab and Schedule swap). Player history moved to History. Old links still work.", "#/insights"],
       ["What's new", "this page", "Every feature added to the site, by day. A dot on the header link means something's new since your last look.", "#/whatsnew"],
-      ["You vs. autopilot", "Insights → Efficiency", "Your real lineups compared with the lineup ESPN's projections would have started from the same roster, and the games your calls swung.", "#/insights/efficiency"],
+      ["You vs. autopilot", "Insights → Lineups", "Your real lineups compared with the lineup ESPN's projections would have started from the same roster, and the games your calls swung.", "#/insights/lineups"],
       ["Player news", "My team", "ESPN's latest news on your players (injuries, practice reports, game lines), with what's new since your last visit marked.", "#/myteam"],
       ["Games tab", "new tab", "Pick'em moved here from Matchups, next to the new trivia.", "#/games"],
       ["League trivia", "Games → League trivia", "5 questions a week about your league's own history. One try, same name and PIN as pick'em, season leaderboard.", "#/games/trivia"],
@@ -2487,13 +2516,13 @@
       ["Trade ideas", "Trades → Trade ideas", "Trades that would help both teams, matched from each roster's surplus and needs.", "#/trades/ideas"],
       ["Compare players", "Trades → Compare players", "Any two players side by side, week by week, under your league's scoring.", "#/trades/compare"],
       ["Personal record books", "History → Record book, My team", "Pick any manager to see their own bests and worsts; your top marks show as tiles on My team.", "#/history/records"],
-      ["Player history moved", "Insights → Player history", "Search any player to see every league team he's been on, how he got there and how he left.", "#/insights/players"],
+      ["Player history", "History → Player history", "Search any player to see every league team he's been on, how he got there and how he left.", "#/history/players"],
       ["Pick'em matchup cards", "Games → Pick'em", "Each matchup in its own labeled card so it's clear who's playing who.", "#/games"],
       ["Odds bars to scale", "Insights → Playoff race", "Playoff, bye and title bars are now as long as their percentage.", "#/insights/race"],
     ]],
     ["2026-11-09", [
-      ["Rules lab", "Insights → Rules lab", "This season under half-PPR, full PPR, standard, a median-win format and best ball.", "#/insights/rules"],
-      ["Hindsight redraft", "Insights → Redraft", "Your draft redone knowing how every player has actually played.", "#/insights/redraft"],
+      ["Rules lab", "Insights → What ifs", "This season under half-PPR, full PPR, standard, a median-win format and best ball.", "#/insights/whatif?at=rules"],
+      ["Hindsight redraft", "Insights → Draft", "Your draft redone knowing how every player has actually played.", "#/insights/draft?view=redraft"],
       ["Badges", "History → Badges, My team", "18 achievements earned across every season.", "#/history/badges"],
       ["Monday-night math", "Matchups", "What each team needs from its Monday players, or whether the game is already locked up.", "#/matchups"],
       ["This week in league history", "Matchups", "The same week's big moments from past seasons.", "#/matchups"],
@@ -2512,9 +2541,9 @@
       ["Playoff bracket", "Matchups → Playoff bracket", "The bracket, plus shareable image cards.", "#/matchups/bracket"],
       ["Player stat lines", "any box score", "Tap a player to see his stat line and how each stat scored.", "#/matchups"],
       ["Trade block", "Trades → Trade block", "Who's shopping whom, and what each team needs.", "#/trades/block"],
-      ["Schedule swap", "Insights → Schedule swap", "Every team's record on every other team's schedule.", "#/insights/swap"],
-      ["Hot & cold, Vs. projection, Close games", "Insights", "Who's surging, who's beating ESPN's projections, and records in games decided by under 10.", "#/insights/form"],
-      ["Byes ahead", "Insights → Byes ahead", "Upcoming weeks where byes hurt each team most.", "#/insights/byes"],
+      ["Schedule swap", "Insights → What ifs", "Every team's record on every other team's schedule.", "#/insights/whatif?at=swap"],
+      ["Hot & cold, Vs. projection, Close games", "Insights → Playoff race, Luck", "Who's surging, who's beating ESPN's projections, and records in games decided by under 10.", "#/insights/race?at=form"],
+      ["Byes ahead", "Insights → Schedule", "Upcoming weeks where byes hurt each team most.", "#/insights/schedule?at=byes"],
       ["Since your last visit", "Standings", "A summary card of what changed since you last opened the site.", "#/"],
       ["League settings", "Settings", "Your league's scoring, roster spots, playoff format and key dates.", "#/settings"],
       ["Works offline", "home-screen app", "Pages and data are saved on your phone, with pull to refresh.", "#/"],
@@ -2858,19 +2887,19 @@
         const v = input.value.trim().toLowerCase();
         const hit = ids.find(id => label(id).toLowerCase() === v) || ids.find(id => P.players[id].n.toLowerCase() === v)
           || ids.find(id => P.players[id].n.toLowerCase().includes(v));
-        if (hit) location.hash = href("insights", { player: hit }, "players");
+        if (hit) location.hash = href("history", { player: hit }, "players");
       };
       if (pid && P.players[pid]) input.value = label(pid);
     }
     if (pid && P.players[pid]) {
-      box.innerHTML = `<div class="ph-one"></div><p style="margin-top:10px"><a class="wk-link" href="${href("insights", {}, "players")}">‹ Most-traveled players</a> · <a class="wk-link" href="${href("trades", { a: pid }, "compare")}">Compare this season ›</a></p>`;
+      box.innerHTML = `<div class="ph-one"></div><p style="margin-top:10px"><a class="wk-link" href="${href("history", {}, "players")}">‹ Most-traveled players</a> · <a class="wk-link" href="${href("trades", { a: pid }, "compare")}">Compare this season ›</a></p>`;
       return renderPassport(box.querySelector(".ph-one"), pid, true);
     }
     const managers = x => new Set(x.s.flatMap(s => (P.teams[s[0] + "|" + s[1]] || ["", []])[1])).size;
     const rows = ids.filter(id => !["K", "D/ST"].includes(P.players[id].p)).map(id => ({ id, x: P.players[id], m: managers(P.players[id]), n: P.players[id].s.length, pts: P.players[id].s.reduce((a, s) => a + s[4], 0) }))
       .sort((a, b) => b.m - a.m || b.n - a.n || b.pts - a.pts).slice(0, 12);
     box.innerHTML = `<h3 class="pp-h" style="margin-top:6px">Most-traveled players</h3><p class="pp-sum">The players who've been through the most managers' hands (kickers and defenses aside, since they get streamed). Tap one for his full history.</p>
-      <div class="picks">${rows.map(r => `<a class="pick ph-row" href="${href("insights", { player: r.id }, "players")}"><span class="pick-no">${r.m}</span><span class="slot ${esc(r.x.p)}">${esc(r.x.p)}</span>
+      <div class="picks">${rows.map(r => `<a class="pick ph-row" href="${href("history", { player: r.id }, "players")}"><span class="pick-no">${r.m}</span><span class="slot ${esc(r.x.p)}">${esc(r.x.p)}</span>
         <span class="pick-name"><b>${esc(r.x.n)}</b><span class="team-mgr">${r.m} managers · ${r.n} stints · ${r.pts.toFixed(0)} pts started</span></span><span class="pick-v">›</span></a>`).join("")}</div>`;
   }
 
@@ -2914,7 +2943,7 @@
       <div class="stat-pts">${fmt(p.pts)}<small>fantasy pts</small></div></div>
       <div class="stat-body"><div class="empty">Loading stats…</div></div>
       <div class="stat-actions"><a class="cta stat-cmp" href="${href("trades", { a: p.id }, "compare")}">Compare with…</a>
-        <a class="linkbtn" href="${href("insights", { player: p.id }, "players")}">League history ›</a></div>
+        <a class="linkbtn" href="${href("history", { player: p.id }, "players")}">League history ›</a></div>
       <button type="button" class="linkbtn share-close">Close</button></div>`;
     document.body.appendChild(sheet);
     const close = () => { sheet.remove(); document.removeEventListener("keydown", onKey); };
