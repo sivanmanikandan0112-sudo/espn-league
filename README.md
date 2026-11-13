@@ -217,6 +217,12 @@ npx wrangler secret put GITHUB_TOKEN   # optional: fine-grained token, this repo
 Then put the Worker's URL in `site/config.js` (`liveApi`). When the ESPN cookies expire, re-run the two
 `sh worker/set-secrets.sh` (and `gh secret set -f .env` for the GitHub build).
 
+## What's new
+
+`#/whatsnew` (sparkle button in the header): every feature, grouped by the day it went live, from the `CHANGELOG`
+list in `site/app.js`. Add new features at the top of that list. The header button shows a dot until the latest
+day has been seen on that device (`lhq:wn-seen`).
+
 ## Games tab
 
 `#/games`: Pick'em (moved from Matchups; old `#/matchups/pickem` links redirect) and **League trivia**

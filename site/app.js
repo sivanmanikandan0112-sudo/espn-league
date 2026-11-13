@@ -97,7 +97,7 @@
     const hash = location.hash.replace(/^#/, "") || "/";
     const [path, qs] = hash.split("?");
     const params = new URLSearchParams(qs || "");
-    const tab = ["myteam", "matchups", "games", "insights", "trades", "history", "settings"].find(t => path.startsWith("/" + t)) || "standings";
+    const tab = ["myteam", "matchups", "games", "insights", "trades", "history", "settings", "whatsnew"].find(t => path.startsWith("/" + t)) || "standings";
     const season = Number(params.get("season")) || IDX.current;
     state.tab = tab;
     state.sub = path.split("/")[2] || "";
@@ -122,12 +122,14 @@
     }
     renderChrome();
     renderTicker();
+    updateWhatsNewDot();
     if (tab === "matchups") renderMatchups();
     else if (tab === "games") renderGames();
     else if (tab === "insights") renderInsights();
     else if (tab === "trades") renderTrades();
     else if (tab === "history") renderHistory();
     else if (tab === "settings") renderSettings();
+    else if (tab === "whatsnew") renderWhatsNew();
     else if (tab === "myteam") renderMyTeam();
     else renderStandings();
   }
@@ -2464,6 +2466,83 @@
   const PER_YARD = new Set([3, 24, 42, 114, 115]);
   const DAY = { SUNDAY: "Sun", MONDAY: "Mon", TUESDAY: "Tue", WEDNESDAY: "Wed", THURSDAY: "Thu", FRIDAY: "Fri", SATURDAY: "Sat" };
   const DAY_ORDER = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+
+  // ---------------------------------------------------------------- what's new
+  // Every feature added to the site, grouped by the day it went live (newest first). Add new features at the top.
+  // [title, where it lives, one-line description, link]
+  const CHANGELOG = [
+    ["2026-11-13", [
+      ["What's new", "this page", "Every feature added to the site, by day. A dot on the header link means something's new since your last look.", "#/whatsnew"],
+      ["You vs. autopilot", "Insights → Efficiency", "Your real lineups compared with the lineup ESPN's projections would have started from the same roster, and the games your calls swung.", "#/insights/efficiency"],
+      ["Player news", "My team", "ESPN's latest news on your players (injuries, practice reports, game lines), with what's new since your last visit marked.", "#/myteam"],
+      ["Games tab", "new tab", "Pick'em moved here from Matchups, next to the new trivia.", "#/games"],
+      ["League trivia", "Games → League trivia", "5 questions a week about your league's own history. One try, same name and PIN as pick'em, season leaderboard.", "#/games/trivia"],
+    ]],
+    ["2026-11-11", [
+      ["Waiver targets: smarter rest of season", "My team", "Rest of season only lists pickups that help in 2+ weeks; one-week bye fill-ins stay under short-handed weeks.", "#/myteam"],
+    ]],
+    ["2026-11-10", [
+      ["Waiver targets", "My team", "Free agents that would improve your lineup next week and for the rest of the season, the easiest drop, and fill-ins for short-handed weeks.", "#/myteam"],
+      ["Kicker & defense alerts", "My team → Waiver targets", "Warnings when your kicker or defense has a bye, with the best replacements, and streams only when one is clearly better.", "#/myteam"],
+      ["Trade ideas", "Trades → Trade ideas", "Trades that would help both teams, matched from each roster's surplus and needs.", "#/trades/ideas"],
+      ["Compare players", "Trades → Compare players", "Any two players side by side, week by week, under your league's scoring.", "#/trades/compare"],
+      ["Personal record books", "History → Record book, My team", "Pick any manager to see their own bests and worsts; your top marks show as tiles on My team.", "#/history/records"],
+      ["Player history moved", "Insights → Player history", "Search any player to see every league team he's been on, how he got there and how he left.", "#/insights/players"],
+      ["Pick'em matchup cards", "Games → Pick'em", "Each matchup in its own labeled card so it's clear who's playing who.", "#/games"],
+      ["Odds bars to scale", "Insights → Playoff race", "Playoff, bye and title bars are now as long as their percentage.", "#/insights/race"],
+    ]],
+    ["2026-11-09", [
+      ["Rules lab", "Insights → Rules lab", "This season under half-PPR, full PPR, standard, a median-win format and best ball.", "#/insights/rules"],
+      ["Hindsight redraft", "Insights → Redraft", "Your draft redone knowing how every player has actually played.", "#/insights/redraft"],
+      ["Badges", "History → Badges, My team", "18 achievements earned across every season.", "#/history/badges"],
+      ["Monday-night math", "Matchups", "What each team needs from its Monday players, or whether the game is already locked up.", "#/matchups"],
+      ["This week in league history", "Matchups", "The same week's big moments from past seasons.", "#/matchups"],
+      ["Watch the play", "Matchups → Big plays", "Highlight clips from ESPN on big plays.", "#/matchups/plays"],
+      ["Live score ticker", "bottom of every page", "Every matchup's score while NFL games are on.", "#/matchups"],
+    ]],
+    ["2026-11-08", [
+      ["Big plays", "Matchups → Big plays", "Every touchdown, turnover and big gain this week with the fantasy points each play was worth, grouped by NFL game or by matchup.", "#/matchups/plays"],
+      ["Opens where the action is", "", "The site opens on Matchups on NFL game days and on Standings otherwise.", "#/"],
+    ]],
+    ["2026-11-07", [
+      ["Live scores", "Matchups", "Scores update every minute during games.", "#/matchups"],
+      ["Weekly pick'em", "Games → Pick'em", "Pick a winner for every matchup each week; picks lock at the first kickoff.", "#/games"],
+      ["My team", "My team", "Your matchup, standing, odds, schedule, roster and games to watch, all in one place.", "#/myteam"],
+      ["Watch guide", "Matchups → Watch guide", "Which real NFL games matter most to the league this week.", "#/matchups/watch"],
+      ["Playoff bracket", "Matchups → Playoff bracket", "The bracket, plus shareable image cards.", "#/matchups/bracket"],
+      ["Player stat lines", "any box score", "Tap a player to see his stat line and how each stat scored.", "#/matchups"],
+      ["Trade block", "Trades → Trade block", "Who's shopping whom, and what each team needs.", "#/trades/block"],
+      ["Schedule swap", "Insights → Schedule swap", "Every team's record on every other team's schedule.", "#/insights/swap"],
+      ["Hot & cold, Vs. projection, Close games", "Insights", "Who's surging, who's beating ESPN's projections, and records in games decided by under 10.", "#/insights/form"],
+      ["Byes ahead", "Insights → Byes ahead", "Upcoming weeks where byes hurt each team most.", "#/insights/byes"],
+      ["Since your last visit", "Standings", "A summary card of what changed since you last opened the site.", "#/"],
+      ["League settings", "Settings", "Your league's scoring, roster spots, playoff format and key dates.", "#/settings"],
+      ["Works offline", "home-screen app", "Pages and data are saved on your phone, with pull to refresh.", "#/"],
+    ]],
+    ["2026-11-06", [
+      ["League HQ launches", "", "Standings, matchups with box scores, and trade history.", "#/"],
+      ["Power rankings", "Standings", "Each team's projected strength for the rest of the season, with position-by-position bars.", "#/"],
+      ["Playoff odds, Luck, Efficiency, Schedule, Draft", "Insights", "Playoff chances from a season simulation, all-play luck, lineup efficiency, schedule strength and draft grades.", "#/insights/race"],
+      ["Trade grades", "Trades", "How each trade has worked out for both sides.", "#/trades"],
+      ["Past seasons & History", "History", "Every season since 2023: champions, head-to-head records, rivalries and the record book.", "#/history"],
+      ["Phone layout", "everywhere", "A bottom tab bar, card tables and an installable home-screen app.", "#/"],
+    ]],
+  ];
+  const WN_LATEST = CHANGELOG[0][0];
+  function updateWhatsNewDot() {
+    const dot = document.querySelector(".hdr-dot");
+    if (dot) dot.hidden = store.get("wn-seen", "") >= WN_LATEST;
+  }
+  function renderWhatsNew() {
+    const seen = store.get("wn-seen", "");
+    store.set("wn-seen", WN_LATEST);
+    updateWhatsNewDot();
+    const day = d => new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+    const n = CHANGELOG.reduce((k, [, items]) => k + items.length, 0);
+    main.innerHTML = `<div class="section-head"><div><h1>What's new</h1><p class="sub">Everything added to the site, newest first (${n} features so far).</p></div></div>` +
+      CHANGELOG.map(([d, items]) => `<section class="wn-day"><h2>${esc(day(d))}${seen && d > seen ? ' <span class="badge new">New</span>' : ""}<span class="team-mgr">${items.length} ${items.length === 1 ? "addition" : "additions"}</span></h2>
+        <ul class="wn-list">${items.map(([title, where, desc, link]) => `<li><a href="${esc(link)}">${esc(title)}</a>${where ? `<span class="wn-where">${esc(where)}</span>` : ""}<p>${esc(desc)}</p></li>`).join("")}</ul></section>`).join("");
+  }
 
   function renderSettings() {
     const S = D.settings;
