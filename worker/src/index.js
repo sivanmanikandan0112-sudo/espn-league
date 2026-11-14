@@ -541,6 +541,7 @@ const PLAY = [
 // big play when exactly one carry, catch or completion happened since the last check, so it was all one play.
 const YARDS = [[42, "catch", 30, 53], [24, "run", 30, 23], [3, "pass", 50, 1]];
 const YARD_STATS = [...new Set(YARDS.flatMap(([y, , , n]) => [y, n]))];
+const PLAY_IDS = [...new Set(PLAY.flatMap(([ids]) => ids))];
 
 function yardagePlay(oldY, newY) {
   if (!oldY) return null; // first snapshot with yardage
@@ -770,7 +771,8 @@ async function updateFeed(env) {
         const line = lv.stats[`${lv.week}|${p.id}`] || {};
         const a = line.a || {}, r = line.r || {};
         const y = Object.fromEntries(YARD_STATS.map(k => [k, r[k] || 0]));
-        snap[p.id] = { p: p.pts, a, y };
+        const c = Object.fromEntries(PLAY_IDS.map(k => [k, r[k] || 0])); // how many of each play so far
+        snap[p.id] = { p: p.pts, a, y, c };
         const old = prev.snap[p.id];
         if (!old) continue;
         const delta = Math.round((p.pts - old.p) * 100) / 100;
@@ -784,10 +786,15 @@ async function updateFeed(env) {
         // points from the play itself (its own stats), not everything the player gained this minute; touchdowns,
         // field goals and long gains are priced exactly once their yards are known (playPoints below)
         const own = play && play.ids ? Math.round(play.ids.reduce((sum, id) => sum + (a[id] || 0) - ((old.a || {})[id] || 0), 0) * 100) / 100 : delta;
-        if (p.pos === "D/ST" && !(play && own >= DST_MIN_PTS)) continue; // team defenses: only plays worth 5+ (TDs)
+        // The snapshot is only saved when something gets written, so a quiet stretch (a defense's first interception,
+        // which isn't a feed play) can leave it several minutes old, and two plays of the same kind then arrive
+        // together. Count them from the raw stats so each is judged (and labeled) on its own.
+        const count = play && play.ids && old.c ? Math.max(1, Math.round(play.ids.reduce((n, id) => n + (c[id] || 0) - (old.c[id] || 0), 0))) : 1;
+        const each = own / count;
+        if (p.pos === "D/ST" && !(play && each >= DST_MIN_PTS)) continue; // team defenses: only plays worth 5+ (TDs)
         events.push({
           t: Date.now(), game: g.id, team: side.team, opp: opp.team, pid: p.id, name: p.name, pos: p.pos, nfl: p.team,
-          starter: !["BE", "IR"].includes(p.slot), label: play ? play.label : "stat correction",
+          starter: !["BE", "IR"].includes(p.slot), label: play ? (count > 1 ? `${count}× ${play.label}` : play.label) : "stat correction",
           kind: play ? play.label : "stat correction",
           delta: own, minute: delta, pts: p.pts, score: [side.pts, opp.pts],
         });
