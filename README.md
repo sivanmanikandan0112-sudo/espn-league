@@ -248,6 +248,21 @@ Worker `GET /react?week=N`, `POST /react/toggle {member, pin, week, item, emoji}
 `react:<season>:<week>` = `{ item: { emoji: [member ids] } }` with items `g:<matchup id>`, `p:<player id>-<time>`,
 `hi:top`, `lo:low`. The page fetches a week's reactions at most once a minute.
 
+## League pulse
+
+Standings sidebar (and under the standings on phones): recent activity on the site, newest first, from the worker's
+`GET /pulse`. Written by the worker whenever someone reacts (and removed if they take it back), saves pick'em, Pick 4,
+waiver wire challenge, Bullseye or Rank 'em entries, finishes trivia or updates the trade block. Never what anyone
+picked. One KV value per season, `pulse:<season>`, the last 40 events; the same person doing the same thing within
+30 minutes moves back to the top instead of adding a line (`pulse()` in `worker/src/index.js`).
+
+## Compact mode
+
+A per-device display setting (`lhq:compact`, the `compact` class on `<html>`): the Compact button in the header or
+Settings → Display. Tighter table rows, matchup cards, tiles, game lists and spacing, and the one-line explanation
+with ⓘ on every screen size. Tap targets stay at least 36 px. Styles are the `.compact` rules at the end of
+`site/style.css`.
+
 ## Games tab
 
 `#/games`: Pick'em (moved from Matchups; old `#/matchups/pickem` links redirect) and **League trivia**

@@ -222,6 +222,7 @@ async function handlePickem(req, env, url) {
     const err = await checkPin(env, st.season, member, body.pin); // only after the picks are valid, so a bad try never claims a name
     if (err) return json(env, req, { error: err }, 403);
     await env.PICKEM.put(`picks:${st.season}:${st.week}:${member}`, JSON.stringify({ picks, at: new Date().toISOString() }));
+    await pulse(env, st.season, { m: member, k: "pickem", w: st.week });
     return json(env, req, { ok: true, picks, count: Object.keys(picks).length, of: st.games.length });
   }
   return json(env, req, { error: "Not found" }, 404);
@@ -293,6 +294,7 @@ async function handleTrivia(req, env, url) {
     row.weeks[st.week] = score;
     row.total = Object.values(row.weeks).reduce((n, x) => n + x, 0);
     await env.PICKEM.put(`trivia-board:${st.season}`, JSON.stringify(b));
+    await pulse(env, st.season, { m: member, k: "trivia", w: st.week });
     return json(env, req, { submitted: true, score, result: triviaResult(quiz, answers) });
   }
   return json(env, req, { error: "Not found" }, 404);
@@ -512,6 +514,7 @@ async function handlePick3(req, env, url) {
     const fresh = (await env.PICKEM.get(eKey, "json")) || {};
     fresh[member] = { ...next, at: new Date().toISOString() };
     await env.PICKEM.put(eKey, JSON.stringify(fresh));
+    await pulse(env, st.season, { m: member, k: cfg.fa ? "fa" : "pick4", w: st.week });
     if (!S.open.includes(st.week)) {
       const S2 = (await env.PICKEM.get(`${cfg.prefix}-season:${st.season}`, "json")) || { weeks: {}, open: [] };
       if (!S2.open.includes(st.week)) { S2.open.push(st.week); await env.PICKEM.put(`${cfg.prefix}-season:${st.season}`, JSON.stringify(S2)); }
@@ -616,6 +619,7 @@ async function handleBull(req, env, url) {
     const fresh = (await env.PICKEM.get(eKey, "json")) || { sp: slate.sp, target, e: {} };
     fresh.e[member] = { picks: next, at: new Date().toISOString() };
     await env.PICKEM.put(eKey, JSON.stringify(fresh));
+    await pulse(env, st.season, { m: member, k: "bull", w: st.week });
     await markOpen(env, "bull", st.season, st.week);
     return json(env, req, { ok: true, picks: await withPts(next) });
   }
@@ -707,10 +711,35 @@ async function handleRank(req, env, url) {
     const fresh = (await env.PICKEM.get(eKey, "json")) || {};
     fresh[member] = { order, at: new Date().toISOString() };
     await env.PICKEM.put(eKey, JSON.stringify(fresh));
+    await pulse(env, st.season, { m: member, k: "rank", w: st.week });
     await markOpen(env, "rank", st.season, st.week);
     return json(env, req, { ok: true, order });
   }
   return json(env, req, { error: "Not found" }, 404);
+}
+
+// ---------------------------------------------------------------- League pulse
+// Recent activity on the site, newest first: who reacted, played a game or updated the trade block. Never what anyone
+// picked (that stays hidden until it locks). One KV value per season, the last PULSE_MAX events; the same person doing
+// the same thing again within 30 minutes just moves back to the top instead of adding a line.
+const PULSE_MAX = 40;
+async function pulse(env, season, ev, remove = false) {
+  try {
+    const key = `pulse:${season}`;
+    const list = (await env.PICKEM.get(key, "json")) || [];
+    const now = Date.now();
+    const same = e => e.m === ev.m && e.k === ev.k && (e.x || "") === (ev.x || "");
+    const i = list.findIndex(e => same(e) && (remove || now - e.t < 30 * 60e3));
+    if (remove && i < 0) return;
+    if (i >= 0) list.splice(i, 1);
+    if (!remove) list.unshift({ ...ev, t: now });
+    await env.PICKEM.put(key, JSON.stringify(list.slice(0, PULSE_MAX)));
+  } catch (e) { console.log("pulse failed", String(e)); }
+}
+async function handlePulse(req, env) {
+  if (!env.PICKEM) return json(env, req, { events: [] });
+  const st = await pickemWeek(env);
+  return json(env, req, { season: st.season, events: (await env.PICKEM.get(`pulse:${st.season}`, "json")) || [] });
 }
 
 // ---------------------------------------------------------------- reactions
@@ -740,6 +769,7 @@ async function handleReact(req, env, url) {
   if (!list.length) delete it[emoji];
   if (!Object.keys(it).length) delete R[item];
   await env.PICKEM.put(key, JSON.stringify(R));
+  await pulse(env, st.season, { m: member, k: "react", x: `${week}|${item}|${emoji}`, w: week, i: item, e: emoji }, i >= 0);
   return json(env, req, { ok: true, week, items: R });
 }
 
@@ -1131,6 +1161,7 @@ async function handleBlock(req, env, url) {
     await env.PICKEM.delete(key);
   } else {
     await env.PICKEM.put(key, JSON.stringify({ team: team.id, by: member, statuses, needs, note, at: new Date().toISOString() }));
+    await pulse(env, R.season, { m: member, k: "block" });
   }
   await caches.default.delete(new Request(`https://cache.local/rosters-${R.season}`));
   return json(env, req, { ok: true, team: team.id, statuses: effectiveStatuses(team, { statuses }) });
@@ -1155,7 +1186,7 @@ export default {
       try { return await handlePick3(req, env, url); }
       catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
     }
-    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact]]) {
+    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact], ["/pulse", handlePulse]]) {
       if (url.pathname.startsWith(pre)) {
         try { return await fn(req, env, url); }
         catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }

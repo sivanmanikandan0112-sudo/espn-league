@@ -63,6 +63,20 @@
     get(k, d) { try { const v = localStorage.getItem("lhq:" + k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } },
     set(k, v) { try { localStorage.setItem("lhq:" + k, JSON.stringify(v)); } catch (_) { /* ignore */ } },
   };
+  // Compact mode (per device): tighter tables, cards and spacing, one-line explanations everywhere
+  function setCompact(on) {
+    document.documentElement.classList.toggle("compact", on);
+    store.set("compact", on);
+    document.querySelectorAll("[data-compact]").forEach(b => { b.setAttribute("aria-pressed", on); if (b.type === "checkbox") b.checked = on; });
+  }
+  setCompact(!!store.get("compact", false));
+  document.addEventListener("click", e => {
+    const b = e.target.closest("button[data-compact]");
+    if (b) setCompact(!document.documentElement.classList.contains("compact"));
+  });
+  document.addEventListener("change", e => {
+    if (e.target.matches && e.target.matches("input[data-compact]")) setCompact(e.target.checked);
+  });
 
   // ---------------------------------------------------------------- data loading
   function parseAssigned(text) { return JSON.parse(text.slice(text.indexOf('={"') + 1, text.lastIndexOf("}") + 1)); }
@@ -134,6 +148,7 @@
     else if (tab === "myteam") renderMyTeam();
     else renderStandings();
     rxHydrate();
+    pulseLoad();
   }
 
   // ---------------------------------------------------------------- chrome (header, tabs, footer, banner)
@@ -291,6 +306,76 @@
     </article>`;
   }
 
+  // ---------------------------------------------------------------- League pulse (Standings sidebar)
+  // What people have been doing on the site lately, from the live worker (never what anyone picked).
+  const PULSE = { events: null, at: 0, all: false };
+  const pulseOn = () => state.season === IDX.current && !!LIVE_API_BASE();
+  const PULSE_SHOWN = 6;
+  function pulseAgo(t) {
+    const m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return "now";
+    if (m < 60) return m + "m";
+    if (m < 24 * 60) return Math.round(m / 60) + "h";
+    return new Date(t).toLocaleDateString([], { weekday: "short" });
+  }
+  function pulseLine(e) {
+    const who = `<b>${esc(nameOfMember(e.m))}</b>`;
+    const cur = window.LEAGUE_DATA[IDX.current];
+    let what = "", link = "#/games";
+    if (e.k === "react") {
+      const [kind, id] = String(e.i || "").split(":");
+      let target = "something";
+      if (kind === "g") {
+        const g = cur && (cur.weeks.find(w => w.week === e.w) || { games: [] }).games.find(x => String(x.id) === id);
+        const nm = t => esc(((cur.teams.find(x => x.id === t) || {}).name || "?"));
+        target = g && g.sides.length === 2 ? `${nm(g.sides[0].team)} vs. ${nm(g.sides[1].team)}` : `a week ${e.w} matchup`;
+        link = href("matchups", { week: e.w, game: id });
+      } else if (kind === "p") {
+        const [pid, t] = id.split("-");
+        const play = window.LIVE_FEED && (window.LIVE_FEED.events || []).find(x => String(x.pid) === pid && String(x.t) === t);
+        target = play ? `${esc(play.name)}'s ${esc(play.label)}` : "a big play";
+        link = "#/matchups/plays";
+      } else {
+        target = `week ${e.w}'s ${kind === "hi" ? "high" : "low"} score`;
+        link = "#/";
+      }
+      what = `reacted ${esc(e.e)} to ${target}`;
+    } else {
+      [what, link] = {
+        pickem: [`made pick'em picks for week ${e.w}`, "#/games"],
+        pick4: ["saved a Pick 4 lineup", "#/games/pick4"],
+        fa: ["saved a waiver wire challenge lineup", "#/games/pick4?view=fa"],
+        bull: ["saved Bullseye picks", "#/games/bullseye"],
+        rank: ["ranked this week's Rank 'em", "#/games/rankem"],
+        trivia: [`finished week ${e.w}'s trivia`, "#/games/trivia"],
+        block: ["updated the trade block", "#/trades/block"],
+      }[e.k] || ["did something", "#/"];
+    }
+    return `<a class="pulse-line" href="${link}"><span class="pulse-t">${pulseAgo(e.t)}</span><span>${who} ${what}</span></a>`;
+  }
+  const pulseSection = () => pulseOn() ? `<section class="pulse-sec"><div class="section-head"><h2>League pulse</h2></div><div class="panel pulse">${pulseInner()}</div></section>` : "";
+  const pulsePaint = () => document.querySelectorAll(".pulse").forEach(b => { b.innerHTML = pulseInner(); });
+  function pulseInner() {
+    if (!PULSE.events) return '<p class="note">Loading…</p>';
+    if (!PULSE.events.length) return '<p class="note">Nothing yet. Reactions, game entries and trade block updates show up here.</p>';
+    const list = PULSE.all ? PULSE.events : PULSE.events.slice(0, PULSE_SHOWN);
+    return list.map(pulseLine).join("") + (PULSE.events.length > PULSE_SHOWN
+      ? `<button type="button" class="linkbtn pulse-more" data-pulse-more>${PULSE.all ? "Show less" : `See all (${PULSE.events.length})`}</button>` : "");
+  }
+  async function pulseLoad() {
+    if (!document.querySelector(".pulse") || !pulseOn()) return;
+    if (PULSE.events && Date.now() - PULSE.at < 60000) return;
+    const r = await pkApi("/pulse").catch(() => null);
+    if (r && !r.error) { PULSE.events = r.events || []; PULSE.at = Date.now(); }
+    else if (!PULSE.events) PULSE.events = [];
+    pulsePaint();
+  }
+  document.addEventListener("click", e => {
+    if (!e.target.closest("[data-pulse-more]")) return;
+    PULSE.all = !PULSE.all;
+    pulsePaint();
+  });
+
   function sidebar() {
     const wk = D.weeks.find(x => x.week === state.sideWeek);
     const rows = [];
@@ -339,6 +424,7 @@
             <span><div class="mini-team">${logo(pf)}${esc(pf.name)}</div><div class="val">${fmt(pf.pf)} season points</div></span></div>
         </div>
       </section>
+      ${pulseSection()}
     </aside>`;
   }
 
@@ -538,6 +624,7 @@
         <div class="legend"><span>Team / ${esc(S[state.sort][0])}</span>${SEGS().map(p => `<span><i class="dot ${p}"></i>${p}</span>`).join("")}<span class="right">Bar numbers = position rank</span></div>
         <div class="teams" id="teams">${shown.length ? shown.map(([t, i]) => teamCard(t, i, maxPos)).join("") : '<div class="empty">No team, manager or player matches that.</div>'}</div>
         ${storyline()}
+        <div class="pulse-phone">${pulseSection()}</div>
       </section>
       ${sidebar()}
     </div>`;
@@ -3217,6 +3304,8 @@
       ["Customize My team", "My team", "Reorder or hide the sections on My team. Saved on your device.", "#/myteam"],
       ["Fix it on ESPN", "My team", "A lineup check under your matchup, plus buttons that open the exact ESPN page to fix a lineup or claim a player.", "#/myteam"],
       ["Glossary", "Footer, every ⓘ", "Every stat and term on the site in one searchable page.", "#/glossary"],
+      ["League pulse", "Standings", "What people have been up to on the site: reactions, game entries and trade block updates (never anyone's picks).", "#/"],
+      ["Compact mode", "Header, Settings", "Tighter tables, cards and spacing so more fits on screen, with one-line explanations. Saved on your device.", "#/settings"],
     ]],
     ["2026-11-13", [
       ["Pick 4 prices follow the news", "Games → Pick 4", "Prices update every 30 minutes with ESPN's projections and injury news (Q / D / OUT tags, ▲/▼ since the week opened). Players already in your lineup keep the price you paid; the waiver wire list updates as players are dropped and picked up.", "#/games/pick4"],
@@ -3478,7 +3567,11 @@
       row("Trade review", S.tradeReviewHours ? `${S.tradeReviewHours} hours` : "None", S.vetoVotes ? `${S.vetoVotes} league votes veto a trade` : "") +
       (S.entryFee ? row("Entry fee", "$" + num(S.entryFee)) : ""));
 
+    const compactOn = document.documentElement.classList.contains("compact");
+    const display = `<section class="panel set-display"><label class="set-switch"><input type="checkbox" data-compact${compactOn ? " checked" : ""}>
+      <span><b>Compact mode</b><span class="team-mgr">Tighter tables, cards and spacing so more fits on screen, with one-line explanations (tap ⓘ for the rest). Saved on this device. The Compact button in the header does the same.</span></span></label></section>`;
     main.innerHTML = `<div class="section-head"><div><h1>League settings</h1><p class="sub">${L.season} season · straight from ESPN · updated ${esc(ago(D.updated))}</p></div></div>
+      <h2 class="set-h">Display</h2>${display}
       ${glance}
       <h2 class="set-h">Roster & season</h2><div class="rec-grid set-grid">${roster}${schedule}${moves}${draft}</div>
       <h2 class="set-h">Scoring</h2><div class="rec-grid set-grid">${groups.join("")}${other}${dst}</div>`;
@@ -3585,7 +3678,7 @@
   main.addEventListener("change", e => {
     if (e.target.id === "since-team" && e.target.value) { store.set("pk-member", e.target.value); PK.member = e.target.value; renderKeepScroll(renderStandings); return; }
     if (e.target.id === "sort") { state.sort = e.target.value; store.set("sort", state.sort); renderStandings(); }
-    if (e.target.id === "side-week") { state.sideWeek = Number(e.target.value); document.querySelector(".side").outerHTML = sidebar(); rxHydrate(); }
+    if (e.target.id === "side-week") { state.sideWeek = Number(e.target.value); document.querySelector(".side").outerHTML = sidebar(); rxHydrate(); pulseLoad(); }
     if (e.target.id === "swap-team") { state.swapTeam = e.target.value; renderKeepScroll(renderInsights); }
     if (e.target.id === "draft-team") { state.draftTeam = e.target.value; renderKeepScroll(renderInsights); }
     if (e.target.id === "rec-member") { location.hash = href("history", e.target.value ? { member: e.target.value } : {}, "records"); return; }

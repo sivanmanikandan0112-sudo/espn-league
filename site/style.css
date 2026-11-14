@@ -1256,3 +1256,73 @@ button.tv-opt:hover { border-color: var(--ink-2); }
 .rk-row.miss { opacity: .8; }
 .rk-score { margin: 8px 0 0; font-size: 14px; color: var(--ink-2); }
 .rk-score b { color: var(--ink); font-size: 18px; }
+
+/* ---- League pulse */
+.pulse { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; }
+.pulse .note { margin: 4px 6px; }
+.pulse-line { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 8px; padding: 7px 6px; border-radius: 8px; color: var(--ink-2); text-decoration: none; font-size: 13px; line-height: 1.35; }
+.pulse-line:hover { background: var(--surface-2); }
+.pulse-line b { color: var(--ink); }
+.pulse-t { font-size: 11px; font-weight: 700; color: var(--ink-2); font-variant-numeric: tabular-nums; padding-top: 1px; }
+.pulse-more { align-self: flex-start; margin: 2px 6px 0; font-size: 13px; color: var(--accent); }
+.pulse-phone { display: none; margin-top: 22px; }
+@media (max-width: 640px) { .pulse-phone { display: block; } }
+
+/* ---- Compact mode (header button + Settings → Display) */
+.hdr-compact { position: relative; display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 7px 12px; border-radius: 999px;
+  color: var(--head-ink); background: none; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--head-ink) 25%, transparent); }
+.hdr-compact svg { width: 15px; height: 15px; }
+.hdr-compact:hover, .hdr-compact[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+@media (max-width: 640px) {
+  .hdr-compact { order: 2; width: 36px; height: 36px; padding: 0; justify-content: center; border-radius: 10px; }
+  .hdr-compact svg { width: 18px; height: 18px; }
+}
+.set-display { margin-bottom: 18px; }
+.set-switch { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.set-switch input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+.set-switch .team-mgr { display: block; margin-top: 2px; }
+
+.compact body { font-size: 14px; }
+.compact .section-head { margin-bottom: 8px; }
+.compact .insight { margin-bottom: 18px; }
+.compact .panel { padding: 12px; }
+/* tables */
+.compact .tbl { font-size: 13px; }
+.compact .tbl th { padding: 7px 10px; }
+.compact .tbl td { padding: 5px 10px; }
+.compact .tbl .logo { width: 22px; height: 22px; }
+/* matchup cards */
+.compact .side-row { grid-template-columns: 28px minmax(0, 1fr) auto auto; gap: 8px; padding: 7px 12px; }
+.compact .side-row .logo { width: 28px; height: 28px; }
+.compact .game-foot { padding: 5px 12px; }
+.compact .game > .rx { padding: 2px 12px 6px; }
+.compact .games { gap: 10px; }
+.compact .box-line { padding: 3px 0; }
+/* tiles and cards */
+.compact .set-tiles { gap: 6px; }
+.compact .set-tile { padding: 8px 10px; gap: 2px; }
+.compact .recap-item { padding: 8px 10px; }
+.compact .rec { padding-top: 6px; padding-bottom: 6px; }
+/* game lists */
+.compact .p3-row { padding: 5px 8px; }
+.compact .p3-slot { min-height: 44px; padding: 6px 10px; }
+.compact .rk-row { padding: 4px 8px; }
+.compact .gl-item { padding: 7px 12px; }
+.compact .pulse-line { padding: 4px 6px; }
+/* explanations: the one-line version everywhere, full text behind ⓘ */
+.compact .expl .expl-full { display: none; }
+.compact .expl .expl-short { display: inline; }
+.compact .expl .info-btn { display: inline-block; }
+.compact .expl.open .expl-short { display: none; }
+.compact .expl.open .expl-full { display: block; margin-bottom: 6px; }
+@media (max-width: 640px) {
+  .compact .tbl tr { padding: 8px 10px; gap: 4px 10px; margin-bottom: 6px; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+  .compact .tbl td::before { font-size: 9px; }
+  .compact .tname { font-size: 14px; }
+  .compact .week-strip button { min-height: 36px; padding: 6px 12px; }
+}
+.compact .side-row { padding: 5px 12px; }
+.compact .side-row .score { font-size: 17px; }
+.compact .side-row .team-name { font-size: 14px; }
+.compact .game > .rx { padding: 0 12px 2px; margin: 0; }
