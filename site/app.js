@@ -111,7 +111,7 @@
     const hash = location.hash.replace(/^#/, "") || "/";
     const [path, qs] = hash.split("?");
     const params = new URLSearchParams(qs || "");
-    const tab = ["myteam", "matchups", "games", "insights", "trades", "history", "settings", "whatsnew", "glossary"].find(t => path.startsWith("/" + t)) || "standings";
+    const tab = ["myteam", "matchups", "games", "insights", "trades", "history", "settings", "whatsnew", "glossary", "feedback"].find(t => path.startsWith("/" + t)) || "standings";
     const season = Number(params.get("season")) || IDX.current;
     state.tab = tab;
     state.sub = path.split("/")[2] || "";
@@ -145,6 +145,7 @@
     else if (tab === "settings") renderSettings();
     else if (tab === "whatsnew") renderWhatsNew();
     else if (tab === "glossary") renderGlossary();
+    else if (tab === "feedback") renderFeedback();
     else if (tab === "myteam") renderMyTeam();
     else renderStandings();
     rxHydrate();
@@ -170,7 +171,7 @@
     const sel = document.getElementById("season-select");
     sel.innerHTML = IDX.seasons.map(s => `<option value="${s}"${s === state.season ? " selected" : ""}>${s} season${s === IDX.current ? "" : ""}</option>`).join("");
     const wide = !window.matchMedia || window.matchMedia("(min-width: 641px)").matches;
-    document.getElementById("footer-notes").innerHTML = `<details class="how"${wide ? " open" : ""}><summary>How these numbers work</summary>${footerNotes()}</details><p class="foot-links"><a href="#/glossary">Glossary: every stat and term on the site ›</a></p>`;
+    document.getElementById("footer-notes").innerHTML = `<details class="how"${wide ? " open" : ""}><summary>How these numbers work</summary>${footerNotes()}</details><p class="foot-links"><a href="#/glossary">Glossary: every stat and term on the site ›</a><a href="#/feedback">Suggest something / report a problem ›</a></p>`;
     document.getElementById("updated").innerHTML = "Data snapshot · " + esc(new Date(D.updated).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })) +
       (isCur && !L.over ? ` <span class="live-chip${live.on ? " on" : ""}" id="live-chip"></span>` : "");
     updateLiveChip();
@@ -742,12 +743,48 @@
 
   // Every big play this week, grouped by fantasy matchup (your matchup first, then the busiest).
   // Every big play this week, grouped by real NFL game (default) or by fantasy matchup; the choice is remembered.
+  // Season view: totals from every week the live feed has covered (worker /plays)
+  const PS = { data: null, at: 0 };
+  const playsSwitch = cur => `<div class="pg-by ps-switch" role="tablist" aria-label="Big plays: this week or season">${[["", "This week"], ["season", "Season"]].map(([k, lab]) =>
+    `<a role="tab" aria-selected="${cur === k}" class="${cur === k ? "active" : ""}" href="${href("matchups", k ? { view: k } : {}, "plays")}">${lab}</a>`).join("")}</div>`;
+  async function renderPlaysSeason(head) {
+    if (state.season !== IDX.current || !LIVE_API_BASE()) { main.innerHTML = head + playsSwitch("season") + `<div class="empty">Season big plays are tracked for the current season.</div>`; return; }
+    if (!PS.data || Date.now() - PS.at > 120000) {
+      if (!PS.data) main.innerHTML = head + playsSwitch("season") + '<div class="empty">Adding up the season…</div>';
+      PS.data = await pkApi("/plays").catch(() => ({ error: "Couldn't reach the server." })); PS.at = Date.now();
+      if (state.tab !== "matchups" || state.sub !== "plays" || state.params.get("view") !== "season") return;
+    }
+    const S = PS.data;
+    if (!S || S.error) { main.innerHTML = head + playsSwitch("season") + `<div class="empty">${esc((S && S.error) || "Couldn't load the season's big plays.")}</div>`; return; }
+    if (!S.weeks.length) { main.innerHTML = head + playsSwitch("season") + '<div class="empty">No big plays recorded yet this season.</div>'; return; }
+    const tn = id => { const t = teamById[id]; return t ? `<span class="tcell${isMine(t) ? " mine" : ""}">${logo(t)}<span class="tname">${esc(t.name)}</span></span>` : "?"; };
+    const span = S.weeks.length === 1 ? `week ${S.weeks[0]}` : `weeks ${S.weeks[0]}–${S.weeks[S.weeks.length - 1]}`;
+    const playRow = e => `<div class="rec"><span class="rec-v">+${e.delta.toFixed(1)}</span><span class="rec-who"><span class="slot ${esc(e.pos)}">${esc(e.pos)}</span><span><b>${esc(e.name)}</b> · ${esc(e.label)}<span class="team-mgr">${esc((teamById[e.team] || {}).name || "?")}${e.starter ? "" : " (bench)"}</span></span></span><a class="when" href="${href("matchups", { week: e.week, game: e.game, player: e.pid })}"><span>Wk ${e.week}</span><span class="go">Box score →</span></a></div>`;
+    const teams = section("Team leaderboard", { short: `Big plays by each team's starters, ${span}.`, full: `Every big play from the live feed (touchdowns, 5+ point field goals, turnovers, big defensive plays, 30+ yard gains) by each team's players, ${span}${S.weeks[0] > 1 ? `; the feed started in week ${S.weeks[0]}` : ""}. <b>Points</b> is what those plays alone were worth. Bench plays are counted separately.` }, table([
+      { label: "Team", cell: r => tn(r.team) },
+      { label: "Big plays", num: 1, cell: r => `<b>${r.plays}</b>` },
+      { label: "TDs", num: 1, cell: r => r.tds },
+      { label: "Points", num: 1, cell: r => r.pts.toFixed(1) },
+      { label: "On the bench", num: 1, cell: r => r.bench ? `${r.bench} <span class="muted">(${r.benchPts.toFixed(1)} pts)</span>` : "0" },
+    ], S.teams));
+    const players = section("Most big plays by a player", "", table([
+      { label: "Player", cell: r => `<span class="tcell"><span class="slot ${esc(r.pos)}">${esc(r.pos)}</span><span><span class="tname">${esc(r.name)}</span><span class="team-mgr">${esc(r.nfl || "")} · ${r.teams.map(id => esc((teamById[id] || {}).name || "?")).join(", ")}</span></span></span>` },
+      { label: "Big plays", num: 1, cell: r => `<b>${r.plays}</b>` },
+      { label: "TDs", num: 1, cell: r => r.tds },
+      { label: "Points", num: 1, cell: r => r.pts.toFixed(1) },
+    ], S.players));
+    const big = section("Biggest single plays", "", `<div class="rec-card wrap">${S.biggest.map(playRow).join("")}</div>`);
+    const bench = S.benchBest.length ? section("Best plays wasted on the bench", "", `<div class="rec-card wrap">${S.benchBest.map(playRow).join("")}</div>`) : "";
+    main.innerHTML = head + playsSwitch("season") + `<p class="pg-sum">${L.season} season · ${span} · ${S.teams.reduce((n, t) => n + t.plays + t.bench, 0)} big plays</p>` + teams + big + players + bench;
+  }
+
   function renderPlays() {
     const asked = state.params.get("by");
     const by = asked === "fantasy" || asked === "nfl" ? asked : store.get("plays-by", "nfl") === "fantasy" ? "fantasy" : "nfl";
     if (asked) store.set("plays-by", by);
     const head = `<div class="section-head"><div><h1>Big plays</h1>${expl("Every big play this week, by NFL game or by fantasy matchup.",
       "Touchdowns, field goals worth 5+ points, turnovers, defensive plays worth 5+ points (in practice defensive and return TDs), and single plays of 30+ yards (50+ for a pass), caught live from ESPN every minute during games. Each play shows the fantasy points that play alone was worth and where its fantasy matchup stood right after it. Bench players are marked.")}</div></div>${subnav("matchups", MATCHUP_TABS, "plays")}`;
+    if (state.params.get("view") === "season") return renderPlaysSeason(head);
     const wk = state.season === IDX.current ? D.weeks.find(x => x.week === L.currentWeek) : null;
     if (!wk || L.over) { main.innerHTML = head + `<div class="empty">Big plays are tracked live for the current week while the season is in progress.${state.season !== IDX.current ? ` <a href="#/matchups/plays">Go to this week</a>` : ""}</div>`; return; }
     if (!window.LIVE_FEED) { main.innerHTML = head + `<div class="empty">Loading this week's plays…</div>`; return; }
@@ -790,7 +827,7 @@
         ${list("No league big plays", quiet)}${list("Still to play", later)}`;
       if (!withPlays.length && !other.length) body = `<p class="pg-none">No big plays yet this week.</p>` + list("Still to play", later);
     }
-    main.innerHTML = head + toggle + `<p class="pg-sum">Week ${wk.week} · ${all.length} big play${all.length === 1 ? "" : "s"} so far${wk.final ? "" : " · updates every minute during games"}</p>` + body;
+    main.innerHTML = head + (state.season === IDX.current ? playsSwitch("") : "") + toggle + `<p class="pg-sum">Week ${wk.week} · ${all.length} big play${all.length === 1 ? "" : "s"} so far${wk.final ? "" : " · updates every minute during games"}</p>` + body;
   }
 
   // Monday-night math: once the only league starters left in a matchup are in games that haven't kicked off
@@ -2089,17 +2126,17 @@
   // Insights pages. Each groups related views as stacked sections; the old one-view sub-tabs still work as links
   // (they open the page that holds them now, scrolled to that section).
   const INSIGHT_GROUPS = [
-    ["race", "Playoff race", ["race", "form"]],
+    ["race", "Playoff race", ["race", "seeds", "form"]],
     ["luck", "Luck", ["luck", "close", "upsets", "projection"]],
     ["schedule", "Schedule", ["schedule", "byes"]],
     ["lineups", "Lineups", ["efficiency"]],
     ["draft", "Draft", ["draft"]],
     ["whatif", "What ifs", ["rules", "swap"]],
   ];
-  const INSIGHT_ALIAS = { form: "race", close: "luck", upsets: "luck", projection: "luck", byes: "schedule", efficiency: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
+  const INSIGHT_ALIAS = { seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", byes: "schedule", efficiency: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
   function insightHas(k) {
     return ({
-      form: () => D.teams.some(x => x.form), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0,
+      form: () => D.teams.some(x => x.form), seeds: () => D.teams.some(x => x.odds && x.odds.seeds), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0,
       byes: () => D.teams.some(x => x.byeCrunch && x.byeCrunch.length), draft: () => !!D.draft,
       redraft: () => !!(D.draft && D.draft.redraft), rules: () => !!(D.rulesLab && D.rulesLab.weeks),
       swap: () => !!(D.scheduleSwap && D.scheduleSwap.weeks),
@@ -2256,6 +2293,23 @@
         { label: "Seed", num: 1, cell: t => (t.seed && t.seed <= L.playoffTeams ? "#" + t.seed : "—") },
         { label: "Points for", num: 1, cell: t => fmt(t.pf) },
       ], rows));
+    },
+
+    seeds() {
+      const rows = D.teams.filter(t => t.odds && t.odds.seeds).sort((a, b) => a.odds.avgSeed - b.odds.avgSeed);
+      const n = rows[0].odds.seeds.length, po = L.playoffTeams || 0, byes = Math.max(0, 2 ** (L.playoffRounds || 1) - po);
+      const cell = (t, i) => {
+        const v = t.odds.seeds[i] || 0;
+        const a = v <= 0 ? 0 : Math.round(12 + 78 * Math.min(1, v / 60)); // shade: 12-90% of the accent, full at 60%+
+        return `<td class="sg-c${a > 55 ? " dark" : ""}" style="${a ? `background:color-mix(in srgb, var(--accent) ${a}%, transparent)` : ""}" title="${esc(t.name)}: ${v.toFixed(1)}% to be the ${i + 1} seed">${v >= 0.5 ? Math.round(v) : v > 0 ? "<1" : ""}</td>${cut(i, "td")}`;
+      };
+      // thin divider columns after the bye cut and the playoff cut
+      const cut = (i, tag) => i + 1 === po ? `<${tag} class="sg-cut po" aria-hidden="true"></${tag}>` : i + 1 === byes ? `<${tag} class="sg-cut" aria-hidden="true"></${tag}>` : "";
+      const head = Array.from({ length: n }, (_, i) => `<th class="sg-h">${i + 1}</th>${cut(i, "th")}`).join("");
+      return section("Seed odds", { short: `Each team's chance of finishing at every seed (%).${po ? ` Seeds 1–${po} make the playoffs.` : ""}`,
+        full: `From the same 10,000 simulated finishes as the playoff odds: how often each team ended the regular season at each seed, as a percentage (blank = never, <1 = under 1%). Darker cells are likelier.${byes ? ` The line after seed ${byes} is the first-round bye cut;` : ""}${po ? ` the line after seed ${po} is the playoff cut.` : ""} Teams are ordered by their average seed.` },
+        `<div class="sg-wrap"><table class="sg"><thead><tr><th class="sg-t">Team</th>${head}<th class="sg-avg">Avg</th></tr></thead><tbody>${rows.map(t =>
+          `<tr class="${isMine(t) ? "mine" : ""}"><th class="sg-t" scope="row">${logo(t)}<span>${esc(t.name)}</span></th>${t.odds.seeds.map((_, i) => cell(t, i)).join("")}<td class="sg-avg">${t.odds.avgSeed.toFixed(1)}</td></tr>`).join("")}</tbody></table></div>`);
     },
 
     luck() {
@@ -3468,6 +3522,9 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-14", [
+      ["Seed odds", "Insights → Playoff race", "Every team's chance of finishing at each seed, 1 through 12.", "#/insights/race?at=seeds"],
+      ["Big plays: season", "Matchups → Big plays → Season", "Big plays added up by team and player, plus the biggest single plays of the season.", "#/matchups/plays?view=season"],
+      ["Feedback box", "Footer", "Send the commissioner an idea or a problem report, privately.", "#/feedback"],
       ["Guess the graph", "Games → Guess the graph", "Whose season is this? Three bar charts of a player's weekly points every week (Easy, Medium, Hard); pick him from four names.", "#/games/graph"],
       ["Why you moved", "Standings, My team", "What changed a team's power value this week: injuries, roster moves, projection changes. ▲/▼ shows the power rank change.", "#/myteam"],
       ["Nemesis players", "History → Record book, My team", "The NFL players who've scored the most against you, all-time.", "#/history/records"],
@@ -3571,6 +3628,7 @@
       ["moved", "Why you moved", "Standings → team cards, My team", "#/myteam", "How much each change since the current power window started (about once a week) added to or cost a team's power value: injuries, roster moves (added, dropped, traded), ESPN projection changes, and the lineup reshuffle those cause. ▲/▼ next to a power rank is the change over the same stretch.", ["Why your power moved"]],
       ["starts", "Starts X of Y wks", "Standings → team cards", "#/", "How often a player makes his team's best projected lineup in the weeks left.", []],
       ["odds", "Playoff and title odds", "Insights → Playoff race", "#/insights/race", "From 10,000 simulated finishes of the regular season and the bracket. This week's games use ESPN's live win probabilities.", ["Playoff race"]],
+      ["seeds", "Seed odds", "Insights → Playoff race", "#/insights/race?at=seeds", "Each team's chance of finishing the regular season at every seed, from the same 10,000 simulations as the playoff odds. Darker cells are likelier; lines mark the bye and playoff cuts.", ["Seed odds"]],
       ["form", "Hot & cold", "Insights → Playoff race", "#/insights/race?at=form", "Each team's average over the last few completed weeks vs. its season average, with the league-wide swing taken out (Trend).", ["Hot & cold"]],
     ]],
     ["Luck & schedule", [
@@ -3604,7 +3662,7 @@
     ]],
     ["Matchups", [
       ["winprob", "Win probability", "Matchups", "#/matchups", "ESPN's live chance each team wins its matchup, shown while the week is in progress.", []],
-      ["bigplays", "Big plays", "Matchups → Big plays", "#/matchups/plays", "Touchdowns, 5+ point field goals, turnovers, big defensive plays and 30+ yard gains (50+ for a pass) by league players, caught from ESPN every minute during games, with the fantasy points that play was worth.", []],
+      ["bigplays", "Big plays", "Matchups → Big plays", "#/matchups/plays", "Touchdowns, 5+ point field goals, turnovers, big defensive plays and 30+ yard gains (50+ for a pass) by league players, caught from ESPN every minute during games, with the fantasy points that play was worth. The Season view adds them up by team and player since the feed started.", ["Team leaderboard"]],
       ["monday", "Monday-night math", "Matchups", "#/matchups", "Once a matchup is down to players in games that haven't started, what each side needs and a win chance from those players' own game logs.", []],
       ["reactions", "Reactions", "Matchups, Big plays, Standings", "#/matchups", "Tap an emoji under a matchup, a big play or the weekly high and low score to react as your team (same name and PIN as the games). Tap again to take it back; hold one to see who reacted.", []],
     ]],
@@ -3640,6 +3698,72 @@
     history.replaceState(null, "", "#/glossary" + (v ? "?q=" + encodeURIComponent(v) : ""));
     state.params = new URLSearchParams(v ? "q=" + v : "");
     renderGlossary();
+  });
+
+  // ---------------------------------------------------------------- feedback box
+  // Ideas and problem reports go to the commissioner's private inbox on the live worker (never shown to anyone else).
+  // Sent with your name only when you're signed in to the games on this device; otherwise anonymous.
+  const FB = { kind: "idea", text: "", anon: false, msg: "", err: false, busy: false, admins: null, inbox: null, from: "" };
+  let lastPage = "";
+  window.addEventListener("hashchange", e => { const h = (e.oldURL.split("#")[1] || "/"); if (!h.startsWith("/feedback")) lastPage = h; });
+  async function renderFeedback() {
+    if (FB.admins == null && LIVE_API_BASE()) {
+      FB.admins = [];
+      pkApi("/feedback").then(r => { FB.admins = (r && r.admins) || []; if (state.tab === "feedback") renderFeedback(); }).catch(() => {});
+    }
+    if (!FB.from) FB.from = lastPage;
+    const signed = PK.member && PK.pin;
+    const me = PK.member || ME.member;
+    const isAdmin = (FB.admins || []).includes(me);
+    const kinds = [["idea", "Idea"], ["problem", "Problem"]].map(([k, lab]) => `<button type="button" class="${FB.kind === k ? "active" : ""}" data-fb-kind="${k}" aria-pressed="${FB.kind === k}">${lab}</button>`).join("");
+    const who = signed ? `<label class="fb-anon"><input type="checkbox" id="fb-anon"${FB.anon ? " checked" : ""}> Send anonymously <span class="muted">(otherwise it's from ${esc(nameOfMember(PK.member))})</span></label>`
+      : `<p class="note">This sends anonymously. Sign in to any game first if you want your name on it.</p>`;
+    let inbox = "";
+    if (isAdmin) {
+      const list = FB.inbox;
+      inbox = section("Commissioner inbox", "Only you can see these.", !list ? `<div class="panel"><button type="button" class="cta fb-open" data-fb="inbox">Open inbox</button></div>`
+        : list.length ? `<div class="fb-list">${list.map(x => `<article class="fb-msg"><div class="fb-mh"><span class="badge ${x.kind === "problem" ? "hot" : "new"}">${x.kind === "problem" ? "Problem" : "Idea"}</span>
+            <b>${x.from ? esc(nameOfMember(x.from)) : "Anonymous"}</b><span class="team-mgr">${new Date(x.t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}${x.page ? ` · from <a href="#${esc(x.page)}">${esc(x.page)}</a>` : ""}</span>
+            <button type="button" class="linkbtn fb-del" data-fb-del="${esc(x.id)}" aria-label="Delete this message">Delete</button></div><p>${esc(x.text).replace(/\n/g, "<br>")}</p></article>`).join("")}</div>`
+        : '<div class="panel">No messages yet.</div>');
+    }
+    main.innerHTML = `<div class="section-head"><div><h1>Suggest something</h1><p class="sub">An idea for the site, or something that looks wrong? It goes straight to the commissioner and nobody else sees it.</p></div></div>
+      <form class="panel fb-form" id="fb-form">
+        <div class="pg-by fb-kinds" role="group" aria-label="What is it?">${kinds}</div>
+        <label class="field fb-text"><span>${FB.kind === "problem" ? "What went wrong, and where?" : "What's your idea?"}</span>
+          <textarea id="fb-text" rows="6" maxlength="1500" placeholder="${FB.kind === "problem" ? "e.g. My team's score on Matchups doesn't match ESPN." : "e.g. A page that shows…"}">${esc(FB.text)}</textarea></label>
+        ${who}
+        <button type="submit" class="cta"${FB.busy ? " disabled" : ""}>${FB.busy ? "Sending…" : "Send"}</button>
+        ${FB.msg ? `<p class="pk-msg${FB.err ? " err" : ""}">${esc(FB.msg)}</p>` : ""}
+      </form>${inbox}`;
+  }
+  main.addEventListener("input", e => { if (e.target.id === "fb-text") FB.text = e.target.value; });
+  main.addEventListener("change", e => { if (e.target.id === "fb-anon") FB.anon = e.target.checked; });
+  main.addEventListener("click", async e => {
+    if (state.tab !== "feedback") return;
+    const k = e.target.closest("[data-fb-kind]");
+    if (k) { FB.kind = k.dataset.fbKind; return renderFeedback(); }
+    const del = e.target.closest("[data-fb-del]");
+    const open = e.target.closest('[data-fb="inbox"]');
+    if (!del && !open) return;
+    if (!PK.pin) { FB.msg = "Sign in to any game on this device first (name + PIN), then open the inbox."; FB.err = true; return renderFeedback(); }
+    if (del && !confirm("Delete this message? This can't be undone.")) return;
+    const r = await pkApi(del ? "/feedback/delete" : "/feedback/inbox", { member: PK.member, pin: PK.pin, id: del && del.dataset.fbDel });
+    if (r.error) { FB.msg = r.error; FB.err = true; } else { FB.inbox = r.messages; FB.msg = ""; }
+    renderFeedback();
+  });
+  main.addEventListener("submit", async e => {
+    if (e.target.id !== "fb-form") return;
+    e.preventDefault();
+    FB.text = document.getElementById("fb-text").value;
+    if (FB.text.trim().length < 3) { FB.msg = "Write a little more first."; FB.err = true; return renderFeedback(); }
+    FB.busy = true; renderFeedback();
+    const named = PK.member && PK.pin && !FB.anon;
+    const r = await pkApi("/feedback/send", { kind: FB.kind, text: FB.text, page: FB.from, ...(named ? { member: PK.member, pin: PK.pin } : {}) }).catch(() => ({ error: "Couldn't reach the server. Try again." }));
+    FB.busy = false;
+    if (r.error) { FB.msg = r.error; FB.err = true; }
+    else { FB.text = ""; FB.msg = `Sent${named ? "" : " anonymously"}. Thanks!`; FB.err = false; }
+    renderFeedback();
   });
 
   function renderSettings() {

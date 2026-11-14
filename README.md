@@ -42,6 +42,8 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   You vs. autopilot), *Draft* (`draft`, `?view=redraft` for the hindsight redraft) and *What ifs* (`whatif`: Rules lab,
   Schedule swap). Old single-view links (`#/insights/close`, `/rules`, `/byes`, ...) redirect to their page with
   `?at=<view>` to scroll there (`INSIGHT_GROUPS` / `INSIGHT_ALIAS` in `site/app.js`). The views:
+  - *Seed odds* (on Playoff race): each team's chance of every seed 1-N from the same simulations (`odds.seeds`),
+    as a shaded grid with divider lines at the bye and playoff cuts.
   - *Playoff race*: playoff / bye / title odds from 10,000 simulated finishes (team strengths shrunk halfway to
     the league average, `STRENGTH_SHRINK`; the week in progress uses ESPN's live win probabilities).
     Past seasons show final results.
@@ -242,6 +244,22 @@ Then put the Worker's URL in `site/config.js` (`liveApi`). When the ESPN cookies
 `#/whatsnew` (sparkle button in the header): every feature, grouped by the day it went live, from the `CHANGELOG`
 list in `site/app.js`. Add new features at the top of that list. The header button shows a dot until the latest
 day has been seen on that device (`lhq:wn-seen`).
+
+## Big plays: season
+
+Matchups → Big plays → Season (`?view=season`, worker `GET /plays`): every big play since the feed started (week 9 of
+2026), added up per fantasy team (starters' big plays, TDs, points those plays were worth, bench plays), the players
+with the most, the biggest single plays and the best ones wasted on the bench. The feed (`feed:<season>:<week>`)
+expires after 21 days, so each finished week is copied once, trimmed, into `plays-week:<season>:<week>` and kept; the
+week in progress is read live. Cached 2 minutes.
+
+## Feedback box
+
+Footer → "Suggest something / report a problem" (`#/feedback`). Ideas and problem reports go to the worker
+(`POST /feedback/send`) and into one private KV list, `feedback:inbox` (latest 300). A message carries a name only
+when that member's PIN checks out (signed in to a game on the device, not ticked "anonymously"); otherwise it's
+anonymous. 5 messages per hour per address. Members listed in `ADMIN_MEMBERS` (wrangler.toml) see a Commissioner inbox
+on the same page after signing in (`/feedback/inbox`, `/feedback/delete`). Never shown in League pulse.
 
 ## Glossary
 

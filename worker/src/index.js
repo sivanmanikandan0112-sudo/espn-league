@@ -816,6 +816,97 @@ async function handleGraph(req, env, url) {
   return json(env, req, { error: "Not found" }, 404);
 }
 
+// ---------------------------------------------------------------- Big-play leaderboard (season)
+// Season totals from the live big-play feed. The feed itself expires 3 weeks after it's written, so each finished week
+// is copied once (trimmed, without stat corrections) into `plays-week:<season>:<week>` and kept; the week in progress
+// is read straight from its feed. The aggregate is cached for 2 minutes.
+const trimPlays = events => (events || []).filter(e => e.kind !== "stat correction")
+  .map(e => ({ t: e.t, team: e.team, pid: e.pid, name: e.name, pos: e.pos, nfl: e.nfl, kind: e.kind, label: e.label, delta: e.delta, starter: e.starter, game: e.game }));
+async function handlePlays(req, env) {
+  if (!env.PICKEM) return json(env, req, { error: "Storage isn't set up yet." }, 503);
+  const st = await pickemWeek(env);
+  const out = await cached(`plays-season-${st.season}-${st.week}`, 120, async () => {
+    const weeks = [];
+    for (let w = 1; w <= st.week; w++) {
+      let ev = null;
+      if (w < st.week) {
+        ev = await env.PICKEM.get(`plays-week:${st.season}:${w}`, "json");
+        if (!ev) {
+          const f = await env.PICKEM.get(`feed:${st.season}:${w}`, "json");
+          if (f) { ev = trimPlays(f.events); await env.PICKEM.put(`plays-week:${st.season}:${w}`, JSON.stringify(ev)); }
+        }
+      } else {
+        const f = await env.PICKEM.get(`feed:${st.season}:${w}`, "json");
+        if (f) ev = trimPlays(f.events);
+      }
+      if (ev) weeks.push({ week: w, plays: ev });
+    }
+    const teams = {}, players = {};
+    const all = [];
+    for (const { week, plays } of weeks) for (const e of plays) {
+      all.push({ ...e, week });
+      const T = teams[e.team] = teams[e.team] || { team: e.team, plays: 0, tds: 0, pts: 0, bench: 0, benchPts: 0 };
+      if (e.starter) { T.plays++; T.pts += e.delta; if (/TD/.test(e.kind)) T.tds++; }
+      else { T.bench++; T.benchPts += e.delta; }
+      const P = players[e.pid] = players[e.pid] || { pid: e.pid, name: e.name, pos: e.pos, nfl: e.nfl, plays: 0, tds: 0, pts: 0, teams: [] };
+      P.plays++; P.pts += e.delta; if (/TD/.test(e.kind)) P.tds++;
+      if (!P.teams.includes(e.team)) P.teams.push(e.team);
+    }
+    const r1 = n => Math.round(n * 10) / 10;
+    return { season: st.season, weeks: weeks.map(w => w.week), current: st.week,
+      teams: Object.values(teams).map(T => ({ ...T, pts: r1(T.pts), benchPts: r1(T.benchPts) })).sort((a, b) => b.plays - a.plays || b.pts - a.pts),
+      players: Object.values(players).map(P => ({ ...P, pts: r1(P.pts) })).sort((a, b) => b.plays - a.plays || b.pts - a.pts).slice(0, 10),
+      biggest: all.filter(e => e.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 10),
+      benchBest: all.filter(e => !e.starter && e.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 5) };
+  });
+  return json(env, req, out);
+}
+
+// ---------------------------------------------------------------- Feedback box
+// "Suggest something / report a problem" from the site footer. Messages go into one private KV list that only the
+// members in ADMIN_MEMBERS can read (with their PIN); they never appear in League pulse. A message is from a named
+// member only when that member's PIN checks out; otherwise it's anonymous. At most 5 messages per hour per address.
+const FEEDBACK_MAX = 300;
+const admins = env => String(env.ADMIN_MEMBERS || "").split(",").map(x => x.trim()).filter(Boolean);
+async function handleFeedback(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Storage isn't set up yet." }, 503);
+  const st = await pickemWeek(env);
+  if (req.method === "GET" && url.pathname === "/feedback") return json(env, req, { admins: admins(env) });
+  const body = req.method === "POST" ? await postBody(req) : null;
+  if (!body) return json(env, req, { error: "Bad request" }, 400);
+  const key = "feedback:inbox";
+  if (url.pathname === "/feedback/send") {
+    const text = String(body.text || "").trim().slice(0, 1500);
+    if (text.length < 3) return json(env, req, { error: "Write a little more first." }, 400);
+    const ip = req.headers.get("CF-Connecting-IP") || "?";
+    const rKey = `fb-rate:${(await sha1(ip + (env.PIN_SALT || ""))).slice(0, 16)}`;
+    const n = Number(await env.PICKEM.get(rKey)) || 0;
+    if (n >= 5) return json(env, req, { error: "That's a lot of messages for one hour. Try again later." }, 429);
+    let from = null;
+    if (body.member && body.pin && st.members.includes(String(body.member))) {
+      if (await checkPin(env, st.season, String(body.member), body.pin)) return json(env, req, { error: "That PIN didn't match. Send it anonymously or check your PIN." }, 403);
+      from = String(body.member);
+    }
+    const list = (await env.PICKEM.get(key, "json")) || [];
+    list.unshift({ id: `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`, t: Date.now(), kind: body.kind === "problem" ? "problem" : "idea",
+      text, from, page: String(body.page || "").slice(0, 80) });
+    await env.PICKEM.put(key, JSON.stringify(list.slice(0, FEEDBACK_MAX)));
+    await env.PICKEM.put(rKey, String(n + 1), { expirationTtl: 3600 });
+    return json(env, req, { ok: true });
+  }
+  // the inbox: admins only
+  const member = String(body.member || "");
+  if (!admins(env).includes(member)) return json(env, req, { error: "Only the commissioner can read the inbox." }, 403);
+  const err = await checkPin(env, st.season, member, body.pin);
+  if (err) return json(env, req, { error: err }, 403);
+  let list = (await env.PICKEM.get(key, "json")) || [];
+  if (url.pathname === "/feedback/delete") {
+    list = list.filter(x => x.id !== String(body.id || ""));
+    await env.PICKEM.put(key, JSON.stringify(list));
+  } else if (url.pathname !== "/feedback/inbox") return json(env, req, { error: "Not found" }, 404);
+  return json(env, req, { messages: list });
+}
+
 // ---------------------------------------------------------------- League pulse
 // Recent activity on the site, newest first: who reacted, played a game or updated the trade block. Never what anyone
 // picked (that stays hidden until it locks). One KV value per season, the last PULSE_MAX events; the same person doing
@@ -1284,7 +1375,7 @@ export default {
       try { return await handlePick3(req, env, url); }
       catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
     }
-    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact], ["/pulse", handlePulse], ["/graph", handleGraph]]) {
+    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact], ["/pulse", handlePulse], ["/graph", handleGraph], ["/plays", handlePlays], ["/feedback", handleFeedback]]) {
       if (url.pathname.startsWith(pre)) {
         try { return await fn(req, env, url); }
         catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }

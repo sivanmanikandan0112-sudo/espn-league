@@ -153,7 +153,7 @@ def playoff_odds(season, schedule, team_strength):
     rounds = max(1, lg["playoffRounds"])
     byes = max(0, 2 ** rounds - playoff_teams)
     rng = random.Random(PLAYOFF_SEED)
-    tally = {tid: {"playoffs": 0, "bye": 0, "title": 0, "wins": 0.0, "seed": 0.0} for tid in teams}
+    tally = {tid: {"playoffs": 0, "bye": 0, "title": 0, "wins": 0.0, "seed": 0.0, "seeds": [0] * len(teams)} for tid in teams}
     games_left = defaultdict(int)
     for _, h, a in schedule:
         games_left[h] += 1; games_left[a] += 1
@@ -189,6 +189,7 @@ def playoff_odds(season, schedule, team_strength):
         for i, tid in enumerate(order):
             tally[tid]["wins"] += wins[tid]
             tally[tid]["seed"] += i + 1
+            tally[tid]["seeds"][i] += 1
         field = order[:playoff_teams]
         for i, tid in enumerate(field):
             tally[tid]["playoffs"] += 1
@@ -208,7 +209,9 @@ def playoff_odds(season, schedule, team_strength):
     n = float(PLAYOFF_SIMS)
     return {tid: {"playoffPct": round(100 * v["playoffs"] / n, 1), "byePct": round(100 * v["bye"] / n, 1),
                   "titlePct": round(100 * v["title"] / n, 1), "projWins": round(v["wins"] / n, 1),
-                  "avgSeed": round(v["seed"] / n, 1), "gamesLeft": games_left[tid]}
+                  "avgSeed": round(v["seed"] / n, 1), "gamesLeft": games_left[tid],
+                  # chance of finishing at each seed (index 0 = the 1 seed), for the seed odds grid
+                  "seeds": [round(100 * c / n, 1) for c in v["seeds"]]}
             for tid, v in tally.items()}
 
 
