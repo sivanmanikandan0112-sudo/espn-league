@@ -718,6 +718,104 @@ async function handleRank(req, env, url) {
   return json(env, req, { error: "Not found" }, 404);
 }
 
+// ---------------------------------------------------------------- Guess the graph (Games)
+// Three puzzles a week (easy, medium, hard): one player's fantasy points in every completed week as a bar chart, his
+// position, and 4 names to choose from. No team shown. The pool is the site's data/graph.json (most-owned QBs, RBs,
+// WRs and TEs with weekly points, written by the site build); the week's puzzles are picked here with a secret seed,
+// frozen in KV, and the answer only comes back after you guess. One guess per puzzle; 1 / 2 / 3 points.
+const GRAPH_LEVELS = ["easy", "medium", "hard"];
+const GRAPH_PTS = { easy: 1, medium: 2, hard: 3 };
+async function graphQuiz(env, st) {
+  const key = `graph-q:${st.season}:${st.week}`;
+  const have = await env.PICKEM.get(key, "json");
+  if (have) return have;
+  const r = await fetch(SITE_DATA(env) + "graph.json?t=" + Date.now());
+  const G = r.ok ? await r.json() : null;
+  if (!G || G.season !== st.season || !(G.players || []).length) throw new Error("This week's graphs aren't ready yet. Try again soon.");
+  const usedKey = `graph-used:${st.season}`;
+  const used = new Set((await env.PICKEM.get(usedKey, "json")) || []);
+  const rand = seeded(`graph|${env.PIN_SALT || "league-hq"}|${st.season}|${st.week}`);
+  const shuffle = a => { const x = a.slice(); for (let i = x.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [x[i], x[j]] = [x[j], x[i]]; } return x; };
+  const tot = p => p.w.reduce((n, v) => n + (v || 0), 0);
+  const byPos = {};
+  for (const p of G.players) (byPos[p.pos] = byPos[p.pos] || []).push(p);
+  for (const k in byPos) byPos[k].sort((a, b) => tot(b) - tot(a));
+  const range = (list, a, b) => list.slice(Math.min(a, Math.max(0, list.length - 4)), Math.min(b, list.length));
+  // easy: a top-6 player against three low scorers; medium: a top-16 player against players ranked near him;
+  // hard: a deeper player against the three whose season totals are closest to his
+  const plan = {
+    easy: list => ({ from: range(list, 0, 6), others: ans => range(list, 18, 40).filter(p => p !== ans) }),
+    medium: list => ({ from: range(list, 4, 16), others: ans => { const i = list.indexOf(ans); return list.slice(Math.max(0, i - 6), i + 7).filter(p => p !== ans); } }),
+    hard: list => ({ from: range(list, 10, 32), others: ans => list.filter(p => p !== ans).sort((a, b) => Math.abs(tot(a) - tot(ans)) - Math.abs(tot(b) - tot(ans))).slice(0, 3) }),
+  };
+  const positions = shuffle(["QB", "RB", "WR", "TE"].filter(k => (byPos[k] || []).length >= 8));
+  const puzzles = GRAPH_LEVELS.map((level, i) => {
+    const pos = positions[i % positions.length], list = byPos[pos];
+    const P = plan[level](list);
+    const fresh = P.from.filter(p => !used.has(p.id));
+    const ans = (fresh.length ? fresh : P.from)[Math.floor(rand() * (fresh.length || P.from.length))];
+    const others = shuffle(P.others(ans)).slice(0, 3);
+    used.add(ans.id);
+    return { level, pos, through: G.through, w: ans.w, answer: ans.id, options: shuffle([ans, ...others]).map(p => ({ id: p.id, n: p.n })) };
+  });
+  const quiz = { season: st.season, week: st.week, made: new Date().toISOString(), puzzles };
+  await env.PICKEM.put(key, JSON.stringify(quiz));
+  await env.PICKEM.put(usedKey, JSON.stringify([...used]));
+  return quiz;
+}
+async function handleGraph(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Game storage isn't set up yet." }, 503);
+  const st = await pickemWeek(env);
+  const body = req.method === "POST" ? await postBody(req) : null;
+  if (req.method === "POST" && !body) return json(env, req, { error: "Bad request" }, 400);
+  const board = (await env.PICKEM.get(`graph-board:${st.season}`, "json")) || {};
+  if (st.over) return json(env, req, { season: st.season, over: true, board });
+  const quiz = await graphQuiz(env, st);
+  const aKey = `graph-a:${st.season}:${st.week}`;
+  const A = (await env.PICKEM.get(aKey, "json")) || {};
+  const ansOf = lvl => quiz.puzzles.find(p => p.level === lvl);
+  const reveal = (m) => Object.fromEntries(Object.entries(A[m] || {}).map(([lvl, id]) => {
+    const p = ansOf(lvl), right = p.options.find(o => o.id === p.answer);
+    return [lvl, { guess: id, right: id === p.answer, answer: p.answer, name: right ? right.n : "" }];
+  }));
+  if (req.method === "GET" && url.pathname === "/graph") {
+    // everyone's results this week, without which name they chose
+    const results = Object.fromEntries(Object.entries(A).map(([m, g]) => [m, Object.fromEntries(Object.entries(g).map(([lvl, id]) => [lvl, id === ansOf(lvl).answer]))]));
+    return json(env, req, { season: st.season, week: st.week, puzzles: quiz.puzzles.map(({ answer, ...p }) => p), results, board, pts: GRAPH_PTS });
+  }
+  if (req.method !== "POST") return json(env, req, { error: "Not found" }, 404);
+  const member = String(body.member || "");
+  if (!st.members.includes(member)) return json(env, req, { error: "That name isn't in the league." }, 400);
+  if (url.pathname === "/graph/mine") {
+    if (!(await env.PICKEM.get(`pin:${st.season}:${member}`))) return json(env, req, { guesses: {}, newPin: true });
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    return json(env, req, { guesses: reveal(member) });
+  }
+  if (url.pathname === "/graph/guess") {
+    const level = String(body.level || ""), id = Number(body.id);
+    const p = ansOf(level);
+    if (!p) return json(env, req, { error: "No such puzzle." }, 400);
+    if (!p.options.some(o => o.id === id)) return json(env, req, { error: "Pick one of the four names." }, 400);
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    const fresh = (await env.PICKEM.get(aKey, "json")) || {};
+    if (fresh[member] && fresh[member][level] != null) return json(env, req, { error: "You've already guessed this one.", guesses: reveal(member) }, 409);
+    (fresh[member] = fresh[member] || {})[level] = id;
+    await env.PICKEM.put(aKey, JSON.stringify(fresh));
+    const B = (await env.PICKEM.get(`graph-board:${st.season}`, "json")) || {};
+    const row = B[member] = B[member] || { total: 0, right: 0, tries: 0, weeks: {} };
+    const right = id === p.answer;
+    row.tries++; if (right) { row.right++; row.weeks[st.week] = (row.weeks[st.week] || 0) + GRAPH_PTS[level]; }
+    row.total = Object.values(row.weeks).reduce((n, x) => n + x, 0);
+    await env.PICKEM.put(`graph-board:${st.season}`, JSON.stringify(B));
+    A[member] = fresh[member];
+    await pulse(env, st.season, { m: member, k: "graph", w: st.week });
+    return json(env, req, { ok: true, right, guesses: reveal(member), board: B });
+  }
+  return json(env, req, { error: "Not found" }, 404);
+}
+
 // ---------------------------------------------------------------- League pulse
 // Recent activity on the site, newest first: who reacted, played a game or updated the trade block. Never what anyone
 // picked (that stays hidden until it locks). One KV value per season, the last PULSE_MAX events; the same person doing
@@ -1186,7 +1284,7 @@ export default {
       try { return await handlePick3(req, env, url); }
       catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
     }
-    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact], ["/pulse", handlePulse]]) {
+    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact], ["/pulse", handlePulse], ["/graph", handleGraph]]) {
       if (url.pathname.startsWith(pre)) {
         try { return await fn(req, env, url); }
         catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }

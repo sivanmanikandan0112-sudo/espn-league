@@ -80,6 +80,10 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   the league's scoring: points per game, last 3, total, games, best/worst week, 15+/20+ games, rest-of-season
   projection and rank (or season finish), plus week-by-week bars. Only weeks on a league roster are known; weeks
   without a game are left out. Open it from "Compare with…" in the player panel or "Compare these two" on Trade ideas.
+- **Career luck** (History → Champions & standings): each manager's regular-season wins minus the wins their all-play
+  record predicts, summed over every season (`careerLuck` in `data/index.js`, `build_history`).
+- **Nemesis players** (History → Record book with a manager picked, and a tile on My team): the NFL players who've
+  scored the most against that member in the opposing starting lineup, all-time (`nemesis` in `data/records.js`).
 - **Badges** (History → Badges, and "Your badges" on My team): 18 achievements per member across every season
   (titles, top score of the week, 200 club, perfect lineup, nail-biters, heartbreakers, robbed/stolen wins, 5-game
   streaks, duds, last place…), each with how many managers have it (`badges` in `stats.py`, stored in `index.js`).
@@ -114,7 +118,12 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   in the browser from `site.api.espn.com/apis/fantasy/v2/games/ffl/news/players` (last 14 days, 3 per player, "New"
   since your previous visit on that device). **Lineup check** under your matchup flags starters who are out, on IR,
   suspended or on a bye, with a link to your team on ESPN; Byes ahead and Waiver targets link to ESPN's add-players page
-  ("Fix it on ESPN" links, `ESPN_TEAM` / `ESPN_ADD`). **Customize** reorders or hides the sections (per device,
+  ("Fix it on ESPN" links, `ESPN_TEAM` / `ESPN_ADD`). **Why your power moved** (also in each Standings team card, with
+  ▲/▼ next to the power rank when sorted by power): each change to the power value since the current power window
+  started, split into injuries, roster moves, projection changes and the lineup reshuffle they cause. Built by
+  `add_power_moves()` in `build.py` from each player's power credit (expected lineup points he adds); the baseline
+  (`powerBase` in the season file) is carried from build to build by reading the live data file back, and resets when
+  the power window moves on (about once a week). **Customize** reorders or hides the sections (per device,
   `lhq:me-layout`; on a computer Schedule stays in the right column). Your team is also highlighted on Standings, Matchups (your game first), Insights tables and the
   watch guide. Works in past seasons too (member ids are ESPN accounts). On phones Settings moves to a gear in the header.
 - **This week in league history** (Weekly matchups): a swipeable strip of the same week's notable moments from the
@@ -305,6 +314,21 @@ to the target without going over wins; over is a bust (ranked after everyone und
 within 1 point is a bullseye. Each player locks at his kickoff and others' players stay hidden until then. KV
 `bull-entries:<season>:<week>` (`{sp, target, e: {member: {picks}}}`), finished weeks scored once into
 `bull-season:<season>`. Leaderboard: weeks won, then bullseyes, then average miss.
+
+## Guess the graph
+
+Games → Guess the graph (`#/games/graph`, worker `/graph`, `/graph/mine`, `/graph/guess`). Three puzzles a week: one
+player's fantasy points (league scoring) in every completed week as a bar chart, his position (no team), and four
+names. Easy: a top-6 player at his position against three players ranked 19th-40th; Medium: a top-16 player against
+players ranked within 6 spots of him; Hard: a player ranked about 11th-32nd against the three with the closest season
+totals. Each level uses a different position. One guess per puzzle, worth 1 / 2 / 3 points; no player is the answer
+twice in a season (`graph-used:<season>`).
+
+The pool is `data/graph.json`, written by `graph_pool()` in `build.py`: the 220 most-owned QBs/RBs/WRs/TEs with weekly
+points from ESPN's `filterStatsForTopScoringPeriodIds` (null = didn't play). It's only re-fetched when another week is
+complete (the build reads the live copy back first). The worker picks the week's puzzles with a seed that includes
+`PIN_SALT`, freezes them in `graph-q:<season>:<week>`, and only returns an answer after that member's guess
+(`graph-a:<season>:<week>`, season board `graph-board:<season>`).
 
 ## Rank 'em
 

@@ -11,6 +11,7 @@ import datetime as dt
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -22,6 +23,8 @@ import stats  # noqa: E402
 ROOT = os.path.dirname(os.path.abspath(__file__))
 API = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{season}/segments/0/leagues/{league}"
 DATA_DIR = os.path.join(ROOT, "site", "data")
+# the published site, read back for things carried from one build to the next (power baseline, Guess the graph pool)
+LIVE_SITE = os.environ.get("SITE_DATA_URL", "https://sivanmanikandan0112-sudo.github.io/espn-league/data/")
 LOGO_DIR = os.path.join(ROOT, "site", "logos")
 
 POS = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST"}
@@ -416,6 +419,9 @@ def build_season(season, is_current, names):
     if not over:
         add_power(data, teams, slot_counts, best_fa, latest, final_week, season)
         add_free_agents(data, pool, season, latest)
+        if is_current:
+            add_power_moves(data, teams, season)
+            data["_graph"] = graph_pool(season, latest)
     else:
         add_season_strength(data, teams, regular, slot_counts)
 
@@ -483,6 +489,7 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
         for r in t["roster"]:
             if r["id"] in credit:
                 r["starts"] = round(starts[r["id"]], 1)
+                r["credit"] = round(credit[r["id"]], 1)  # expected lineup points he adds (Why you moved)
         # position bars: each position group rated on the same spots for every team (power.group_spots)
         t["posPower"] = {k: round(groups.get(k, 0.0), 1) for k in POWER_POSITIONS}
     add_bye_crunch(teams, slots, slot_counts, power_weeks, latest, byes)
@@ -490,6 +497,105 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
     for i, t in enumerate(sorted(teams.values(), key=lambda t: -t["power"])):
         t["powerRank"] = i + 1
     data["league"]["powerWeeks"] = [power_weeks[0], power_weeks[-1]]
+
+
+def live_site_file(name):
+    """A data file as the live site has it right now (the previous build), or None."""
+    try:
+        req = urllib.request.Request(LIVE_SITE + name + "?t=%d" % time.time(), headers={"User-Agent": "espn-league-site"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            text = r.read().decode("utf-8")
+        if name.endswith(".json"):
+            return json.loads(text)
+        return json.loads(text[text.index("]=") + 2:].rstrip().rstrip(";"))
+    except Exception as e:
+        print("  couldn't read the live %s (%s); starting fresh" % (name, e))
+        return None
+
+
+def power_snapshot(data, teams):
+    return {"start": data["league"]["powerWeeks"][0], "at": data["updated"],
+            "teams": {str(tid): {"power": t["power"], "rank": t["powerRank"],
+                                 "players": {str(r["id"]): [r["name"], r["pos"], r.get("credit", 0.0), r.get("injury"), r.get("ros", 0.0)]
+                                             for r in t["roster"] if r["pos"] in POWER_POSITIONS}}
+                      for tid, t in teams.items()}}
+
+
+def add_power_moves(data, teams, season):
+    """Why each team's power value moved since the current power window started (about once a week, when the week
+    being played drops out of it): per player, the change in expected lineup points he adds (power credit), split
+    into injuries (his injury status changed), roster moves (added / dropped / traded), projection changes (his
+    rest-of-season projection moved 3+ points) and lineup reshuffles (players whose own outlook didn't change but who
+    start more or less often because of the others). The baseline is the first build of the window, carried from build
+    to build through the published data file."""
+    prev = live_site_file("%d.js" % season)
+    base = (prev or {}).get("powerBase")
+    if not base or base.get("start") != data["league"]["powerWeeks"][0]:
+        base = power_snapshot(data, teams)
+    data["powerBase"] = base
+    owner_then = {pid: tid for tid, b in base["teams"].items() for pid in b["players"]}
+    owner_now = {str(r["id"]): str(tid) for tid, t in teams.items() for r in t["roster"]}
+    for tid, t in teams.items():
+        b = base["teams"].get(str(tid))
+        if not b:
+            continue
+        now = {str(r["id"]): r for r in t["roster"] if r["pos"] in POWER_POSITIONS}
+        injury, moves, proj, reshuffle = [], [], [], 0.0
+        for pid, r in now.items():
+            c = r.get("credit", 0.0)
+            if pid not in b["players"]:
+                if c >= 0.5:
+                    moves.append({"n": r["name"], "pts": round(c, 1), "how": "traded for" if owner_then.get(pid, str(tid)) != str(tid) else "added"})
+                continue
+            name, pos, c0, inj0, ros0 = b["players"][pid]
+            d = c - c0
+            if abs(d) < 0.5:
+                continue
+            if (r.get("injury") or None) != (inj0 or None):
+                injury.append({"n": r["name"], "pts": round(d, 1), "status": r.get("injury") or "ACTIVE", "was": inj0 or "ACTIVE"})
+            elif abs((r.get("ros") or 0) - (ros0 or 0)) >= 3:
+                proj.append({"n": r["name"], "pts": round(d, 1), "ros": round((r.get("ros") or 0) - (ros0 or 0), 1)})
+            else:
+                reshuffle += d
+        for pid, row in b["players"].items():
+            if pid not in now and row[2] >= 0.5:
+                moves.append({"n": row[0], "pts": round(-row[2], 1), "how": "traded away" if pid in owner_now else "dropped"})
+        diff = t["power"] - b["power"]
+        explained = sum(x["pts"] for x in injury + moves + proj) + reshuffle
+        by = lambda xs: sorted(xs, key=lambda x: -abs(x["pts"]))
+        t["moved"] = {"since": base["at"], "power0": b["power"], "rank0": b["rank"], "diff": round(diff),
+                      "injury": by(injury), "moves": by(moves), "proj": by(proj),
+                      "reshuffle": round(reshuffle, 1), "other": round(diff - explained, 1)}
+
+
+def graph_pool(season, latest, size=220):
+    """Guess the graph (Games): the most-owned QBs, RBs, WRs and TEs with their fantasy points (league scoring) in
+    every completed week. The worker picks each week's three puzzles from this file (data/graph.json). The weekly
+    points of completed weeks don't change, so the live copy is reused until another week is complete."""
+    through = latest - 1
+    if through < 3:
+        return None
+    prev = live_site_file("graph.json")
+    if prev and prev.get("season") == season and prev.get("through") == through:
+        return prev
+    filt = json.dumps({"players": {"filterSlotIds": {"value": [0, 2, 4, 6]}, "limit": size,
+                                   "sortPercOwned": {"sortPriority": 1, "sortAsc": False},
+                                   "filterStatsForTopScoringPeriodIds": {"value": 18, "additionalValue": ["00%d" % season]}}})
+    players = []
+    for e in fetch(season, params=[("view", "kona_player_info")], headers={"X-Fantasy-Filter": filt}).get("players", []):
+        p = e.get("player") or {}
+        pos = POS.get(p.get("defaultPositionId"))
+        if pos not in POWER_POSITIONS:
+            continue
+        wk = {}
+        for st in p.get("stats", []):
+            if (st.get("statSourceId") == 0 and st.get("statSplitTypeId") == 1 and st.get("seasonId") == season
+                    and 1 <= (st.get("scoringPeriodId") or 0) <= through):
+                wk[st["scoringPeriodId"]] = round(st.get("appliedTotal") or 0.0, 1)
+        if len(wk) >= 3:
+            players.append({"id": p["id"], "n": p["fullName"], "pos": pos, "w": [wk.get(w) for w in range(1, through + 1)]})
+    print("  guess the graph: %d players through week %d" % (len(players), through))
+    return {"season": season, "through": through, "made": dt.datetime.now(dt.timezone.utc).isoformat(), "players": players}
 
 
 def add_free_agents(data, pool, season, latest, per_pos=25):
@@ -807,6 +913,24 @@ def build_history(seasons_data, names, current_members):
                         for o in tm.get(me["team"], {}).get("owners", []):
                             rec[o]["pw" if me["pts"] > opp["pts"] else "pl"] += 1
 
+    # career luck: each season's actual regular-season wins vs. the wins its all-play record predicts, added up
+    luck = defaultdict(lambda: {"wins": 0.0, "exp": 0.0, "apW": 0, "apL": 0, "seasons": []})
+    for data in seasons_data:
+        lg = data["league"]
+        for t in data["teams"]:
+            if t.get("expectedWins") is None or t.get("luck") is None:
+                continue
+            for o in t["owners"]:
+                L = luck[o]
+                L["wins"] += t["expectedWins"] + t["luck"]; L["exp"] += t["expectedWins"]
+                L["apW"] += t.get("allPlayW") or 0; L["apL"] += t.get("allPlayL") or 0
+                L["seasons"].append({"season": lg["season"], "team": t["name"], "luck": t["luck"], "exp": t["expectedWins"],
+                                     "wins": round(t["expectedWins"] + t["luck"], 1), "done": bool(lg["over"])})
+    career_luck = sorted(({"id": m, "name": names.get(m, "Manager"), "active": m in current_members,
+                           "wins": round(L["wins"], 1), "exp": round(L["exp"], 1), "luck": round(L["wins"] - L["exp"], 1),
+                           "apW": L["apW"], "apL": L["apL"], "seasons": sorted(L["seasons"], key=lambda x: -x["season"])}
+                          for m, L in luck.items()), key=lambda x: -x["luck"])
+
     members = []
     for mid, r in rec.items():
         games = r["w"] + r["l"] + r["t"]
@@ -821,7 +945,7 @@ def build_history(seasons_data, names, current_members):
     return {"members": members, "champions": sorted(champions, key=lambda c: -c["season"]),
             "h2h": {"%s|%s" % k: [v[0], v[1], v[2], round(v[3], 1), round(v[4], 1)] for k, v in h2h.items()},
             "records": record_book(seasons_data), "rivalries": rivalries(h2h),
-            "badges": stats.badges(seasons_data, h2h, current_members),
+            "badges": stats.badges(seasons_data, h2h, current_members), "careerLuck": career_luck,
             "thisWeek": stats.this_week_history(seasons_data)}
 
 
@@ -920,6 +1044,34 @@ def personal_records(seasons_data, top=5):
                                               "team": t["name"], "logo": t["logo"], "owners": t["owners"]})
     for r in out.values():
         r["streaks"] = sorted(r["streaks"], key=lambda x: (-x["len"], -x["season"]))[:top]
+    # nemesis players: the NFL players who've scored the most against each member (in the opposing starting lineup)
+    nem = defaultdict(dict)
+    for data in seasons_data:
+        lg = data["league"]
+        tm = {t["id"]: t for t in data["teams"]}
+        for w in data["weeks"]:
+            if not w["final"]:
+                continue
+            for g in w["games"]:
+                if len(g["sides"]) != 2:
+                    continue
+                for me, opp in (g["sides"], g["sides"][::-1]):
+                    them = tm.get(opp["team"])
+                    for p in opp["lineup"]:
+                        if not stats.is_starter(p) or (p["pts"] or 0) <= 0:
+                            continue
+                        for o in tm.get(me["team"], {}).get("owners", []):
+                            x = nem[o].setdefault(p["id"], {"pid": p["id"], "name": p["name"], "pos": p["pos"], "pts": 0.0, "games": 0, "best": None})
+                            x["pts"] += p["pts"]; x["games"] += 1
+                            if not x["best"] or p["pts"] > x["best"]["pts"]:
+                                x["best"] = {"pts": p["pts"], "season": lg["season"], "week": w["week"], "game": g["id"],
+                                             "team": them["name"] if them else "?"}
+    for m, players in nem.items():
+        if m in out:
+            rows = sorted(players.values(), key=lambda x: -x["pts"])[:10]
+            for x in rows:
+                x["pts"] = round(x["pts"], 1)
+            out[m]["nemesis"] = rows
     return out
 
 
@@ -966,6 +1118,10 @@ def main():
     for season in seasons:
         data = build_season(season, season == args.season, names)
         stats_blob = data.pop("_stats", {})
+        graph = data.pop("_graph", None)
+        if graph:
+            with open(os.path.join(DATA_DIR, "graph.json"), "w") as f:
+                json.dump(graph, f, separators=(",", ":"))
         write_js(os.path.join(DATA_DIR, "%d.js" % season), "LEAGUE_DATA", season, data)
         # player stat lines load only when someone opens a player, so they live in their own file
         write_js(os.path.join(DATA_DIR, "%d-stats.js" % season), "LEAGUE_STATS", season, stats_blob)

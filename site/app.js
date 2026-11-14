@@ -265,6 +265,34 @@
     </div>`;
   }
 
+  // Why a team's power moved since this power window started (build.py add_power_moves)
+  const STATUS_WORD = { ACTIVE: "healthy", OUT: "out", INJURY_RESERVE: "on IR", QUESTIONABLE: "questionable", DOUBTFUL: "doubtful", SUSPENSION: "suspended", DAY_TO_DAY: "day to day", PROBABLE: "probable" };
+  function movedArrow(t) {
+    const M = t.moved;
+    if (!M || L.over || !t.powerRank) return "";
+    const d = M.rank0 - t.powerRank;
+    return d ? `<span class="mv-arrow ${d > 0 ? "up" : "down"}" title="Power rank ${d > 0 ? "up" : "down"} ${Math.abs(d)} since ${esc(movedSince(M))}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : "";
+  }
+  const movedSince = M => new Date(M.since).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  function movedHtml(t) {
+    const M = t.moved;
+    if (!M || L.over) return "";
+    const d = M.rank0 - t.powerRank;
+    const rank = d ? `<b class="${d > 0 ? "pos" : "neg"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</b> to #${t.powerRank}` : `steady at #${t.powerRank}`;
+    const pts = x => `<b class="${x > 0 ? "pos" : x < 0 ? "neg" : ""}">${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toFixed(1)}</b>`;
+    const sum = xs => xs.reduce((n, x) => n + x.pts, 0);
+    const groups = [
+      ["Injuries", M.injury, x => `${esc(x.n)} <span class="muted">(${esc(STATUS_WORD[x.was] || x.was)} → ${esc(STATUS_WORD[x.status] || x.status)})</span>`],
+      ["Roster moves", M.moves, x => `${esc(x.how[0].toUpperCase() + x.how.slice(1))} ${esc(x.n)}`],
+      ["Projection changes", M.proj, x => `${esc(x.n)} <span class="muted">(ESPN rest of season ${x.ros > 0 ? "+" : "−"}${Math.abs(x.ros).toFixed(1)})</span>`],
+    ].filter(([, xs]) => xs.length);
+    const lines = groups.map(([label, xs, item]) => `<div class="mv-g"><div class="mv-gh"><span>${label}</span>${pts(sum(xs))}</div>${xs.slice(0, 4).map(x => `<div class="mv-i"><span>${item(x)}</span>${pts(x.pts)}</div>`).join("")}${xs.length > 4 ? `<div class="mv-i muted">+${xs.length - 4} more</div>` : ""}</div>`);
+    if (Math.abs(M.reshuffle) >= 1) lines.push(`<div class="mv-g"><div class="mv-gh"><span>Lineup reshuffle <span class="muted">(who starts when, after the changes above)</span></span>${pts(M.reshuffle)}</div></div>`);
+    if (Math.abs(M.other) >= 1) lines.push(`<div class="mv-g"><div class="mv-gh"><span>Other <span class="muted">(empty lineup spots, rounding)</span></span>${pts(M.other)}</div></div>`);
+    const head = `Since ${esc(movedSince(M))}: power ${M.power0.toLocaleString()} → ${t.power.toLocaleString()} (${pts(M.diff).replace(".0<", "<")}), rank ${rank}.`;
+    return `<div class="mv">${expl(head, head + " Each line is how many expected lineup points (power value) that change added or cost. The rank can also move because other teams changed.", "moved")}${lines.length ? lines.join("") : '<p class="muted mv-none">Nothing has changed yet.</p>'}</div>`;
+  }
+
   function teamCard(t, i, maxPos) {
     const open = state.open.has(t.id);
     const segs = SEGS().map(p => {
@@ -279,7 +307,7 @@
     const odds = t.odds ? `<span>Playoff odds <b>${pct(t.odds.playoffPct)}</b></span><span>Title odds <b>${pct(t.odds.titlePct)}</b></span>` : "";
     return `<article class="team${open ? " open" : ""}${isMine(t) ? " mine" : ""}" data-id="${t.id}">
       <button class="team-head" aria-expanded="${open}" data-toggle="${t.id}">
-        <span class="rank">${pad(rankFor(t, i))}</span>
+        <span class="rank">${pad(rankFor(t, i))}${state.sort === "power" ? movedArrow(t) : ""}</span>
         ${logo(t)}
         <span style="min-width:0"><div class="team-name">${isMine(t) ? '<span class="me-tag">You</span>' : ""}${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span>
         <span class="stats">
@@ -298,6 +326,7 @@
           ${t.efficiency != null ? `<span>Lineup efficiency <b>${t.efficiency}%</b></span><span>Bench pts left <b>${Number(t.benchLeft).toFixed(1)}</b></span>` : ""}
           ${odds}
         </div>
+        ${t.moved && !L.over ? `<div class="roster-title"><h3>Why the power ${t.moved.diff ? "moved" : "rank moved"}</h3></div>${movedHtml(t)}` : ""}
         <div class="roster-title"><h3>${L.over ? "Final roster · starters" : "Starting lineup"}</h3><span class="muted" style="font-size:12px">${L.over ? "Final position rank · season points" : "ROS position rank · expected starts, weeks " + PW()}</span></div>
         <div class="roster">${starters.map(playerCard).join("")}</div>
         <div class="roster-title" style="margin-top:14px"><h3>Bench</h3></div>
@@ -348,6 +377,7 @@
         bull: ["saved Bullseye picks", "#/games/bullseye"],
         rank: ["ranked this week's Rank 'em", "#/games/rankem"],
         trivia: [`finished week ${e.w}'s trivia`, "#/games/trivia"],
+        graph: ["played Guess the graph", "#/games/graph"],
         block: ["updated the trade block", "#/trades/block"],
       }[e.k] || ["did something", "#/"];
     }
@@ -672,11 +702,12 @@
 
   const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"]];
   // Games: pick'em and league trivia (name + PIN), separate from the stats tabs
-  const GAMES_TABS = [["", "Pick'em"], ["pick4", "Pick 4"], ["bullseye", "Bullseye"], ["rankem", "Rank 'em"], ["trivia", "League trivia"]];
+  const GAMES_TABS = [["", "Pick'em"], ["pick4", "Pick 4"], ["bullseye", "Bullseye"], ["rankem", "Rank 'em"], ["graph", "Guess the graph"], ["trivia", "League trivia"]];
   function renderGames() {
     if (state.sub === "trivia") return renderTrivia();
     if (state.sub === "bullseye") return renderBullseye();
     if (state.sub === "rankem") return renderRankem();
+    if (state.sub === "graph") return renderGraph();
     if (state.sub === "pick4") return renderPick3();
     return renderPickem();
   }
@@ -1459,7 +1490,7 @@
     if (!/^\d{4}$/.test(pin)) return { error: "Enter a 4-digit PIN." };
     const r = await pkApi(path, Object.assign({ member, pin }, extra || {}));
     if (r.error) return r;
-    if (member !== PK.member) { PK.ready = false; PK.sel = {}; TV.ready = false; TV.result = null; TV.sel = []; TV.auto = false; P3.ready = false; BU.ready = false; RK.ready = false; }
+    if (member !== PK.member) { PK.ready = false; PK.sel = {}; TV.ready = false; TV.result = null; TV.sel = []; TV.auto = false; P3.ready = false; BU.ready = false; RK.ready = false; GG.ready = false; GG.guesses = {}; }
     PK.member = member; PK.pin = pin;
     store.set("pk-member", member);
     store.set("pk-pin", remember ? pin : "");
@@ -1733,6 +1764,123 @@
       RK.data = await pkApi("/rank"); RK.at = Date.now();
       rankView();
     }
+  });
+
+  // ---------------------------------------------------------------- Guess the graph (Games)
+  // Three puzzles a week (easy, medium, hard): a player's fantasy points every completed week, his position, and four
+  // names. One guess per puzzle (1 / 2 / 3 points). The answer only comes back from the worker after you guess.
+  const GG = { data: null, at: 0, guesses: {}, ready: false, auto: false, msg: "", err: false, busy: false, tip: {} };
+  const GG_LABEL = { easy: "Easy", medium: "Medium", hard: "Hard" };
+  async function renderGraph() {
+    const head = gameHead("graph", "Guess the graph");
+    if (state.season !== IDX.current) { main.innerHTML = head + `<div class="empty">Guess the graph runs in the current season. <a href="#/games/graph">Go to this week's graphs</a></div>`; return; }
+    if (!LIVE_API_BASE()) { main.innerHTML = head + '<div class="empty">Guess the graph needs the live worker, which isn\'t set up.</div>'; return; }
+    if (!GG.data) main.innerHTML = head + '<div class="empty">Loading this week\'s graphs…</div>';
+    if (!(await gameLoad(GG, "graph", "/graph", "/graph/mine", ggLoad))) return;
+    graphView();
+  }
+  function ggLoad(r) {
+    GG.ready = true; GG.err = false; GG.guesses = r.guesses || {};
+    GG.msg = r.newPin ? "Welcome! The PIN you entered becomes yours for the season with your first guess." : "";
+  }
+  // one player's weekly points as bars: thin rounded-top bars on a recessive grid, a dashed season average, and a
+  // readout under the chart for the bar you hover or tap (weeks he didn't play show as a dash)
+  function graphSvg(w, lvl) {
+    const W = 600, H = 210, l = 34, r = 12, t = 12, b = 26;
+    const vals = w.filter(v => v != null);
+    const max = Math.max(10, ...vals), step = max > 60 ? 20 : 10, top = Math.ceil(max / step) * step;
+    const y = v => t + (H - t - b) * (1 - v / top), slot = (W - l - r) / w.length, bw = Math.min(26, slot * 0.55);
+    const grid = []; for (let v = 0; v <= top; v += step) grid.push(`<line x1="${l}" x2="${W - r}" y1="${y(v)}" y2="${y(v)}" class="gg-grid"/><text x="${l - 6}" y="${y(v) + 4}" class="gg-ax" text-anchor="end">${v}</text>`);
+    const bars = w.map((v, i) => {
+      const cx = l + slot * (i + 0.5);
+      const label = `<text x="${cx}" y="${H - 8}" class="gg-ax" text-anchor="middle">${i + 1}</text>`;
+      const hit = `<rect x="${cx - slot / 2}" y="${t}" width="${slot}" height="${H - t - b}" class="gg-hit" data-gg-bar="${lvl}" data-wk="${i + 1}" data-v="${v == null ? "" : v}"/>`;
+      if (v == null) return `${label}<text x="${cx}" y="${y(0) - 4}" class="gg-ax" text-anchor="middle">–</text>${hit}`;
+      const h = Math.max(1.5, y(0) - y(Math.max(0, v))), rad = Math.min(4, bw / 2, h);
+      const x0 = cx - bw / 2, y0 = y(0) - h;
+      return `${label}<path class="gg-bar" d="M${x0},${y(0)} V${y0 + rad} Q${x0},${y0} ${x0 + rad},${y0} H${x0 + bw - rad} Q${x0 + bw},${y0} ${x0 + bw},${y0 + rad} V${y(0)} Z"/>${hit}`;
+    }).join("");
+    const avg = vals.length ? vals.reduce((a, c) => a + c, 0) / vals.length : 0;
+    const avgLine = vals.length ? `<line x1="${l}" x2="${W - r}" y1="${y(avg)}" y2="${y(avg)}" class="gg-avg"/>` : "";
+    return `<svg class="gg-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Fantasy points by week: ${w.map((v, i) => `week ${i + 1} ${v == null ? "did not play" : v}`).join(", ")}">${grid.join("")}${avgLine}${bars}</svg>`;
+  }
+  function ggTip(lvl, P) {
+    const tip = GG.tip[lvl];
+    const vals = P.w.filter(v => v != null), total = vals.reduce((a, c) => a + c, 0);
+    if (tip) return tip.v === "" ? `Week ${tip.wk}: didn't play` : `Week ${tip.wk}: <b>${Number(tip.v).toFixed(1)}</b> pts`;
+    return `${vals.length} games · ${total.toFixed(1)} pts · <span class="gg-avg-key"></span> average ${(vals.length ? total / vals.length : 0).toFixed(1)}`;
+  }
+  function graphView() {
+    const T = GG.data;
+    if (!T || T.error) { main.innerHTML = gameHead("graph", "Guess the graph") + `<div class="empty">${esc((T && T.error) || "Couldn't load Guess the graph.")} <button type="button" class="linkbtn" data-gg="reload">Try again</button></div>`; return; }
+    const B = T.board || {};
+    const leaders = Object.entries(B).map(([m, r]) => ({ m, ...r })).sort((a, b) => b.total - a.total || b.right - a.right);
+    const leaderboard = leaders.length ? section("Season leaderboard", "Easy 1 point, Medium 2, Hard 3.", table([
+      { label: "Player", cell: r => `<b>${esc(nameOfMember(r.m))}</b>` },
+      { label: "Points", num: 1, cell: r => `<b>${r.total}</b>` },
+      { label: "Right", num: 1, cell: r => `${r.right} of ${r.tries}` },
+      { label: "Weeks played", num: 1, cell: r => Object.keys(r.weeks || {}).length || "—" },
+    ], leaders)) : "";
+    if (T.over) { main.innerHTML = gameHead("graph", "Guess the graph", '<p class="sub">The season is over. Back next season.</p>') + leaderboard; return; }
+    const intro = expl("Whose season is this? Each bar is one week's fantasy points. Three graphs a week: Easy, Medium and Hard.",
+      `Each graph is one player's fantasy points (our scoring) in every completed week this season, with his position but not his team. Pick him from four names. <b>Easy</b> is one of the top players at his position against three much lower scorers; <b>Medium</b> is a top-16 player against players ranked near him; <b>Hard</b> is a deeper player against the three whose season totals are closest to his. One guess each, worth 1, 2 and 3 points. A dash is a week he didn't play (bye or injury); the dashed line is his average. New graphs every week, and no player is the answer twice in a season.`, "graph");
+    const card = P => {
+      const g = GG.guesses[P.level];
+      const opts = P.options.map(o => {
+        const cls = !g ? "" : o.id === g.answer ? " right" : o.id === g.guess ? " wrong" : " dim";
+        return `<button type="button" class="gg-opt${cls}" data-gg-guess="${P.level}" data-id="${o.id}"${g || GG.busy ? " disabled" : ""}>${esc(o.n)}${g && o.id === g.answer ? " ✓" : g && o.id === g.guess ? " ✕" : ""}</button>`;
+      }).join("");
+      const res = g ? `<p class="gg-res ${g.right ? "pos" : "neg"}">${g.right ? `Got it: <b>${esc(g.name)}</b> · +${(T.pts || {})[P.level] || ""}` : `It was <b>${esc(g.name)}</b>`}</p>` : "";
+      return `<article class="gg-card"><div class="gg-h"><span class="gg-lvl ${P.level}">${GG_LABEL[P.level]}</span><span class="slot ${esc(P.pos)}">${esc(P.pos)}</span><span class="team-mgr">${(T.pts || {})[P.level] || ""} pt${(T.pts || {})[P.level] === 1 ? "" : "s"} · weeks 1–${P.through}</span></div>
+        ${graphSvg(P.w, P.level)}<p class="gg-tip" data-gg-tip="${P.level}">${ggTip(P.level, P)}</p>
+        <div class="gg-opts">${opts}</div>${res}</article>`;
+    };
+    const results = Object.entries(T.results || {});
+    const week = results.length ? section(`Week ${T.week} so far`, "", `<div class="gg-week">${results.map(([m, r]) => `<span><b>${esc(nameOfMember(m))}</b> ${["easy", "medium", "hard"].map(k => r[k] == null ? '<i class="gg-dot"></i>' : `<i class="gg-dot ${r[k] ? "y" : "n"}" title="${GG_LABEL[k]}: ${r[k] ? "right" : "wrong"}"></i>`).join("")}</span>`).join("")}</div>`) : "";
+    const msg = GG.msg ? `<p class="note${GG.err ? " live" : ""}">${esc(GG.msg)}</p>` : "";
+    main.innerHTML = gameHead("graph", "Guess the graph", intro) + (GG.ready ? "" : gameWho("gg", false, "Sign in to guess. Same name and PIN as pick'em.")) + msg +
+      `<div class="gg-grid">${T.puzzles.map(card).join("")}</div>` + week + leaderboard;
+  }
+  main.addEventListener("click", async e => {
+    if (!(state.tab === "games" && state.sub === "graph")) return;
+    const bar = e.target.closest("[data-gg-bar]");
+    if (bar) { GG.tip[bar.dataset.ggBar] = { wk: bar.dataset.wk, v: bar.dataset.v }; return ggPaintTip(bar.dataset.ggBar); }
+    const a = e.target.closest("[data-gg]");
+    if (a && a.dataset.gg === "reload") { GG.data = null; return renderGraph(); }
+    if (a && a.dataset.gg === "continue") {
+      const r = await gameSignIn("gg", "/graph/mine");
+      if (r.error) { GG.msg = r.error; GG.err = true; GG.ready = false; return graphView(); }
+      ggLoad(r); return graphView();
+    }
+    const g = e.target.closest("[data-gg-guess]");
+    if (!g || g.disabled) return;
+    if (!GG.ready) { GG.msg = "Sign in above first, then pick a name."; GG.err = true; return graphView(); }
+    GG.busy = true; graphView();
+    const r = await pkApi("/graph/guess", { member: PK.member, pin: PK.pin, level: g.dataset.ggGuess, id: Number(g.dataset.id) });
+    GG.busy = false;
+    if (r.guesses) GG.guesses = r.guesses;
+    if (r.error) { GG.msg = r.error; GG.err = true; return graphView(); }
+    GG.msg = ""; GG.err = false;
+    if (r.board) GG.data.board = r.board;
+    GG.data = await pkApi("/graph").catch(() => GG.data); GG.at = Date.now();
+    graphView();
+  });
+  function ggPaintTip(lvl) {
+    const el = main.querySelector(`[data-gg-tip="${lvl}"]`), P = GG.data && (GG.data.puzzles || []).find(x => x.level === lvl);
+    if (el && P) el.innerHTML = ggTip(lvl, P);
+    main.querySelectorAll(`[data-gg-bar="${lvl}"]`).forEach(h => h.classList.toggle("on", GG.tip[lvl] && h.dataset.wk === GG.tip[lvl].wk));
+  }
+  main.addEventListener("mouseover", e => {
+    const bar = e.target.closest && e.target.closest("[data-gg-bar]");
+    if (!bar) return;
+    GG.tip[bar.dataset.ggBar] = { wk: bar.dataset.wk, v: bar.dataset.v };
+    ggPaintTip(bar.dataset.ggBar);
+  });
+  main.addEventListener("mouseout", e => {
+    const bar = e.target.closest && e.target.closest("[data-gg-bar]");
+    if (!bar || (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest(`[data-gg-bar="${bar.dataset.ggBar}"]`))) return;
+    GG.tip[bar.dataset.ggBar] = null;
+    ggPaintTip(bar.dataset.ggBar);
   });
 
   // ---------------------------------------------------------------- reactions
@@ -2712,7 +2860,8 @@
       }).join("");
       return section("Champions", "", `<div class="champs">${champs || '<div class="empty">No completed seasons yet.</div>'}</div>`) +
         section("All-time standings", "By member, across every season they played. Tap a row for their seasons.",
-          `<div class="table-wrap"><table class="tbl members"><thead><tr><th>Manager</th><th class="n">Seasons</th><th class="n">Record</th><th class="n">Win %</th><th class="n">Pts/game</th><th class="n">Titles</th><th class="n">Finals</th><th class="n">Playoffs</th><th class="n">Best</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+          `<div class="table-wrap"><table class="tbl members"><thead><tr><th>Manager</th><th class="n">Seasons</th><th class="n">Record</th><th class="n">Win %</th><th class="n">Pts/game</th><th class="n">Titles</th><th class="n">Finals</th><th class="n">Playoffs</th><th class="n">Best</th></tr></thead><tbody>${rows}</tbody></table></div>`) +
+        careerLuckSection(H);
     },
 
     h2h(H) {
@@ -2788,6 +2937,23 @@
         ${recCard("Best games on the bench", R.benchGames.map(recPlayerLine).join(""))}
       </div>`;
   }
+  // History → Champions & standings: every manager's luck across every season
+  function careerLuckSection(H) {
+    const C = H.careerLuck;
+    if (!C || !C.length) return "";
+    const seasonLine = x => `${x.season}${x.done ? "" : "*"} ${x.luck > 0 ? "+" : x.luck < 0 ? "−" : ""}${Math.abs(x.luck).toFixed(1)}`;
+    const extreme = (r, f) => r.seasons.length ? r.seasons.reduce((a, b) => (f(b.luck, a.luck) ? b : a)) : null;
+    return section("Career luck", { short: "Each manager's regular-season wins vs. the wins their scoring deserved, every season added up.",
+      full: "For every season, a team's expected wins come from its all-play record (playing every team every week): a team that would beat 60% of the league each week is expected to win 60% of its games. <b>Luck</b> is actual wins minus expected wins, added up across every season the manager played (regular season only; * = season in progress). Positive means more wins than the scoring deserved." }, table([
+      { label: "Manager", cell: r => `<b>${esc(r.name)}</b>${r.active ? "" : ' <span class="badge former">Former</span>'}` },
+      { label: "Wins", num: 1, cell: r => r.wins.toFixed(0) },
+      { label: "Expected", num: 1, cell: r => r.exp.toFixed(1) },
+      { label: "Luck", num: 1, cell: r => signedPts(r.luck, true) },
+      { label: "All-play", num: 1, cell: r => `${r.apW}–${r.apL}` },
+      { label: "Luckiest season", cell: r => { const x = extreme(r, (a, b) => a > b); return x && x.luck > 0 ? esc(seasonLine(x)) : "—"; } },
+      { label: "Unluckiest season", cell: r => { const x = extreme(r, (a, b) => a < b); return x && x.luck < 0 ? esc(seasonLine(x)) : "—"; } },
+    ], C));
+  }
   // one member's own record book (History → Record book with a manager picked)
   function personalBookHtml(R, m) {
     const lossLine = r => recGameLine(Object.assign({}, r, { teamId: r.loserId }), "−" + r.margin.toFixed(1));
@@ -2802,8 +2968,11 @@
         ${recCard("Longest win streaks", R.streaks.map(streakLine).join(""))}
         ${recCard("Best player games", R.playerGames.map(recPlayerLine).join(""))}
         ${recCard("Best games on the bench", R.benchGames.map(recPlayerLine).join(""))}
+        ${recCard("Nemesis players", (R.nemesis || []).map(nemesisLine).join(""))}
       </div>`;
   }
+  // an NFL player who's scored a lot against this member, all-time (in the opposing starting lineup)
+  const nemesisLine = r => `<div class="rec"><span class="rec-v">${r.pts.toFixed(1)}</span><span class="rec-who"><span class="slot ${esc(r.pos)}">${esc(r.pos)}</span><span><b>${esc(r.name)}</b><span class="team-mgr">${r.games} game${r.games === 1 ? "" : "s"} against you · best ${Number(r.best.pts).toFixed(1)} for ${esc(r.best.team)}</span></span></span>${whenLink(Object.assign({ pid: r.pid }, r.best))}</div>`;
   async function fillPersonalBook(box) {
     if (!box) return;
     const m = box.dataset.recMember;
@@ -2832,6 +3001,8 @@
     if (cl) tiles.push(tile("Closest loss", "−" + cl.margin.toFixed(2), `vs ${esc(cl.winner.team)} · ${at(cl)}`, Object.assign({}, cl, { teamId: cl.loserId })));
     if (pg) tiles.push(tile("Best player game", fmt(pg.pts), `${esc(pg.name)} · ${at(pg)}`, pg));
     if (st) tiles.push(tile("Longest win streak", st.len + " wins", `${st.season} · weeks ${st.from}–${st.to}`, null));
+    const nm = (R.nemesis || [])[0];
+    if (nm) tiles.push(tile("Your nemesis", esc(nm.name), `${nm.pts.toFixed(1)} pts against you in ${nm.games} game${nm.games === 1 ? "" : "s"}`, null));
     box.innerHTML = `<div class="me-recs">${tiles.join("")}</div>`;
   }
 
@@ -2921,9 +3092,9 @@
   // The member id is an ESPN account, so it finds the right team in every season.
   const ME = { member: store.get("me", ""), pick: "", msg: "", err: false, busy: false, cust: false };
   // My team layout (per device): the order of the sections below the at-a-glance tiles, and which are hidden
-  const ME_PARTS = { glance: "At a glance", week: "This week's matchup", news: "Player news", waivers: "Waiver targets", watch: "Your games to watch",
+  const ME_PARTS = { glance: "At a glance", week: "This week's matchup", moved: "Why your power moved", news: "Player news", waivers: "Waiver targets", watch: "Your games to watch",
     byes: "Byes ahead", badges: "Your badges", records: "Your record book", roster: "Roster", schedule: "Schedule" };
-  const ME_ORDER = ["week", "news", "waivers", "watch", "byes", "badges", "records", "roster", "schedule"];
+  const ME_ORDER = ["week", "moved", "news", "waivers", "watch", "byes", "badges", "records", "roster", "schedule"];
   function meLayout() {
     const saved = store.get("me-layout", null) || {};
     const order = (Array.isArray(saved.order) ? saved.order : []).filter(k => ME_ORDER.includes(k));
@@ -3083,6 +3254,7 @@
     // every section, in the order and visibility this device has chosen (Customize)
     const parts = {
       glance, week, watch, byes, schedule, roster,
+      moved: cur && t.moved ? section("Why your power moved", "", movedHtml(t)) : "",
       news: cur ? section("Player news", "The latest from ESPN on your players. New since your last visit is marked.", '<div class="me-news-box"><div class="empty">Loading…</div></div>') : "",
       waivers: waiverTargets(t),
       badges: IDX.history.badges ? section(`Your badges <a class="wk-link" href="${href("history", {}, "badges")}">all badges ›</a>`, "Earned across every season you've played.", badgeTiles(ME.member)) : "",
@@ -3296,6 +3468,10 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-14", [
+      ["Guess the graph", "Games → Guess the graph", "Whose season is this? Three bar charts of a player's weekly points every week (Easy, Medium, Hard); pick him from four names.", "#/games/graph"],
+      ["Why you moved", "Standings, My team", "What changed a team's power value this week: injuries, roster moves, projection changes. ▲/▼ shows the power rank change.", "#/myteam"],
+      ["Nemesis players", "History → Record book, My team", "The NFL players who've scored the most against you, all-time.", "#/history/records"],
+      ["Career luck", "History", "Every manager's luck across every season: actual wins vs. the wins their scoring deserved.", "#/history"],
       ["Bullseye", "Games → Bullseye", "A new target every week: pick up to 5 players whose points add up as close to it as you can without going over.", "#/games/bullseye"],
       ["Rank 'em", "Games → Rank 'em", "Put five players at one position in order of the points they'll score. 3 points per exact spot, 1 for one off.", "#/games/rankem"],
       ["Reactions", "Matchups, Big plays, Standings", "Tap an emoji under any matchup, big play or the weekly high and low score. Hold one to see who reacted.", "#/matchups"],
@@ -3392,6 +3568,7 @@
       ["power", "Power value", "Standings", "#/", "How many points a team's starting lineup is expected to score over the rest of the fantasy season. Each remaining week starts the best available lineup by ESPN's projections (skipping byes and players expected to miss time) and the season is replayed 500 times with random injuries, so bench players count as often as they'd really play. Kickers and defenses are left out.", []],
       ["powerrank", "Power rank", "Standings", "#/", "Teams ordered by power value. #1 has the strongest expected lineup for the rest of the season.", []],
       ["posbars", "Position bars", "Standings", "#/", "Each team's rank at QB, RB, WR and TE: expected points from its best QB, 3 RBs, 3 WRs (two spots plus FLEX) and TE each week. After the season, what those groups actually produced.", []],
+      ["moved", "Why you moved", "Standings → team cards, My team", "#/myteam", "How much each change since the current power window started (about once a week) added to or cost a team's power value: injuries, roster moves (added, dropped, traded), ESPN projection changes, and the lineup reshuffle those cause. ▲/▼ next to a power rank is the change over the same stretch.", ["Why your power moved"]],
       ["starts", "Starts X of Y wks", "Standings → team cards", "#/", "How often a player makes his team's best projected lineup in the weeks left.", []],
       ["odds", "Playoff and title odds", "Insights → Playoff race", "#/insights/race", "From 10,000 simulated finishes of the regular season and the bracket. This week's games use ESPN's live win probabilities.", ["Playoff race"]],
       ["form", "Hot & cold", "Insights → Playoff race", "#/insights/race?at=form", "Each team's average over the last few completed weeks vs. its season average, with the league-wide swing taken out (Trend).", ["Hot & cold"]],
@@ -3415,6 +3592,8 @@
     ]],
     ["What ifs", [
       ["rules", "Rules lab", "Insights → What ifs", "#/insights/whatif", "This season's standings under other scoring and formats (PPR, half PPR, standard, a median game, best ball), with the same lineups and real stats rescored.", ["Rules lab"]],
+      ["careerluck", "Career luck", "History → Champions & standings", "#/history", "Each manager's regular-season wins minus the wins their all-play record predicts, added up across every season they've played.", ["Career luck"]],
+      ["nemesis", "Nemesis players", "History → Record book, My team", "#/history/records", "The NFL players who've scored the most points against you all-time, counting only games where they were in your opponent's starting lineup.", []],
       ["swap", "Schedule swap", "Insights → What ifs", "#/insights/whatif?at=swap", "Each team's record if it had played every other team's schedule, using its real weekly scores.", ["Schedule swap"]],
     ]],
     ["My team & trades", [
@@ -3435,6 +3614,7 @@
       ["fachallenge", "Waiver wire challenge", "Games → Pick 4", "#/games/pick4?view=fa", "Pick 4 using only players who are free agents in our league.", []],
       ["bullseye", "Bullseye", "Games → Bullseye", "#/games/bullseye", "Pick up to 5 players whose real points add up as close to the week's target as possible without going over. Going over is a bust.", []],
       ["rankem", "Rank 'em", "Games → Rank 'em", "#/games/rankem", "Put five players at one position in order of the points they'll score. 3 points per exact spot, 1 for one spot off, 15 max.", []],
+      ["graph", "Guess the graph", "Games → Guess the graph", "#/games/graph", "Three graphs a week of one player's weekly fantasy points; pick him from four names. Easy, Medium and Hard are worth 1, 2 and 3 points.", []],
       ["trivia", "League trivia", "Games → League trivia", "#/games/trivia", "Five questions a week about league history, easy to expert. One try each.", []],
       ["pin", "Name and PIN", "Games, My team", "#/games", "Your 4-digit PIN, set the first time you use it, keeps anyone else from playing or reacting as you. One PIN works everywhere on the site.", []],
     ]],

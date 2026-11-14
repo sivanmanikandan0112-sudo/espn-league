@@ -1326,3 +1326,52 @@ button.tv-opt:hover { border-color: var(--ink-2); }
 .compact .side-row .score { font-size: 17px; }
 .compact .side-row .team-name { font-size: 14px; }
 .compact .game > .rx { padding: 0 12px 2px; margin: 0; }
+
+/* ---- Guess the graph */
+.gg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 14px; margin: 6px 0 24px; }
+.gg-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.gg-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gg-h .team-mgr { margin-left: auto; }
+.gg-lvl { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; padding: 2px 8px; border-radius: 6px; background: var(--surface-2); color: var(--ink); }
+.gg-lvl.easy { box-shadow: inset 0 0 0 1px var(--line); }
+.gg-lvl.medium { box-shadow: inset 0 0 0 1px var(--ink-2); }
+.gg-lvl.hard { background: var(--ink); color: var(--bg); }
+.gg-svg { width: 100%; height: auto; display: block; touch-action: manipulation; }
+.gg-grid line.gg-grid, .gg-svg .gg-grid { stroke: var(--line); stroke-width: 1; }
+.gg-svg .gg-ax { fill: var(--ink-2); font-size: 11px; font-family: Inter, system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.gg-svg .gg-bar { fill: var(--accent); }
+.gg-svg .gg-avg { stroke: var(--ink-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.gg-svg .gg-hit { fill: transparent; cursor: pointer; }
+.gg-svg .gg-hit.on { fill: color-mix(in srgb, var(--ink) 7%, transparent); }
+.gg-tip { margin: 0; font-size: 13px; color: var(--ink-2); min-height: 18px; }
+.gg-tip b { color: var(--ink); }
+.gg-avg-key { display: inline-block; width: 16px; border-top: 1.5px dashed var(--ink-2); vertical-align: middle; margin-right: 2px; }
+.gg-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.gg-opt { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); cursor: pointer; text-align: left; }
+.gg-opt:hover:not(:disabled) { border-color: var(--ink-2); }
+.gg-opt:disabled { cursor: default; }
+.gg-opt.right { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.gg-opt.wrong { border-color: var(--hot); background: color-mix(in srgb, var(--hot) 10%, var(--surface)); }
+.gg-opt.dim { opacity: .55; }
+.gg-res { margin: 0; font-size: 14px; }
+.gg-res.pos { color: var(--accent); } .gg-res.neg { color: var(--hot); }
+.gg-res b { color: var(--ink); }
+.gg-week { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 14px; }
+.gg-week span { display: inline-flex; align-items: center; gap: 4px; }
+.gg-dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--line); display: inline-block; }
+.gg-dot.y { background: var(--accent); border-color: var(--accent); }
+.gg-dot.n { background: var(--hot); border-color: var(--hot); }
+.compact .gg-card { padding: 10px; gap: 6px; }
+
+/* ---- Why you moved */
+.mv-arrow { display: block; font-size: 10px; font-weight: 800; line-height: 1; margin-top: 2px; }
+.mv-arrow.up { color: var(--accent); } .mv-arrow.down { color: var(--hot); }
+.mv { margin: 4px 0 6px; }
+.mv .expl { margin-top: 0; }
+.mv-g { border-top: 1px solid var(--line); padding: 6px 0; }
+.mv-gh, .mv-i { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.mv-gh { font-weight: 700; }
+.mv-i { color: var(--ink-2); padding: 2px 0 2px 12px; }
+.mv-gh b, .mv-i b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mv-none { margin: 4px 0; font-size: 13px; }
+section.insight .mv { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; box-shadow: var(--shadow); }
