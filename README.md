@@ -243,9 +243,13 @@ after a member submits. One try per week, same name + PIN as pick'em; the season
 
 Games → Pick 4 (`#/games/pick4`, worker `/pick3`, `/pick3/mine`, `/pick3/save`). Each week: one QB, RB, WR and TE
 from any NFL team under a salary cap, scored with their real fantasy points that week under league scoring (ESPN's
-`appliedTotal`). When the week's slate is first requested the worker freezes it in KV (`p3-slate4:<season>:<week>`):
-every QB/RB/WR/TE with a game, not out/IR/suspended, projected 5+ by ESPN for the week, priced at **$400 per projected
-point** (rounded to $100) at every position, so no position is cheaper per expected point. The cap is 80% of the
+`appliedTotal`). The week's slate is made on the first request (KV `p3-slate4:<season>:<week>`): every QB/RB/WR/TE
+with a game, not on IR/suspended, projected 5+ by ESPN for the week, priced at **$400 per projected point** (rounded to
+$100) at every position, so no position is cheaper per expected point. It's **re-priced every 30 minutes**
+(`P3_REFRESH_MIN`) from ESPN's latest projections, so prices follow injury news, until each player's game starts (then
+his price freezes). Injury tags ride along (Q / D / OUT; OUT players can't be added) and each player keeps `sal0`, his
+opening price, for the ▲/▼ shown on the page. A saved pick is a snapshot `{id, sal, n, pos, team, opp, at}`: **players
+already in a lineup keep the price they were bought at**; only a player swapped in costs the current price. The cap is 80% of the
 priciest QB + RB + WR + TE (rounded to $500): you can't take every star, and any lineup that spends the cap projects
 about the same, so the game is about who beats his projection. A spot can change only while both the player in it and
 his replacement haven't kicked off; other members' players stay hidden until their game starts. Entries are one KV
@@ -253,8 +257,8 @@ value per week (`p3-entries:...`); finished weeks are scored once into `p3-seaso
 lineup). Change the price/cap rules with `P3_PER_PT`, `P3_MIN_PROJ` and `P3_CAP_SHARE` in `worker/src/index.js`.
 
 **Waiver wire challenge** (the second view on the same page, `#/games/pick4?view=fa`, API `?mode=fa` / `"mode": "fa"`):
-the same game, but the slate is only players who were unrostered in this league (free agents or on waivers) when the
-week's slate opened, projected 3+. Same $400/point prices; the cap is 80% of the priciest free-agent QB + RB + WR + TE.
+the same game, but only players unrostered in this league (free agents or on waivers), projected 3+. The list is
+re-checked with every re-price: newly dropped players join, players picked up leave (they stay in lineups that have them). Same $400/point prices; the cap is 80% of the priciest free-agent QB + RB + WR + TE.
 Its own KV keys (`p3fa-slate`, `p3fa-entries`, `p3fa-season`) and leaderboard (`P3_MODES` in the worker).
 
 ## Weekly pick'em

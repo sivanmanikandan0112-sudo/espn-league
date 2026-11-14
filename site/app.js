@@ -1220,13 +1220,21 @@
     const byId = Object.fromEntries(T.players.map(p => [p.id, p]));
     const played = p => p && now >= p.at;
     const kick = p => new Date(p.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-    const lockedSlot = k => P3.saved[k] && played(byId[P3.saved[k].id]);
-    const spent = P3_SLOTS.reduce((n, k) => n + (P3.sel[k] ? byId[P3.sel[k]].sal : 0), 0);
+    // a saved pick keeps the price it was bought at; a new pick costs today's price
+    const kept = k => P3.sel[k] && P3.saved[k] && P3.saved[k].id === P3.sel[k];
+    const info = k => kept(k) ? Object.assign({}, P3.saved[k], byId[P3.sel[k]] ? { proj: byId[P3.sel[k]].proj, inj: byId[P3.sel[k]].inj } : {}) : byId[P3.sel[k]];
+    const cost = k => !P3.sel[k] ? 0 : kept(k) ? P3.saved[k].sal : (byId[P3.sel[k]] || { sal: 0 }).sal;
+    const lockedSlot = k => P3.saved[k] && played(P3.saved[k]);
+    const spent = P3_SLOTS.reduce((n, k) => n + cost(k), 0);
+    const injTag = x => x && x.inj ? ` <span class="p3-inj ${x.inj === "OUT" ? "out" : ""}">${esc(x.inj)}</span>` : "";
+    const move = p => p.sal0 && p.sal !== p.sal0 ? `<span class="p3-mv ${p.sal > p.sal0 ? "up" : "down"}" title="Opened the week at ${money(p.sal0)}">${p.sal > p.sal0 ? "▲" : "▼"}${money(Math.abs(p.sal - p.sal0)).slice(1)}</span>` : "";
+    const updated = new Date(T.made).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     const left = T.cap - spent;
-    const intro = P3.mode === "fa" ? expl(`Only players who were free agents in our league this week. Pick a QB, RB, WR and TE for ${money(T.cap)} or less.`,
-      `The same game as Pick 4, but the only players allowed are the ${T.players.length} who were free agents or on waivers in our league when this week opened (${esc(new Date(T.made).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}), projected for 3+ points. Prices use the same ${money(T.perPt)} per projected point at every position, and the cap is 80% of the priciest free-agent QB + RB + WR + TE. Your score is their real points this week under our scoring; each spot locks at its player's kickoff. Whoever wins found the free agents worth adding: see Waiver targets on My team to actually claim one. Ties go to the cheaper lineup.`)
+    const pricing = `Prices are ${money(T.perPt)} per point ESPN projects for a player this week (under our scoring), the same rate at every position, and they move with injury news and projection changes: they're updated every ${T.refreshMin || 30} minutes until each player's game starts (last update ${esc(updated)}; ▲/▼ is the change since the week opened). <b>Players you've saved keep the price you paid</b>; only a player you swap in costs today's price. The cap is set once when the week opens.`;
+    const intro = P3.mode === "fa" ? expl(`Only players who are free agents in our league. Pick a QB, RB, WR and TE for ${money(T.cap)} or less.`,
+      `The same game as Pick 4, but only players who are free agents or on waivers in our league can be added (projected for 3+ points). The list is re-checked with every price update: players dropped in our league join it, and players someone picks up leave it, though anyone already in your lineup stays there unless you swap him out. ${pricing} The cap is 80% of the priciest free-agent QB + RB + WR + TE when the week opened. Your score is their real points this week under our scoring; each spot locks at its player's kickoff. Whoever wins found the free agents worth adding: see Waiver targets on My team to actually claim one. Ties go to the cheaper lineup.`)
       : expl(`Pick a QB, RB, WR and TE for ${money(T.cap)} or less. Score = their real points this week.`,
-      `This week's ${T.players.length} players are priced at ${money(T.perPt)} per point ESPN projects for them this week (under our scoring), the same rate at every position, and prices are set once when the week opens. Pick a QB, RB, WR and TE from any NFL team for ${money(T.cap)} or less; your score is their real points this week under our scoring. Each spot locks when that player's game kicks off; until then you can swap in anyone who hasn't played yet, right up to the last game. Ties go to the cheaper lineup.`);
+      `Pick a QB, RB, WR and TE from any NFL team for ${money(T.cap)} or less; your score is their real points this week under our scoring. ${pricing} Each spot locks when that player's game kicks off; until then you can swap in anyone who hasn't played yet, right up to the last game. Ties go to the cheaper lineup.`);
     const who = `<div class="panel pk-who">
         <label class="field">Who are you? <select id="p3-member"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
         <label class="field">PIN <input id="p3-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="4 digits" value="${esc(PK.pin)}"></label>
@@ -1237,26 +1245,33 @@
     if (P3.ready) {
       const changed = P3_SLOTS.some(k => (P3.sel[k] || null) !== (P3.saved[k] ? P3.saved[k].id : null));
       const slot = k => {
-        const p = P3.sel[k] && byId[P3.sel[k]], lock = lockedSlot(k), sv = P3.saved[k];
+        const p = P3.sel[k] && info(k), lock = lockedSlot(k), sv = P3.saved[k];
         if (!p) return `<button type="button" class="p3-slot empty${P3.pos === k ? " on" : ""}" data-p3-pos="${k}"><span class="slot ${k}">${k}</span><span class="p3-sn">Pick a ${k}</span></button>`;
-        const pts = lock && sv && sv.pts != null ? `<b class="p3-pts">${sv.pts.toFixed(1)} pts</b>` : `<span class="p3-sal">${money(p.sal)}</span>`;
-        return `<div class="p3-slot${lock ? " locked" : ""}${P3.pos === k ? " on" : ""}"><span class="slot ${k}">${k}</span><span class="p3-sn"><b>${esc(p.n)}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${lock ? "locked 🔒" : esc(kick(p))} · proj ${p.proj.toFixed(1)}</span></span>${pts}
+        const now$ = byId[p.id] && byId[p.id].sal;
+        const priceTxt = kept(k) ? `paid ${money(sv.sal)}${now$ && now$ !== sv.sal && !lock ? ` · now ${money(now$)}` : ""}` : "";
+        const pts = lock && sv && sv.pts != null ? `<b class="p3-pts">${sv.pts.toFixed(1)} pts</b>` : `<span class="p3-sal">${money(cost(k))}</span>`;
+        // heads-ups on saved players: ruled out, or (waiver wire) picked up in our league
+        let warn = "";
+        if (!lock && byId[p.id] && byId[p.id].inj === "OUT") warn = `<span class="p3-warn">Ruled out. Swap him before ${esc(kick(p))}.</span>`;
+        else if (!lock && kept(k) && !byId[p.id] && P3.mode === "fa") warn = `<span class="p3-note">Picked up in our league since you added him. He stays in your lineup, but if you swap him out you can't get him back.</span>`;
+        return `<div class="p3-slot${lock ? " locked" : ""}${P3.pos === k ? " on" : ""}"><span class="slot ${k}">${k}</span><span class="p3-sn"><b>${esc(p.n)}${injTag(byId[p.id])}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${lock ? "locked 🔒" : esc(kick(p))}${p.proj != null ? ` · proj ${p.proj.toFixed(1)}` : ""}${priceTxt ? " · " + priceTxt : ""}</span>${warn}</span>${pts}
           ${lock ? "" : `<button type="button" class="linkbtn" data-p3-pos="${k}">Change</button><button type="button" class="linkbtn" data-p3-clear="${k}" aria-label="Remove ${esc(p.n)}">✕</button>`}</div>`;
       };
       const pct = Math.min(100, 100 * spent / T.cap);
       const q = P3.q.trim().toLowerCase();
-      const list = T.players.filter(p => p.pos === P3.pos && (!q || p.n.toLowerCase().includes(q) || p.team.toLowerCase() === q));
-      const curSal = P3.sel[P3.pos] ? byId[P3.sel[P3.pos]].sal : 0;
+      const list = T.players.filter(p => p.pos === P3.pos && (!q || p.n.toLowerCase().includes(q) || p.team.toLowerCase() === q))
+        .sort((a, b) => (a.inj === "OUT") - (b.inj === "OUT") || b.sal - a.sal);
+      const curSal = cost(P3.pos);
       // keep enough back for the cheapest player still available at every other empty spot
-      const cheapest = k => Math.min(...T.players.filter(p => p.pos === k && !played(p)).map(p => p.sal));
+      const cheapest = k => Math.min(...T.players.filter(p => p.pos === k && !played(p) && p.inj !== "OUT").map(p => p.sal));
       const reserve = P3_SLOTS.filter(k => k !== P3.pos && !P3.sel[k]).reduce((n, k) => n + (isFinite(cheapest(k)) ? cheapest(k) : 0), 0);
       const rows = list.map(p => {
-        const picked = P3.sel[P3.pos] === p.id, gone = played(p), cost = p.sal - curSal;
-        const over = !picked && cost > left, tight = !picked && !over && cost > left - reserve;
-        const why = gone ? "played" : lockedSlot(P3.pos) ? "spot locked" : over ? "over cap" : tight ? "no room left" : "";
+        const picked = P3.sel[P3.pos] === p.id, gone = played(p), extra = p.sal - curSal;
+        const over = !picked && extra > left, tight = !picked && !over && extra > left - reserve;
+        const why = gone ? "played" : lockedSlot(P3.pos) ? "spot locked" : p.inj === "OUT" ? "out" : over ? "over cap" : tight ? "no room left" : "";
         return `<button type="button" class="p3-row${picked ? " on" : ""}" data-p3-pick="${p.id}"${why && !picked ? " disabled" : ""}>
-          <span class="p3-rn"><b>${esc(p.n)}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${gone ? "played" : esc(kick(p))}</span></span>
-          <span class="p3-rp">proj ${p.proj.toFixed(1)}</span><span class="p3-rs">${money(p.sal)}</span><span class="p3-rw">${picked ? "✓" : why ? esc(why) : "Add"}</span></button>`;
+          <span class="p3-rn"><b>${esc(p.n)}${injTag(p)}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${gone ? "played" : esc(kick(p))}</span></span>
+          <span class="p3-rp">proj ${p.proj.toFixed(1)}</span><span class="p3-rs">${money(picked && kept(P3.pos) ? P3.saved[P3.pos].sal : p.sal)}${picked && kept(P3.pos) ? "" : move(p)}</span><span class="p3-rw">${picked ? "✓" : why ? esc(why) : "Add"}</span></button>`;
       }).join("");
       game = `<div class="p3-wrap"><div class="p3-lineup">
           <div class="p3-cap"><div class="p3-cap-t"><span>Spent <b>${money(spent)}</b> of ${money(T.cap)}</span><span class="${left < 0 ? "neg" : ""}">${money(left)} left</span></div><div class="p3-bar"><span style="width:${pct}%"></span></div></div>
@@ -1277,7 +1292,7 @@
         if (!x) return `<div class="p3-ep muted"><span class="slot ${k}">${k}</span>none</div>`;
         if (x.hidden) return `<div class="p3-ep muted"><span class="slot ${k}">${k}</span>hidden until kickoff</div>`;
         const p = byId[x.id];
-        return `<div class="p3-ep"><span class="slot ${k}">${k}</span><span class="p3-sn">${esc(p ? p.n : "?")}</span><b>${(x.pts || 0).toFixed(1)}</b></div>`;
+        return `<div class="p3-ep"><span class="slot ${k}">${k}</span><span class="p3-sn">${esc(x.n || (p ? p.n : "?"))}</span><b>${(x.pts || 0).toFixed(1)}</b></div>`;
       }).join("")}</div>`).join("")}</div>`) : "";
     main.innerHTML = head("").replace("</h1>", "</h1>" + intro) + who + msg + game + week + leaderboard;
     const qi = main.querySelector("#p3-q");
@@ -2687,6 +2702,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-13", [
+      ["Pick 4 prices follow the news", "Games → Pick 4", "Prices update every 30 minutes with ESPN's projections and injury news (Q / D / OUT tags, ▲/▼ since the week opened). Players already in your lineup keep the price you paid; the waiver wire list updates as players are dropped and picked up.", "#/games/pick4"],
       ["Trivia from easy to expert", "Games → League trivia", "Starting week 11, the 5 questions go in order of difficulty, Easy to Expert, and never repeat a question from earlier in the season.", "#/games/trivia"],
       ["Waiver wire challenge", "Games → Pick 4", "Pick 4 with only players who are free agents in our league: a weekly hunt for the pickups worth adding.", "#/games/pick4?view=fa"],
       ["Pick 4", "Games → Pick 4", "A weekly side game: a QB, RB, WR and TE from any NFL team under a salary cap, scored with this week's real points. Each spot locks at its player's kickoff.", "#/games/pick4"],

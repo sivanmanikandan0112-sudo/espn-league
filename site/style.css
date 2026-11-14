@@ -1158,3 +1158,13 @@ button.tv-opt:hover { border-color: var(--ink-2); }
 .tv-lvl.l3 { background: color-mix(in srgb, var(--te) 18%, var(--surface)); color: var(--te); }
 .tv-lvl.l4 { background: color-mix(in srgb, var(--wr) 20%, var(--surface)); color: var(--wr); }
 .tv-lvl.l5 { background: color-mix(in srgb, var(--hot) 20%, var(--surface)); color: var(--hot); }
+.p3-inj { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 5px; font-size: 10px; font-weight: 800; vertical-align: 1px;
+  background: color-mix(in srgb, var(--wr) 22%, var(--surface)); color: var(--wr); }
+.p3-inj.out { background: color-mix(in srgb, var(--hot) 22%, var(--surface)); color: var(--hot); }
+.p3-mv { display: block; font-size: 11px; font-weight: 700; text-align: right; }
+.p3-mv.up { color: var(--hot); }
+.p3-mv.down { color: var(--accent); }
+.p3-rs { text-align: right; }
+.p3-warn, .p3-note { display: block; margin-top: 4px; font-size: 12px; font-weight: 600; }
+.p3-warn { color: var(--hot); }
+.p3-note { color: var(--ink-2); font-weight: 500; }
