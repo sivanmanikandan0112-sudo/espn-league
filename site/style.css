@@ -373,8 +373,8 @@ b.neg, .neg { color: var(--hot); }
   .brand { min-width: 0; gap: 10px; }
   .brand > span:last-child { min-width: 0; }
   .brand-kicker, .week-kicker, .week-sub { display: none; }
-  .brand-mark { width: 28px; height: 28px; }
-  .brand-name { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brand-mark { width: 32px; height: 32px; }
+  .brand > span:last-child { display: none; } /* phones: just the logo; the league name gets cut off */
   .week-badge { text-align: right; }
   .week-big { display: block; font-size: 20px; margin: 0; white-space: nowrap; }
 
