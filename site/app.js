@@ -97,7 +97,7 @@
     const hash = location.hash.replace(/^#/, "") || "/";
     const [path, qs] = hash.split("?");
     const params = new URLSearchParams(qs || "");
-    const tab = ["myteam", "matchups", "games", "insights", "trades", "history", "settings", "whatsnew"].find(t => path.startsWith("/" + t)) || "standings";
+    const tab = ["myteam", "matchups", "games", "insights", "trades", "history", "settings", "whatsnew", "glossary"].find(t => path.startsWith("/" + t)) || "standings";
     const season = Number(params.get("season")) || IDX.current;
     state.tab = tab;
     state.sub = path.split("/")[2] || "";
@@ -130,8 +130,10 @@
     else if (tab === "history") renderHistory();
     else if (tab === "settings") renderSettings();
     else if (tab === "whatsnew") renderWhatsNew();
+    else if (tab === "glossary") renderGlossary();
     else if (tab === "myteam") renderMyTeam();
     else renderStandings();
+    rxHydrate();
   }
 
   // ---------------------------------------------------------------- chrome (header, tabs, footer, banner)
@@ -153,7 +155,7 @@
     const sel = document.getElementById("season-select");
     sel.innerHTML = IDX.seasons.map(s => `<option value="${s}"${s === state.season ? " selected" : ""}>${s} season${s === IDX.current ? "" : ""}</option>`).join("");
     const wide = !window.matchMedia || window.matchMedia("(min-width: 641px)").matches;
-    document.getElementById("footer-notes").innerHTML = `<details class="how"${wide ? " open" : ""}><summary>How these numbers work</summary>${footerNotes()}</details>`;
+    document.getElementById("footer-notes").innerHTML = `<details class="how"${wide ? " open" : ""}><summary>How these numbers work</summary>${footerNotes()}</details><p class="foot-links"><a href="#/glossary">Glossary: every stat and term on the site ›</a></p>`;
     document.getElementById("updated").innerHTML = "Data snapshot · " + esc(new Date(D.updated).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })) +
       (isCur && !L.over ? ` <span class="live-chip${live.on ? " on" : ""}" id="live-chip"></span>` : "");
     updateLiveChip();
@@ -301,7 +303,7 @@
         <div class="big">${fmt(val)}<small>PTS</small></div>
         ${list.slice(0, 3).map(r => `<div class="mini-team">${logo(r.team)}${esc(r.team.name)}</div>`).join("")}
         ${list.length > 3 ? `<div class="note" title="${esc(list.slice(3).map(r => r.team.name).join(", "))}">+${list.length - 3} more tied</div>` : ""}`;
-      winners = block("Highest score", hi, rows.filter(r => r.pts === hi)) + '<hr class="divider">' + block("Lowest score", lo, rows.filter(r => r.pts === lo));
+      winners = block("Highest score", hi, rows.filter(r => r.pts === hi)) + rxRow(state.sideWeek, "hi:top") + '<hr class="divider">' + block("Lowest score", lo, rows.filter(r => r.pts === lo)) + rxRow(state.sideWeek, "lo:low");
     }
     const opts = D.weeks.slice().reverse().map(w => `<option value="${w.week}"${w.week === state.sideWeek ? " selected" : ""}>Week ${w.week}${w.playoffs ? " (playoffs)" : ""}</option>`).join("");
     const pf = D.teams.slice().sort((a, b) => b.pf - a.pf)[0];
@@ -583,9 +585,11 @@
 
   const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"]];
   // Games: pick'em and league trivia (name + PIN), separate from the stats tabs
-  const GAMES_TABS = [["", "Pick'em"], ["pick4", "Pick 4"], ["trivia", "League trivia"]];
+  const GAMES_TABS = [["", "Pick'em"], ["pick4", "Pick 4"], ["bullseye", "Bullseye"], ["rankem", "Rank 'em"], ["trivia", "League trivia"]];
   function renderGames() {
     if (state.sub === "trivia") return renderTrivia();
+    if (state.sub === "bullseye") return renderBullseye();
+    if (state.sub === "rankem") return renderRankem();
     if (state.sub === "pick4") return renderPick3();
     return renderPickem();
   }
@@ -606,7 +610,7 @@
     const when = new Date(e.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     return `<div class="play${e.starter ? "" : " bench"}"><span class="play-t">${when}</span>
       <span class="play-what"><b>${esc(e.name)}</b> <span class="muted">${esc(e.pos)}${e.nfl ? " · " + esc(e.nfl) : ""}</span> · ${esc(e.label)}${e.starter ? "" : ' <span class="muted">(bench)</span>'}${watchLink(e)}
-      <span class="team-mgr">${esc(t.name)} ${status}</span></span>
+      <span class="team-mgr">${esc(t.name)} ${status}</span>${rxRow(L.currentWeek, `p:${e.pid}-${e.t}`)}</span>
       <span class="play-d ${e.delta >= 0 ? "pos" : "neg"}">${e.delta >= 0 ? "+" : ""}${e.delta.toFixed(2)}</span></div>`;
   }
   function feedPanel(week) {
@@ -797,6 +801,7 @@
         <button class="game-btn" data-game="${g.id}" aria-expanded="${isOpen}">${row(a)}${row(b)}
           ${isOpen ? wpBar : ""}${mondayMath(g, wk) || ""}<div class="game-foot"><span>${tier ? tier + " · " : ""}${liveG ? "In progress" : "Final"}</span><span>${isOpen ? "Hide box score ↑" : "Box score ↓"}</span></div>
         </button>
+        ${a && b ? rxRow(w, "g:" + g.id) : ""}
         ${isOpen && a && b ? (() => {
           const showB = focusTeam != null && b.team === focusTeam ? 1 : 0;
           return `<div class="box-actions"><button type="button" class="share-btn" data-share="game" data-week="${w}" data-game="${g.id}">${SHARE_ICON}Share ${wk.final ? "result" : "score"}</button></div>
@@ -1347,6 +1352,395 @@
     P3.q = e.target.value; P3.focusQ = true; pick3View();
   });
 
+  // ---------------------------------------------------------------- shared sign-in panel for the newer games
+  // Same name + PIN (and "Remember me") as every other game; `prefix` keeps each page's form ids apart.
+  function gameWho(prefix, ready, note) {
+    const members = pkMembers();
+    return `<div class="panel pk-who">
+        <label class="field">Who are you? <select id="${prefix}-member"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
+        <label class="field">PIN <input id="${prefix}-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="4 digits" value="${esc(PK.pin)}"></label>
+        <label class="field pk-remember"><input id="${prefix}-remember" type="checkbox"${store.get("pk-pin", "") ? " checked" : ""}> Remember me on this device</label>
+        <button type="button" class="cta" data-${prefix}="continue">${ready ? "Switch" : "Start"}</button>
+        <p class="note">${note || "Same name and PIN as pick'em."}</p></div>`;
+  }
+  // reads the panel, checks the PIN with `path`, remembers the person; returns the server's answer or {error}
+  async function gameSignIn(prefix, path, extra) {
+    const member = document.getElementById(prefix + "-member").value;
+    const pin = document.getElementById(prefix + "-pin").value.trim();
+    const remember = document.getElementById(prefix + "-remember").checked;
+    if (!member) return { error: "Choose your name first." };
+    if (!/^\d{4}$/.test(pin)) return { error: "Enter a 4-digit PIN." };
+    const r = await pkApi(path, Object.assign({ member, pin }, extra || {}));
+    if (r.error) return r;
+    if (member !== PK.member) { PK.ready = false; PK.sel = {}; TV.ready = false; TV.result = null; TV.sel = []; TV.auto = false; P3.ready = false; BU.ready = false; RK.ready = false; }
+    PK.member = member; PK.pin = pin;
+    store.set("pk-member", member);
+    store.set("pk-pin", remember ? pin : "");
+    return r;
+  }
+  const kickTime = at => new Date(at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const nameOfMember = id => (pkMembers().find(m => m.id === id) || { name: memberName(id) }).name;
+  function gameHead(sub, title, intro) {
+    return `<div class="section-head"><div><h1>${title}</h1>${intro || ""}</div></div>${subnav("games", GAMES_TABS, sub)}`;
+  }
+  // loads a game's week from the worker (once a minute) and, when this device remembers a PIN, the person's entry
+  async function gameLoad(S, sub, path, minePath, onMine) {
+    if (!S.data || Date.now() - S.at > 60000) {
+      const d = await pkApi(path).catch(() => ({ error: "Couldn't reach the server. Try again." }));
+      if (S.data && d.week !== S.data.week) S.ready = false;
+      S.data = d; S.at = Date.now();
+      if (state.tab !== "games" || state.sub !== sub) return false;
+    }
+    if (!S.ready && !S.auto && PK.member && PK.pin && S.data && !S.data.error && !S.data.over) {
+      S.auto = true;
+      const r = await pkApi(minePath, { member: PK.member, pin: PK.pin }).catch(() => ({ error: "x" }));
+      if (!r.error) onMine(r);
+      if (state.tab !== "games" || state.sub !== sub) return false;
+    }
+    return true;
+  }
+
+  // ---------------------------------------------------------------- Bullseye (Games)
+  // A target each week; pick up to 5 players whose real points add up as close to it as possible without going over.
+  const BU = { data: null, at: 0, sel: [], saved: [], ready: false, auto: false, msg: "", err: false, pos: "ALL", q: "" };
+  const BU_POS = ["ALL", "QB", "RB", "WR", "TE"];
+  // a week's finish order: everyone under (or on) the target by how close, then the busts by how little they went over
+  function bullOrder(rows, target) {
+    return rows.map(r => ({ ...r, bust: r.pts > target + 1e-9, miss: Math.abs(target - r.pts) })).sort((a, b) => a.bust - b.bust || a.miss - b.miss);
+  }
+  async function renderBullseye() {
+    const head = gameHead("bullseye", "Bullseye");
+    if (state.season !== IDX.current) { main.innerHTML = head + `<div class="empty">Bullseye runs in the current season. <a href="#/games/bullseye">Go to this week's Bullseye</a></div>`; return; }
+    if (!LIVE_API_BASE()) { main.innerHTML = head + '<div class="empty">Bullseye needs the live worker, which isn\'t set up.</div>'; return; }
+    if (!BU.data) main.innerHTML = head + '<div class="empty">Loading this week\'s target…</div>';
+    if (!(await gameLoad(BU, "bullseye", "/bull", "/bull/mine", buLoad))) return;
+    bullView();
+  }
+  function buLoad(r) {
+    BU.ready = true; BU.err = false;
+    BU.saved = r.picks || [];
+    BU.sel = BU.saved.map(p => p.id);
+    BU.msg = r.newPin ? "Welcome! The PIN you entered becomes yours for the season when you save." : "";
+  }
+  function bullView() {
+    const T = BU.data;
+    if (!T || T.error) { main.innerHTML = gameHead("bullseye", "Bullseye") + `<div class="empty">${esc((T && T.error) || "Couldn't load Bullseye.")} <button type="button" class="linkbtn" data-bu="reload">Try again</button></div>`; return; }
+    // season leaderboard: weeks won, bullseyes (within a point without going over), busts, average miss
+    const board = {};
+    Object.values(T.history || {}).forEach(({ target, rows }) => {
+      bullOrder(Object.entries(rows).map(([m, pts]) => ({ m, pts })), target).forEach((r, i) => {
+        const b = board[r.m] = board[r.m] || { m: r.m, weeks: 0, wins: 0, eyes: 0, busts: 0, miss: 0, under: 0 };
+        b.weeks++; if (i === 0) b.wins++;
+        if (r.bust) b.busts++; else { b.under++; b.miss += r.miss; if (r.miss <= 1) b.eyes++; }
+      });
+    });
+    const leaders = Object.values(board).sort((a, b) => b.wins - a.wins || b.eyes - a.eyes || (a.under ? a.miss / a.under : 1e9) - (b.under ? b.miss / b.under : 1e9));
+    const leaderboard = leaders.length ? section("Season leaderboard", "Weeks won first, then bullseyes, then average miss.", table([
+      { label: "Player", cell: r => `<b>${esc(nameOfMember(r.m))}</b>` },
+      { label: "Weeks won", num: 1, cell: r => `<b>${r.wins}</b>` },
+      { label: "Bullseyes", num: 1, cell: r => r.eyes },
+      { label: "Busts", num: 1, cell: r => r.busts },
+      { label: "Avg miss", num: 1, cell: r => r.under ? (r.miss / r.under).toFixed(1) : "—" },
+      { label: "Weeks played", num: 1, cell: r => r.weeks },
+    ], leaders)) : "";
+    if (T.over) { main.innerHTML = gameHead("bullseye", "Bullseye", '<p class="sub">The season is over. Back next season.</p>') + leaderboard; return; }
+
+    const now = Date.now();
+    const byId = Object.fromEntries(T.players.map(p => [p.id, p]));
+    const savedBy = Object.fromEntries(BU.saved.map(p => [p.id, p]));
+    const info = id => Object.assign({}, savedBy[id] || {}, byId[id] || {}, savedBy[id] && savedBy[id].pts != null ? { pts: savedBy[id].pts } : {});
+    const played = p => p && now >= p.at;
+    const locked = id => savedBy[id] && played(savedBy[id]);
+    const injTag = x => x && x.inj ? ` <span class="p3-inj ${x.inj === "OUT" ? "out" : ""}">${esc(x.inj)}</span>` : "";
+    const projSum = BU.sel.reduce((n, id) => n + (info(id).proj || 0), 0);
+    const liveSum = BU.sel.reduce((n, id) => n + (locked(id) && info(id).pts != null ? info(id).pts : 0), 0);
+    const intro = expl(`This week's target is <b>${T.target.toFixed(1)}</b> points. Pick up to ${T.max} players whose real points add up as close to it as you can without going over.`,
+      `Each week has a new target between 40 and 70 points. Pick 1 to ${T.max} players (any QBs, RBs, WRs and TEs, from any NFL team); your score is their real points this week under our scoring. Closest to the target without going over wins the week; going over is a <b>bust</b> and ranks below everyone who stayed under. Within 1 point counts as a <b>bullseye</b>. Each player locks when his game kicks off; until then you can swap him for anyone who hasn't played yet. Projections are ESPN's for this week, the same ones Pick 4 uses.`, "bullseye");
+    let game = "";
+    if (BU.ready) {
+      const changed = BU.sel.join(",") !== BU.saved.map(p => p.id).join(",");
+      const picks = BU.sel.map(id => {
+        const p = info(id), lock = locked(id);
+        const out = !lock && byId[id] && byId[id].inj === "OUT" ? `<span class="p3-warn">Ruled out. Swap him before ${esc(kickTime(p.at))}.</span>` : "";
+        return `<div class="p3-slot${lock ? " locked" : ""}"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span><span class="p3-sn"><b>${esc(p.n)}${injTag(byId[id])}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${lock ? "locked 🔒" : esc(kickTime(p.at))}${p.proj != null ? ` · proj ${p.proj.toFixed(1)}` : ""}</span>${out}</span>
+          ${lock && p.pts != null ? `<b class="p3-pts">${p.pts.toFixed(1)} pts</b>` : `<span class="p3-sal">${p.proj != null ? p.proj.toFixed(1) : "—"}</span>`}
+          ${lock ? "" : `<button type="button" class="linkbtn" data-bu-drop="${id}" aria-label="Remove ${esc(p.n)}">✕</button>`}</div>`;
+      }).join("") || '<div class="empty">No players yet. Add up to ' + T.max + " from the list.</div>";
+      const full = BU.sel.length >= T.max;
+      const q = BU.q.trim().toLowerCase();
+      const list = T.players.filter(p => (BU.pos === "ALL" || p.pos === BU.pos) && (!q || p.n.toLowerCase().includes(q) || p.team.toLowerCase() === q))
+        .sort((a, b) => (a.inj === "OUT") - (b.inj === "OUT") || b.proj - a.proj).slice(0, 150);
+      const rows = list.map(p => {
+        const on = BU.sel.includes(p.id), gone = played(p);
+        const why = on ? "" : gone ? "played" : p.inj === "OUT" ? "out" : full ? "5 picked" : "";
+        return `<button type="button" class="p3-row${on ? " on" : ""}" data-bu-pick="${p.id}"${(why || (on && locked(p.id))) ? " disabled" : ""}>
+          <span class="p3-rn"><b>${esc(p.n)}${injTag(p)}</b><span class="team-mgr">${esc(p.pos)} · ${esc(p.team)} ${esc(p.opp)} · ${gone ? "played" : esc(kickTime(p.at))}</span></span>
+          <span class="p3-rp">proj</span><span class="p3-rs">${p.proj.toFixed(1)}</span><span class="p3-rw">${on ? "✓" : why ? esc(why) : "Add"}</span></button>`;
+      }).join("");
+      const gap = T.target - projSum;
+      const meter = `<div class="bu-meter"><div class="bu-nums"><span>Target <b>${T.target.toFixed(1)}</b></span><span>Projected <b class="${gap < 0 ? "neg" : ""}">${projSum.toFixed(1)}</b></span>${liveSum ? `<span>Scored so far <b>${liveSum.toFixed(1)}</b></span>` : ""}</div>
+        <div class="bu-bar"><span style="width:${Math.min(100, 100 * projSum / T.target).toFixed(1)}%"></span>${liveSum ? `<i style="width:${Math.min(100, 100 * liveSum / T.target).toFixed(1)}%"></i>` : ""}</div>
+        <p class="note">${!BU.sel.length ? "" : gap >= 0 ? `${gap.toFixed(1)} projected points under the target.` : `${(-gap).toFixed(1)} projected points over: that would be a bust if the projections hold.`}</p></div>`;
+      game = `<div class="p3-wrap"><div class="p3-lineup">${meter}${picks}
+          <div class="pk-save"><button type="button" class="cta" data-bu="save"${changed && BU.sel.length ? "" : " disabled"}>${changed ? "Save picks" : "Saved"}</button></div></div>
+        <div class="p3-pick"><nav class="pg-by p3-tabs" aria-label="Position">${BU_POS.map(k => `<a href="#" data-bu-pos="${k}" class="${BU.pos === k ? "active" : ""}">${k === "ALL" ? "All" : k}</a>`).join("")}</nav>
+          <input id="bu-q" type="search" placeholder="Search players or a team (e.g. KC)" value="${esc(BU.q)}" autocomplete="off">
+          <div class="p3-list">${rows || '<div class="empty">No players match.</div>'}</div></div></div>`;
+    }
+    const msg = BU.msg ? `<p class="note${BU.err ? " live" : ""}">${esc(BU.msg)}</p>` : "";
+    const entries = Object.entries(T.entries || {}).map(([m, picks]) => ({ m, picks, pts: picks.reduce((n, x) => n + (x.pts || 0), 0) }))
+      .sort((a, b) => bullOrder([a], T.target)[0].bust - bullOrder([b], T.target)[0].bust || Math.abs(T.target - a.pts) - Math.abs(T.target - b.pts));
+    const week = entries.length ? section(`Week ${T.week} so far`, "Players show once their game starts. Over the target is a bust.", `<div class="p3-board">${entries.map(({ m, picks, pts }) =>
+      `<div class="p3-entry"><div class="p3-eh"><b>${esc(nameOfMember(m))}</b><span class="${pts > T.target ? "neg" : ""}">${pts.toFixed(1)}${pts > T.target ? " · bust" : ""}</span></div>${picks.map(x => x.hidden
+        ? '<div class="p3-ep muted"><span class="slot">?</span>hidden until kickoff</div>'
+        : `<div class="p3-ep"><span class="slot ${esc(x.pos)}">${esc(x.pos)}</span><span class="p3-sn">${esc(x.n)}</span><b>${(x.pts || 0).toFixed(1)}</b></div>`).join("")}</div>`).join("")}</div>`) : "";
+    main.innerHTML = gameHead("bullseye", "Bullseye", intro) + `<div class="bu-target"><span class="kicker">Week ${T.week} target</span><b>${T.target.toFixed(1)}</b><span class="team-mgr">points, without going over</span></div>` +
+      gameWho("bu", BU.ready) + msg + game + week + leaderboard;
+    const qi = main.querySelector("#bu-q");
+    if (qi && BU.focusQ) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); BU.focusQ = false; }
+  }
+  main.addEventListener("click", async e => {
+    if (!(state.tab === "games" && state.sub === "bullseye")) return;
+    const pos = e.target.closest("[data-bu-pos]");
+    if (pos) { e.preventDefault(); BU.pos = pos.dataset.buPos; return bullView(); }
+    const drop = e.target.closest("[data-bu-drop]");
+    if (drop) { BU.sel = BU.sel.filter(id => id !== Number(drop.dataset.buDrop)); BU.msg = ""; return bullView(); }
+    const pk = e.target.closest("[data-bu-pick]");
+    if (pk && !pk.disabled) {
+      const id = Number(pk.dataset.buPick);
+      BU.sel = BU.sel.includes(id) ? BU.sel.filter(x => x !== id) : BU.sel.length < BU.data.max ? [...BU.sel, id] : BU.sel;
+      BU.msg = ""; return bullView();
+    }
+    const a = e.target.closest("[data-bu]");
+    if (!a) return;
+    if (a.dataset.bu === "reload") { BU.data = null; return renderBullseye(); }
+    if (a.dataset.bu === "continue") {
+      const r = await gameSignIn("bu", "/bull/mine");
+      if (r.error) { BU.msg = r.error; BU.err = true; BU.ready = false; return bullView(); }
+      buLoad(r); return bullView();
+    }
+    if (a.dataset.bu === "save") {
+      a.disabled = true; a.textContent = "Saving…";
+      const r = await pkApi("/bull/save", { member: PK.member, pin: PK.pin, picks: BU.sel });
+      if (r.error) { BU.msg = r.error; BU.err = true; return bullView(); }
+      BU.saved = r.picks; BU.sel = r.picks.map(p => p.id); BU.err = false;
+      BU.msg = `Saved ${r.picks.length} player${r.picks.length === 1 ? "" : "s"}.`;
+      BU.data = await pkApi("/bull"); BU.at = Date.now();
+      bullView();
+    }
+  });
+  main.addEventListener("input", e => {
+    if (e.target.id !== "bu-q") return;
+    BU.q = e.target.value; BU.focusQ = true; bullView();
+  });
+
+  // ---------------------------------------------------------------- Rank 'em (Games)
+  // Five players at one position; put them in order of the points they'll score. Locks at the first kickoff.
+  const RK = { data: null, at: 0, order: [], saved: null, ready: false, auto: false, msg: "", err: false };
+  const POS_WORD = { QB: "quarterbacks", RB: "running backs", WR: "wide receivers", TE: "tight ends" };
+  function rankScoreOf(order, players, pts) {
+    const vals = players.map(p => pts[p.id] || 0);
+    return order.reduce((score, id, i) => {
+      const v = pts[id] || 0, hi = vals.filter(x => x > v).length, lo = hi + vals.filter(x => x === v).length - 1;
+      const d = i < hi ? hi - i : i > lo ? i - lo : 0;
+      return score + (d === 0 ? 3 : d === 1 ? 1 : 0);
+    }, 0);
+  }
+  async function renderRankem() {
+    const head = gameHead("rankem", "Rank 'em");
+    if (state.season !== IDX.current) { main.innerHTML = head + `<div class="empty">Rank 'em runs in the current season. <a href="#/games/rankem">Go to this week's Rank 'em</a></div>`; return; }
+    if (!LIVE_API_BASE()) { main.innerHTML = head + '<div class="empty">Rank \'em needs the live worker, which isn\'t set up.</div>'; return; }
+    if (!RK.data) main.innerHTML = head + '<div class="empty">Loading this week\'s players…</div>';
+    if (!(await gameLoad(RK, "rankem", "/rank", "/rank/mine", rkLoad))) return;
+    if (RK.data && RK.data.players && (!RK.order.length || RK.order.some(id => !RK.data.players.find(p => p.id === id)))) RK.order = (RK.saved || RK.data.players.map(p => p.id)).slice();
+    rankView();
+  }
+  function rkLoad(r) {
+    RK.ready = true; RK.err = false;
+    RK.saved = r.order || null;
+    if (RK.saved) RK.order = RK.saved.slice();
+    else if (RK.data && RK.data.players) RK.order = RK.data.players.map(p => p.id);
+    RK.msg = r.newPin ? "Welcome! The PIN you entered becomes yours for the season when you save." : "";
+  }
+  function rankView() {
+    const T = RK.data;
+    if (!T || T.error) { main.innerHTML = gameHead("rankem", "Rank 'em") + `<div class="empty">${esc((T && T.error) || "Couldn't load Rank 'em.")} <button type="button" class="linkbtn" data-rk="reload">Try again</button></div>`; return; }
+    const board = {};
+    Object.values(T.history || {}).forEach(({ rows }) => {
+      const top = Math.max(...Object.values(rows));
+      Object.entries(rows).forEach(([m, sc]) => {
+        const b = board[m] = board[m] || { m, total: 0, weeks: 0, wins: 0, perfect: 0, best: 0 };
+        b.total += sc; b.weeks++; b.best = Math.max(b.best, sc); if (sc === top) b.wins++; if (sc === 15) b.perfect++;
+      });
+    });
+    const leaders = Object.values(board).sort((a, b) => b.total - a.total || b.wins - a.wins);
+    const leaderboard = leaders.length ? section("Season leaderboard", "Points from every finished week added up (15 a week at most).", table([
+      { label: "Player", cell: r => `<b>${esc(nameOfMember(r.m))}</b>` },
+      { label: "Points", num: 1, cell: r => `<b>${r.total}</b>` },
+      { label: "Weeks won", num: 1, cell: r => r.wins },
+      { label: "Perfect", num: 1, cell: r => r.perfect },
+      { label: "Best week", num: 1, cell: r => r.best },
+      { label: "Weeks played", num: 1, cell: r => r.weeks },
+    ], leaders)) : "";
+    if (T.over) { main.innerHTML = gameHead("rankem", "Rank 'em", '<p class="sub">The season is over. Back next season.</p>') + leaderboard; return; }
+    if (T.none) { main.innerHTML = gameHead("rankem", "Rank 'em") + `<div class="empty">There's no Rank 'em this week: not enough ${esc(POS_WORD[T.pos] || "players")} play Sunday or later with projections yet.</div>` + leaderboard; return; }
+    const intro = expl(`Put these five ${POS_WORD[T.pos]} in order of the fantasy points they'll score this week. Locks ${esc(kickTime(T.lock))}.`,
+      `Each week it's a different position (QB, RB, WR, TE in turn): five players whose ESPN projections are close together, all playing Sunday or later. Rank them from most to fewest points under our scoring. You get <b>3 points</b> for each player in exactly the right spot and <b>1 point</b> for one spot off (players who tie share their spots), so 15 is perfect. Everything locks when the first of the five kicks off, and nobody's order shows until then.`, "rankem");
+    const byId = Object.fromEntries(T.players.map(p => [p.id, p]));
+    const pts = Object.fromEntries(T.players.map(p => [p.id, p.pts || 0]));
+    const myScore = T.locked && RK.saved ? rankScoreOf(RK.saved, T.players, pts) : null;
+    let game = "";
+    if (RK.ready) {
+      const order = T.locked ? (RK.saved || []) : RK.order;
+      const changed = !T.locked && RK.order.join(",") !== (RK.saved || []).join(",");
+      const row = (id, i) => {
+        const p = byId[id];
+        // tied players share their spots (same rule as the score)
+        const v = pts[id], hi = T.players.filter(x => pts[x.id] > v).length, lo = hi + T.players.filter(x => pts[x.id] === v).length - 1;
+        const d = T.locked ? (i < hi ? hi - i : i > lo ? i - lo : 0) : null;
+        const place = hi === lo ? `#${hi + 1}` : `T-${hi + 1}`;
+        return `<div class="rk-row${T.locked ? (d === 0 ? " hit" : d === 1 ? " near" : " miss") : ""}"><span class="rk-n">${i + 1}</span>
+          <span class="p3-sn"><b>${esc(p.n)}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${T.locked ? (p.pts != null ? p.pts.toFixed(1) + " pts" : "not played yet") : esc(kickTime(p.at))}</span></span>
+          ${T.locked ? `<span class="rk-act">actual ${place}</span>` : `<span class="rk-mv"><button type="button" class="linkbtn" data-rk-up="${i}"${i === 0 ? " disabled" : ""} aria-label="Move ${esc(p.n)} up">↑</button><button type="button" class="linkbtn" data-rk-down="${i}"${i === order.length - 1 ? " disabled" : ""} aria-label="Move ${esc(p.n)} down">↓</button></span>`}</div>`;
+      };
+      const espnOrder = T.players.slice().sort((a, b) => b.proj - a.proj).map(p => p.id);
+      game = !order.length ? (T.locked ? '<div class="empty">You didn\'t rank this week. Back next week.</div>' : "") : `<div class="panel rk-list"><p class="kicker">${T.locked ? "Your order" : "Most points at the top"}</p>${order.map(row).join("")}
+        ${T.locked ? `<p class="rk-score">Your score: <b>${myScore}</b> of 15${T.players.some(p => p.pts == null) ? " so far" : ""} · ESPN's projections would have ${rankScoreOf(espnOrder, T.players, pts)}</p>`
+          : `<div class="pk-save"><button type="button" class="cta" data-rk="save"${changed || !RK.saved ? "" : " disabled"}>${changed || !RK.saved ? "Save order" : "Saved"}</button></div>`}</div>`;
+    }
+    if (!RK.ready) // signed out: still show this week's five
+      game = `<div class="panel rk-list"><p class="kicker">This week's five${T.locked ? "" : " · sign in to rank them"}</p>${T.players.map(p => `<div class="rk-row"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>
+        <span class="p3-sn"><b>${esc(p.n)}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${T.locked ? (p.pts != null ? p.pts.toFixed(1) + " pts" : "not played yet") : esc(kickTime(p.at))}</span></span></div>`).join("")}</div>`;
+    const msg = RK.msg ? `<p class="note${RK.err ? " live" : ""}">${esc(RK.msg)}</p>` : "";
+    const ent = Object.entries(T.entries || {});
+    const week = !ent.length ? "" : T.locked
+      ? section(`Week ${T.week} so far`, "Scores move as games finish.", table([
+          { label: "Player", cell: ([m]) => `<b>${esc(nameOfMember(m))}</b>` },
+          { label: "Order", cell: ([, x]) => x.order.map(id => esc((byId[id] || { n: "?" }).n.split(" ").slice(-1)[0])).join(" › ") },
+          { label: "Score", num: 1, cell: ([, x]) => `<b>${x.score}</b>` },
+        ], ent.sort((a, b) => b[1].score - a[1].score)))
+      : section(`Week ${T.week}`, `${ent.length} ${ent.length === 1 ? "person has" : "people have"} ranked so far: ${ent.map(([m]) => esc(nameOfMember(m))).join(", ")}. Orders show at lock.`, "");
+    main.innerHTML = gameHead("rankem", "Rank 'em", intro) + (T.locked && RK.ready ? "" : gameWho("rk", RK.ready, T.locked ? "Locked for this week. Sign in to see your score." : "")) + msg + game + week + leaderboard;
+  }
+  main.addEventListener("click", async e => {
+    if (!(state.tab === "games" && state.sub === "rankem")) return;
+    const up = e.target.closest("[data-rk-up],[data-rk-down]");
+    if (up && !up.disabled) {
+      const i = Number(up.dataset.rkUp != null ? up.dataset.rkUp : up.dataset.rkDown), j = i + (up.dataset.rkUp != null ? -1 : 1);
+      [RK.order[i], RK.order[j]] = [RK.order[j], RK.order[i]]; RK.msg = "";
+      return rankView();
+    }
+    const a = e.target.closest("[data-rk]");
+    if (!a) return;
+    if (a.dataset.rk === "reload") { RK.data = null; return renderRankem(); }
+    if (a.dataset.rk === "continue") {
+      const r = await gameSignIn("rk", "/rank/mine");
+      if (r.error) { RK.msg = r.error; RK.err = true; RK.ready = false; return rankView(); }
+      rkLoad(r); return rankView();
+    }
+    if (a.dataset.rk === "save") {
+      a.disabled = true; a.textContent = "Saving…";
+      const r = await pkApi("/rank/save", { member: PK.member, pin: PK.pin, order: RK.order });
+      if (r.error) { RK.msg = r.error; RK.err = true; return rankView(); }
+      RK.saved = r.order.slice(); RK.msg = "Saved your order. You can change it until lock."; RK.err = false;
+      RK.data = await pkApi("/rank"); RK.at = Date.now();
+      rankView();
+    }
+  });
+
+  // ---------------------------------------------------------------- reactions
+  // One-tap emoji under matchups, big plays and the weekly high / low score, as your team (name + PIN). Counts come
+  // from the live worker, refreshed at most once a minute per week; tapping is shown right away and then saved.
+  const RX = { weeks: {}, open: null, who: null, msg: "" };
+  const RX_EMOJI = ["🔥", "😂", "💀", "👏", "🗑️"];
+  const rxOn = () => state.season === IDX.current && !!LIVE_API_BASE();
+  function rxRow(week, item) {
+    if (!rxOn()) return "";
+    return `<div class="rx" data-rx-week="${week}" data-rx-item="${esc(item)}">${rxInner(week, item)}</div>`;
+  }
+  function rxInner(week, item) {
+    const it = ((RX.weeks[week] || {}).items || {})[item] || {};
+    const me = PK.member;
+    const open = RX.open === week + "|" + item;
+    const used = RX_EMOJI.filter(em => (it[em] || []).length);
+    const btn = em => {
+      const who = it[em] || [];
+      const names = who.map(nameOfMember).join(", ");
+      return `<button type="button" class="rx-b${who.includes(me) ? " mine" : ""}" data-rx-em="${em}" title="${esc(names || "React with " + em)}" aria-label="${em} ${who.length}${names ? ": " + esc(names) : ""}">${em}${who.length ? `<span>${who.length}</span>` : ""}</button>`;
+    };
+    let pop = "";
+    if (open) {
+      pop = (PK.member && PK.pin) ? `<span class="rx-pick">${RX_EMOJI.filter(em => !used.includes(em)).map(btn).join("")}</span>`
+        : `<span class="rx-sign"><select data-rx-member aria-label="Your name"><option value="">Your name</option>${pkMembers().map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
+          <input data-rx-pin type="password" inputmode="numeric" maxlength="4" placeholder="PIN" aria-label="PIN" autocomplete="off"><button type="button" class="linkbtn" data-rx-go>OK</button></span>`;
+    }
+    const who = RX.who === week + "|" + item ? `<span class="rx-who">${RX_EMOJI.filter(em => (it[em] || []).length).map(em => `${em} ${esc(it[em].map(nameOfMember).join(", "))}`).join(" · ")}</span>` : "";
+    return `${used.map(btn).join("")}<button type="button" class="rx-add" data-rx-add aria-label="Add a reaction" aria-expanded="${open}">${open ? "×" : "☺+"}</button>${pop}${who}${RX.msg && open ? `<span class="rx-msg">${esc(RX.msg)}</span>` : ""}`;
+  }
+  function rxPaint(week) {
+    document.querySelectorAll(`.rx[data-rx-week="${week}"]`).forEach(el => { el.innerHTML = rxInner(week, el.dataset.rxItem); });
+  }
+  async function rxHydrate() {
+    if (!rxOn()) return;
+    const weeks = [...new Set([...document.querySelectorAll(".rx")].map(el => el.dataset.rxWeek))];
+    for (const w of weeks) {
+      const have = RX.weeks[w];
+      if (have && Date.now() - have.at < 60000) { rxPaint(w); continue; }
+      const r = await pkApi(`/react?week=${w}`).catch(() => null);
+      if (r && !r.error) RX.weeks[w] = { at: Date.now(), items: r.items || {} };
+      rxPaint(w);
+    }
+  }
+  async function rxToggle(week, item, em) {
+    const W = RX.weeks[week] = RX.weeks[week] || { at: 0, items: {} };
+    const it = W.items[item] = W.items[item] || {};
+    const list = it[em] = (it[em] || []).slice();
+    const i = list.indexOf(PK.member);
+    if (i >= 0) list.splice(i, 1); else list.push(PK.member);
+    RX.open = null; RX.msg = "";
+    rxPaint(week);
+    const r = await pkApi("/react/toggle", { member: PK.member, pin: PK.pin, week: Number(week), item, emoji: em });
+    if (r.error) { RX.open = week + "|" + item; RX.msg = r.error; W.at = 0; if (/PIN/.test(r.error)) PK.pin = ""; }
+    else W.items = r.items, W.at = Date.now();
+    rxPaint(week);
+  }
+  let rxHold = null, rxHeld = false;
+  document.addEventListener("pointerdown", e => {
+    const b = e.target.closest(".rx-b");
+    if (!b) return;
+    const box = b.closest(".rx");
+    rxHeld = false;
+    rxHold = setTimeout(() => { rxHeld = true; RX.who = box.dataset.rxWeek + "|" + box.dataset.rxItem; rxPaint(box.dataset.rxWeek); }, 450);
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(t => document.addEventListener(t, () => clearTimeout(rxHold), true));
+  document.addEventListener("click", async e => {
+    const box = e.target.closest(".rx");
+    if (!box) { if (RX.who) { const w = RX.who.split("|")[0]; RX.who = null; rxPaint(w); } return; }
+    e.stopPropagation(); // keep a tap here from also opening the matchup around it
+    if (e.target.closest("select, input")) return;
+    e.preventDefault();
+    const week = box.dataset.rxWeek, item = box.dataset.rxItem, key = week + "|" + item;
+    if (rxHeld) { rxHeld = false; return; }
+    if (RX.who) { RX.who = null; rxPaint(week); }
+    if (e.target.closest("[data-rx-add]")) { RX.open = RX.open === key ? null : key; RX.msg = ""; return rxPaint(week); }
+    if (e.target.closest("[data-rx-go]")) {
+      const member = box.querySelector("[data-rx-member]").value, pin = box.querySelector("[data-rx-pin]").value.trim();
+      if (!member || !/^\d{4}$/.test(pin)) { RX.msg = "Choose your name and enter your 4-digit PIN."; return rxPaint(week); }
+      const r = await pkApi("/pickem/claim", { member, pin });
+      if (r.error) { RX.msg = r.error; return rxPaint(week); }
+      PK.member = member; PK.pin = pin; store.set("pk-member", member); // the PIN stays in memory unless "Remember me" was ticked in a game
+      if (store.get("pk-pin", "")) store.set("pk-pin", pin);
+      RX.msg = ""; return rxPaint(week);
+    }
+    const b = e.target.closest("[data-rx-em]");
+    if (!b) return;
+    if (!PK.member || !PK.pin) { RX.open = key; return rxPaint(week); }
+    rxToggle(week, item, b.dataset.rxEm);
+  }, true);
+  document.addEventListener("keydown", e => {
+    if (e.key === "Enter" && e.target.matches && e.target.matches("[data-rx-pin]")) { e.preventDefault(); e.target.closest(".rx").querySelector("[data-rx-go]").click(); }
+  });
+
   async function pkContinue() {
     const member = document.getElementById("pk-member").value;
     const pin = document.getElementById("pk-pin").value.trim();
@@ -1426,29 +1820,51 @@
   const tname = id => (teamById[id] || { name: "Team " + id }).name;
   const poss = name => name + (/s$/i.test(name.trim()) ? "’" : "’s"); // Avengers' / Club's
   // explanation that shows in full on desktop; on phones a one-line summary with an ⓘ that expands it
-  const expl = (short, full) => `<p class="sub expl"><span class="expl-short">${short}</span><span class="expl-full">${full}</span>
+  const expl = (short, full, term) => `<p class="sub expl"><span class="expl-short">${short}</span><span class="expl-full">${full}${term ? ` <a class="expl-g" href="#/glossary?t=${term}">In the glossary ›</a>` : ""}</span>
     <button type="button" class="info-btn" aria-expanded="false" aria-label="How this works">i</button></p>`;
-  const section = (title, sub, body) => `<section class="insight"><div class="section-head"><div><h2>${title}</h2>${!sub ? "" : typeof sub === "string" ? `<p class="sub">${sub}</p>` : expl(sub.short, sub.full)}</div></div>${body}</section>`;
+  const section = (title, sub, body) => `<section class="insight"><div class="section-head"><div><h2>${title}</h2>${!sub ? "" : typeof sub === "string" ? `<p class="sub">${sub}</p>` : expl(sub.short, sub.full, GLOSSARY_BY_TITLE[String(title).replace(/<[^>]*>/g, "").trim()])}</div></div>${body}</section>`;
 
   function subnav(tab, items, cur) {
     return `<nav class="subnav" aria-label="${tab[0].toUpperCase() + tab.slice(1)} sections">${items.map(([k, label]) =>
       `<a href="${href(tab, {}, k)}" class="${k === cur ? "active" : ""}"${k === cur ? ' aria-current="page"' : ""}>${label}</a>`).join("")}</nav>`;
   }
 
+  // favorites and underdogs by ESPN's pre-game projection for each lineup (Insights -> Luck -> Upset tracker)
+  function upsetModel() {
+    const teams = {};
+    let games = 0, favWins = 0;
+    D.teams.forEach(t => { teams[t.id] = { games: 0, favW: 0, favL: 0, dogW: 0, dogL: 0, bestUpset: null, worstLoss: null }; });
+    D.weeks.filter(w => w.final && w.week <= L.regularSeasonWeeks).forEach(w => w.games.forEach(g => {
+      if (g.sides.length !== 2 || !["HOME", "AWAY"].includes(g.winner)) return;
+      const [a, b] = g.sides;
+      if (!a.projected || !b.projected || Math.abs(a.projected - b.projected) < 0.005) return;
+      const fav = a.projected > b.projected ? a : b, dog = fav === a ? b : a;
+      const winner = g.winner === "HOME" ? a : b, gap = Math.round((fav.projected - dog.projected) * 10) / 10;
+      const F = teams[fav.team], U = teams[dog.team];
+      if (!F || !U) return;
+      games++; F.games++; U.games++;
+      if (winner === fav) { favWins++; F.favW++; U.dogL++; return; }
+      F.favL++; U.dogW++;
+      if (!U.bestUpset || gap > U.bestUpset.gap) U.bestUpset = { gap, opp: fav.team, week: w.week, game: g.id };
+      if (!F.worstLoss || gap > F.worstLoss.gap) F.worstLoss = { gap, opp: dog.team, week: w.week, game: g.id };
+    }));
+    return { teams, games, favWins };
+  }
+
   // Insights pages. Each groups related views as stacked sections; the old one-view sub-tabs still work as links
   // (they open the page that holds them now, scrolled to that section).
   const INSIGHT_GROUPS = [
     ["race", "Playoff race", ["race", "form"]],
-    ["luck", "Luck", ["luck", "close", "projection"]],
+    ["luck", "Luck", ["luck", "close", "upsets", "projection"]],
     ["schedule", "Schedule", ["schedule", "byes"]],
     ["lineups", "Lineups", ["efficiency"]],
     ["draft", "Draft", ["draft"]],
     ["whatif", "What ifs", ["rules", "swap"]],
   ];
-  const INSIGHT_ALIAS = { form: "race", close: "luck", projection: "luck", byes: "schedule", efficiency: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
+  const INSIGHT_ALIAS = { form: "race", close: "luck", upsets: "luck", projection: "luck", byes: "schedule", efficiency: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
   function insightHas(k) {
     return ({
-      form: () => D.teams.some(x => x.form), projection: () => D.teams.some(x => x.vsProj),
+      form: () => D.teams.some(x => x.form), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0,
       byes: () => D.teams.some(x => x.byeCrunch && x.byeCrunch.length), draft: () => !!D.draft,
       redraft: () => !!(D.draft && D.draft.redraft), rules: () => !!(D.rulesLab && D.rulesLab.weeks),
       swap: () => !!(D.scheduleSwap && D.scheduleSwap.weeks),
@@ -1631,6 +2047,24 @@
       return section("Strength of schedule", { short: "How tough each team's opponents have been (#1 = toughest).", full: `<b>Opponents so far</b>: how much the teams you've faced score per week compared with the league average (#1 = toughest). <b>They scored vs you</b>: how those opponents actually played against you; high means you kept running into hot weeks.${hasLeft ? " <b>Opponents left</b>: projected strength of the rest of your schedule." : ""}` }, table(cols, rows));
     },
 
+    upsets() {
+      const M = upsetModel();
+      const rows = D.teams.map(t => ({ t, ...M.teams[t.id] })).filter(r => r.games)
+        .sort((a, b) => (b.dogW - b.favL) - (a.dogW - a.favL) || b.dogW - a.dogW);
+      const wl = (w, l) => `${w}–${l}`;
+      const gap = (x, verb, side) => x ? `<a href="${href("matchups", { week: x.week, game: x.game })}">${verb} ${esc(teamById[x.opp].name)}</a> <span class="muted">projected ${x.gap.toFixed(1)} ${side} · wk ${x.week}</span>` : "—";
+      const favPct = M.games ? Math.round(100 * M.favWins / M.games) : 0;
+      return section("Upset tracker", { short: `Records as ESPN's pre-game favorite and underdog. Favorites have won ${M.favWins} of ${M.games} (${favPct}%).`,
+        full: "Before each game, the team whose starting lineup ESPN projected for more points is the favorite and the other is the underdog. <b>As underdog</b> and <b>As favorite</b> are each team's records in those games. <b>Net</b> is upset wins minus upset losses: high means the team keeps beating expectations, low means it keeps losing games it was supposed to win. <b>Biggest upset</b> is the win where it was projected furthest behind; <b>Worst loss</b> is the loss where it was projected furthest ahead. Games with equal projections and ties are left out. Regular season." }, table([
+        { label: "Team", cell: r => teamCell(r.t) },
+        { label: "As underdog", num: 1, cell: r => wl(r.dogW, r.dogL) },
+        { label: "As favorite", num: 1, cell: r => wl(r.favW, r.favL) },
+        { label: "Net", num: 1, cell: r => signedPts(r.dogW - r.favL, true).replace(/\.0(?=<)/, "") },
+        { label: "Biggest upset", cell: r => gap(r.bestUpset, "Beat", "behind") },
+        { label: "Worst loss", cell: r => gap(r.worstLoss, "Lost to", "ahead") },
+      ], rows));
+    },
+
     close() {
       const LIMIT = 10;
       const rs = L.regularSeasonWeeks;
@@ -1678,13 +2112,17 @@
 
     projection() {
       const rows = D.teams.filter(t => t.vsProj).sort((a, b) => b.vsProj.diff - a.vsProj.diff);
-      return section("Vs. projection", { short: "Points scored vs. what ESPN projected for the lineup each week.", full: "Each week, the points a team's starters actually scored compared with ESPN's pre-game projection for that same lineup. Positive means its players beat their projections; it's about how the players performed, not lineup choices (that's Efficiency) or opponents (that's Luck). Regular season." }, table([
+      return section("Vs. projection", { short: "Points scored vs. what ESPN projected for the lineup each week.", full: "Each week, the points a team's starters actually scored compared with ESPN's pre-game projection for that same lineup. Positive means its players beat their projections; it's about how the players performed, not lineup choices (that's Efficiency) or opponents (that's Luck). <b>Starters who beat it</b> is the share of the team's individual starts where that player outscored his own projection: a high difference with a low share means one or two huge games carried it; a high share means the whole lineup has been beating expectations. Regular season." }, table([
         { label: "Team", cell: teamCell },
         { label: "Projected", num: 1, cell: t => t.vsProj.proj.toFixed(1) },
         { label: "Actual", num: 1, cell: t => t.vsProj.actual.toFixed(1) },
         { label: "Difference", num: 1, cell: t => signedPts(t.vsProj.diff, true) },
         { label: "Per week", num: 1, cell: t => signedPts(t.vsProj.perWeek, true) },
         { label: "Beat it", num: 1, cell: t => `${t.vsProj.beat} of ${t.vsProj.weeks} wks` },
+        ...(rows.some(t => t.vsProj.starters) ? [{ label: "Starters who beat it", num: 1, cell: t => {
+          const s = t.vsProj.starters;
+          return s ? `<span title="${s[0]} of ${s[1]} starts">${Math.round(100 * s[0] / s[1])}%</span>` : "—";
+        } }] : []),
         { label: "Best week", num: 1, cell: t => t.vsProj.best ? `${signed(t.vsProj.best[1])} <span class="muted">wk ${t.vsProj.best[0]}</span>` : "—" },
         { label: "Worst week", num: 1, cell: t => t.vsProj.worst ? `${signed(t.vsProj.worst[1])} <span class="muted">wk ${t.vsProj.worst[0]}</span>` : "—" },
       ], rows));
@@ -2394,10 +2832,56 @@
   // ---------------------------------------------------------------- my team
   // Claimed with the same name + PIN as pick'em (checked by the live worker) and remembered on this device.
   // The member id is an ESPN account, so it finds the right team in every season.
-  const ME = { member: store.get("me", ""), pick: "", msg: "", err: false, busy: false };
+  const ME = { member: store.get("me", ""), pick: "", msg: "", err: false, busy: false, cust: false };
+  // My team layout (per device): the order of the sections below the at-a-glance tiles, and which are hidden
+  const ME_PARTS = { glance: "At a glance", week: "This week's matchup", news: "Player news", waivers: "Waiver targets", watch: "Your games to watch",
+    byes: "Byes ahead", badges: "Your badges", records: "Your record book", roster: "Roster", schedule: "Schedule" };
+  const ME_ORDER = ["week", "news", "waivers", "watch", "byes", "badges", "records", "roster", "schedule"];
+  function meLayout() {
+    const saved = store.get("me-layout", null) || {};
+    const order = (Array.isArray(saved.order) ? saved.order : []).filter(k => ME_ORDER.includes(k));
+    ME_ORDER.forEach((k, i) => { if (!order.includes(k)) order.splice(Math.min(i, order.length), 0, k); }); // new sections slot in
+    return { order, hidden: (Array.isArray(saved.hidden) ? saved.hidden : []).filter(k => ME_PARTS[k]) };
+  }
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-mecust],[data-mecust-up],[data-mecust-down]");
+    if (!b || b.disabled) return;
+    const lay = meLayout();
+    if (b.dataset.mecust === "toggle") ME.cust = !ME.cust;
+    else if (b.dataset.mecust === "reset") { store.set("me-layout", null); return renderKeepScroll(renderMyTeam); }
+    else {
+      const k = b.dataset.mecustUp || b.dataset.mecustDown, i = lay.order.indexOf(k), j = i + (b.dataset.mecustUp ? -1 : 1);
+      if (j < 0 || j >= lay.order.length) return;
+      [lay.order[i], lay.order[j]] = [lay.order[j], lay.order[i]];
+      store.set("me-layout", lay);
+    }
+    renderKeepScroll(renderMyTeam);
+  });
+  document.addEventListener("change", e => {
+    const k = e.target.dataset && e.target.dataset.mecustShow;
+    if (!k) return;
+    const lay = meLayout();
+    lay.hidden = e.target.checked ? lay.hidden.filter(x => x !== k) : [...new Set([...lay.hidden, k])];
+    store.set("me-layout", lay);
+    renderKeepScroll(renderMyTeam);
+  });
   if (ME.member && !PK.member) PK.member = ME.member;
   function myTeam(data) { return ME.member ? (((data || D) || {}).teams || []).find(t => (t.owners || []).includes(ME.member)) || null : null; }
   function isMine(t) { return !!(t && ME.member && (t.owners || []).includes(ME.member)); }
+  // "Fix it on ESPN": open the exact ESPN page where the thing the site flagged gets fixed
+  const ESPN_TEAM = t => `https://fantasy.espn.com/football/team?leagueId=${L.id}&seasonId=${L.season}&teamId=${t.id}`;
+  const ESPN_ADD = () => `https://fantasy.espn.com/football/players/add?leagueId=${L.id}`;
+  const espnBtn = (url, label) => `<a class="espn-fix" href="${esc(url)}" target="_blank" rel="noopener">${esc(label)} <span aria-hidden="true">↗</span></a>`;
+  // starters this week who won't play: ruled out, on IR or suspended, or on a bye (and haven't scored)
+  function lineupProblems(side) {
+    const teamsPlaying = new Set((D.nflGames || []).flatMap(g => [g.home, g.away]));
+    return (side.lineup || []).filter(p => !["BE", "IR"].includes(p.slot) && !(p.pts > 0)).map(p => {
+      if (["OUT", "INJURY_RESERVE", "SUSPENSION"].includes(p.injury)) return { p, why: { OUT: "ruled out", INJURY_RESERVE: "on IR", SUSPENSION: "suspended" }[p.injury] };
+      if (teamsPlaying.size && p.team && !["D/ST"].includes(p.pos) && !teamsPlaying.has(p.team)) return { p, why: "on bye" };
+      if (teamsPlaying.size && p.pos === "D/ST" && !teamsPlaying.has(p.team)) return { p, why: "on bye" };
+      return null;
+    }).filter(Boolean);
+  }
 
   function renderMyTeam() {
     const head = (title, sub, extra) => `<div class="section-head"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div>${extra || ""}</div>`;
@@ -2445,7 +2929,13 @@
         week = section(`Week ${wkNow.week}: your matchup`, wp != null ? `ESPN gives you a ${wp}% chance to win.` : "",
           `<a class="game me-match" href="${href("matchups", { week: wkNow.week, game: g.id })}">${side(mine, t)}${side(opp, o)}
             ${wp != null ? `<div class="wp-bar" aria-hidden="true"><span style="width:${wp}%"></span></div>` : ""}
-            <div class="game-foot"><span>${h ? `All-time vs ${esc(memberName(o.owners[0]))}: ${h[0]}–${h[1]}${h[2] ? "–" + h[2] : ""}` : "First meeting"}</span><span>Box score →</span></div></a>`);
+            <div class="game-foot"><span>${h ? `All-time vs ${esc(memberName(o.owners[0]))}: ${h[0]}–${h[1]}${h[2] ? "–" + h[2] : ""}` : "First meeting"}</span><span>Box score →</span></div></a>
+          ${(() => {
+            const bad = lineupProblems(mine);
+            return bad.length
+              ? `<div class="me-fix warn"><span><b>Lineup check:</b> you're starting ${bad.map(x => `${esc(x.p.name)} (${x.why})`).join(", ")}.</span>${espnBtn(ESPN_TEAM(t), "Fix it on ESPN")}</div>`
+              : `<div class="me-fix"><span>Lineup check: every starter is set to play.</span>${espnBtn(ESPN_TEAM(t), "Open lineup on ESPN")}</div>`;
+          })()}`);
       }
     }
 
@@ -2467,7 +2957,7 @@
     let byes = "";
     if (cur && t.byeCrunch) {
       const bc = t.byeCrunch.filter(x => x.lost >= 0.5 || x.need.length);
-      byes = section("Byes ahead", "Weeks your best lineup is short-handed, compared with full strength.", bc.length
+      byes = section("Byes ahead", `Weeks your best lineup is short-handed, compared with full strength. ${bc.length ? espnBtn(ESPN_ADD(), "Find fill-ins on ESPN") : ""}`, bc.length
         ? `<div class="rec-card wrap">${bc.map(x => `<div class="rec"><span class="rec-v">${x.lost >= 0.5 ? "−" + x.lost.toFixed(1) : "0"}</span><span class="rec-who"><span><b>Week ${x.w}</b>
             <span class="team-mgr">${esc(x.out.map(p => `${p.name} (${p.pos}${p.bye ? ", bye" : ", out"})`).join(", "))}${x.need.length ? `${x.out.length ? " · " : ""}<b class="neg">No ${esc(x.need.join(" or "))}</b>` : ""}</span></span></span></div>`).join("")}</div>`
         : `<div class="panel">No bye trouble the rest of the way.</div>`);
@@ -2503,12 +2993,29 @@
       { label: cur ? "ROS pts" : "Season pts", num: 1, cell: p => pts(p) != null ? Number(pts(p)).toFixed(1) : "—" },
     ], t.roster));
 
-    main.innerHTML = `<div class="section-head me-head"><div class="me-id">${logo(t)}<div><h1>${esc(t.name)}</h1><p class="sub">${esc(t.manager)} · ${L.season} season</p></div></div>${switchBtn}</div>
-      ${glance}
-      <div class="me-grid"><div>${week}${cur ? section("Player news", "The latest from ESPN on your players. New since your last visit is marked.", '<div class="me-news-box"><div class="empty">Loading…</div></div>') : ""}${waiverTargets(t)}${watch}${byes}</div><div>${schedule}</div></div>
-      ${IDX.history.badges ? section(`Your badges <a class="wk-link" href="${href("history", {}, "badges")}">all badges ›</a>`, "Earned across every season you've played.", badgeTiles(ME.member)) : ""}
-      ${section(`Your record book <a class="wk-link" href="${href("history", { member: ME.member }, "records")}">full record book ›</a>`, "Your bests and worsts across every season you've played. Tap one for the box score.", `<div class="me-recs-box" data-rec-member="${esc(ME.member)}"><div class="empty">Loading…</div></div>`)}
-      ${roster}`;
+    // every section, in the order and visibility this device has chosen (Customize)
+    const parts = {
+      glance, week, watch, byes, schedule, roster,
+      news: cur ? section("Player news", "The latest from ESPN on your players. New since your last visit is marked.", '<div class="me-news-box"><div class="empty">Loading…</div></div>') : "",
+      waivers: waiverTargets(t),
+      badges: IDX.history.badges ? section(`Your badges <a class="wk-link" href="${href("history", {}, "badges")}">all badges ›</a>`, "Earned across every season you've played.", badgeTiles(ME.member)) : "",
+      records: section(`Your record book <a class="wk-link" href="${href("history", { member: ME.member }, "records")}">full record book ›</a>`, "Your bests and worsts across every season you've played. Tap one for the box score.", `<div class="me-recs-box" data-rec-member="${esc(ME.member)}"><div class="empty">Loading…</div></div>`),
+    };
+    const lay = meLayout();
+    const shown = k => parts[k] && !lay.hidden.includes(k);
+    const part = k => `<div class="me-part" style="order:${lay.order.indexOf(k)}">${parts[k]}</div>`;
+    const left = lay.order.filter(k => k !== "schedule" && shown(k)).map(part).join("");
+    const right = shown("schedule") ? part("schedule") : "";
+    const custBtn = `<button type="button" class="linkbtn" data-mecust="toggle">${ME.cust ? "Done" : "Customize"}</button>`;
+    const cust = !ME.cust ? "" : `<div class="panel me-cust"><p class="sub">Choose what shows on this page and in what order. Saved on this device.</p>
+      ${["glance", ...lay.order].map((k, i) => `<div class="me-cust-row${lay.hidden.includes(k) ? " off" : ""}"><label><input type="checkbox" data-mecust-show="${k}"${lay.hidden.includes(k) ? "" : " checked"}> ${esc(ME_PARTS[k])}${parts[k] ? "" : ' <span class="muted">(not showing right now)</span>'}</label>
+        ${k === "glance" ? '<span class="muted me-cust-fixed">always on top</span>' : `<span class="me-cust-mv"><button type="button" class="linkbtn" data-mecust-up="${k}"${i === 1 ? " disabled" : ""} aria-label="Move ${esc(ME_PARTS[k])} up">↑</button><button type="button" class="linkbtn" data-mecust-down="${k}"${i === lay.order.length ? " disabled" : ""} aria-label="Move ${esc(ME_PARTS[k])} down">↓</button></span>`}</div>`).join("")}
+      <div class="me-cust-foot"><button type="button" class="linkbtn" data-mecust="reset">Reset to default</button><button type="button" class="cta" data-mecust="toggle">Done</button></div>
+      ${lay.order.includes("schedule") ? '<p class="note">On a computer, Schedule sits in the right-hand column; on a phone it follows the order above.</p>' : ""}</div>`;
+    main.innerHTML = `<div class="section-head me-head"><div class="me-id">${logo(t)}<div><h1>${esc(t.name)}</h1><p class="sub">${esc(t.manager)} · ${L.season} season</p></div></div><span class="me-acts">${custBtn}${switchBtn}</span></div>
+      ${cust}
+      ${shown("glance") ? glance : ""}
+      <div class="me-grid${right ? "" : " one"}"><div class="me-col">${left}</div><div class="me-col">${right}</div></div>`;
     fillMyRecords(main.querySelector(".me-recs-box"));
     if (cur) fillNews(main.querySelector(".me-news-box"), t);
   }
@@ -2655,7 +3162,7 @@
     const kdBlock = kdHtml ? `<h3 class="wv-h">Kickers & defenses</h3>${kdHtml}` : `<h3 class="wv-h">Kickers & defenses</h3>${nothing(`Your kicker and defense are set for week ${next}; no free agent is projected clearly better (+2 K, +3 D/ST).`)}`;
 
     return section("Waiver targets", { short: "Pickups that would improve your lineup, by projected points.", full: `Free agents and players on waivers compared with your roster, using the same weekly projections as power value: ESPN's rest-of-season projection, minus byes and expected injury time. <b>+points</b> is how much your best lineup gains (that week, or added up over weeks ${weeks[0]}–${weeks[weeks.length - 1]} for rest of season, after dropping the suggested player). Rest of season only lists players who'd improve your lineup in at least two weeks; a one-week bye fill-in shows under short-handed weeks instead. Kickers and defenses use ESPN's matchup projection for each week: you're warned when yours is on bye, and a stream is suggested only when a free agent is projected at least 3 points (defense) or 2 points (kicker) better. Updates with every site refresh; claims are made in the ESPN app.` },
-      `<div class="picks wv">${body}${kdBlock}</div>`);
+      `<div class="picks wv">${body}${kdBlock}<div class="me-fix">Claims are made on ESPN.${espnBtn(ESPN_ADD(), "Claim on ESPN")}</div></div>`);
   }
 
   main.addEventListener("submit", async e => {
@@ -2701,6 +3208,16 @@
   // Every feature added to the site, grouped by the day it went live (newest first). Add new features at the top.
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
+    ["2026-11-14", [
+      ["Bullseye", "Games → Bullseye", "A new target every week: pick up to 5 players whose points add up as close to it as you can without going over.", "#/games/bullseye"],
+      ["Rank 'em", "Games → Rank 'em", "Put five players at one position in order of the points they'll score. 3 points per exact spot, 1 for one off.", "#/games/rankem"],
+      ["Reactions", "Matchups, Big plays, Standings", "Tap an emoji under any matchup, big play or the weekly high and low score. Hold one to see who reacted.", "#/matchups"],
+      ["Upset tracker", "Insights → Luck", "Every team's record as ESPN's favorite and as the underdog, with its biggest upset and worst loss.", "#/insights/luck?at=upsets"],
+      ["Starters who beat it", "Insights → Luck → Vs. projection", "How often each team's individual starters outscore their own projection.", "#/insights/luck?at=projection"],
+      ["Customize My team", "My team", "Reorder or hide the sections on My team. Saved on your device.", "#/myteam"],
+      ["Fix it on ESPN", "My team", "A lineup check under your matchup, plus buttons that open the exact ESPN page to fix a lineup or claim a player.", "#/myteam"],
+      ["Glossary", "Footer, every ⓘ", "Every stat and term on the site in one searchable page.", "#/glossary"],
+    ]],
     ["2026-11-13", [
       ["Pick 4 prices follow the news", "Games → Pick 4", "Prices update every 30 minutes with ESPN's projections and injury news (Q / D / OUT tags, ▲/▼ since the week opened). Players already in your lineup keep the price you paid; the waiver wire list updates as players are dropped and picked up.", "#/games/pick4"],
       ["Trivia from easy to expert", "Games → League trivia", "Starting week 11, the 5 questions go in order of difficulty, Easy to Expert, and never repeat a question from earlier in the season.", "#/games/trivia"],
@@ -2778,6 +3295,83 @@
       CHANGELOG.map(([d, items]) => `<section class="wn-day"><h2>${esc(day(d))}${seen && d > seen ? ' <span class="badge new">New</span>' : ""}<span class="team-mgr">${items.length} ${items.length === 1 ? "addition" : "additions"}</span></h2>
         <ul class="wn-list">${items.map(([title, where, desc, link]) => `<li><a href="${esc(link)}">${esc(title)}</a>${where ? `<span class="wn-where">${esc(where)}</span>` : ""}<p>${esc(desc)}</p></li>`).join("")}</ul></section>`).join("");
   }
+
+  // ---------------------------------------------------------------- glossary
+  // [id, term, where it lives, link, explanation, section titles whose ⓘ links here]
+  const GLOSSARY = [
+    ["Standings & power", [
+      ["power", "Power value", "Standings", "#/", "How many points a team's starting lineup is expected to score over the rest of the fantasy season. Each remaining week starts the best available lineup by ESPN's projections (skipping byes and players expected to miss time) and the season is replayed 500 times with random injuries, so bench players count as often as they'd really play. Kickers and defenses are left out.", []],
+      ["powerrank", "Power rank", "Standings", "#/", "Teams ordered by power value. #1 has the strongest expected lineup for the rest of the season.", []],
+      ["posbars", "Position bars", "Standings", "#/", "Each team's rank at QB, RB, WR and TE: expected points from its best QB, 3 RBs, 3 WRs (two spots plus FLEX) and TE each week. After the season, what those groups actually produced.", []],
+      ["starts", "Starts X of Y wks", "Standings → team cards", "#/", "How often a player makes his team's best projected lineup in the weeks left.", []],
+      ["odds", "Playoff and title odds", "Insights → Playoff race", "#/insights/race", "From 10,000 simulated finishes of the regular season and the bracket. This week's games use ESPN's live win probabilities.", ["Playoff race"]],
+      ["form", "Hot & cold", "Insights → Playoff race", "#/insights/race?at=form", "Each team's average over the last few completed weeks vs. its season average, with the league-wide swing taken out (Trend).", ["Hot & cold"]],
+    ]],
+    ["Luck & schedule", [
+      ["allplay", "All-play record", "Insights → Luck", "#/insights/luck", "The record a team would have if it played every other team every week.", []],
+      ["luck", "Luck and expected wins", "Insights → Luck", "#/insights/luck", "Expected wins are the wins a team's all-play rate predicts. Luck is actual wins minus expected wins: positive means more wins than its scoring deserved.", ["Luck"]],
+      ["close", "Close games", "Insights → Luck", "#/insights/luck?at=close", "Records in regular-season games decided by under 10 points, which usually come down to one play.", ["Close games"]],
+      ["upsets", "Upset tracker (favorite / underdog)", "Insights → Luck", "#/insights/luck?at=upsets", "Before each game, the team whose starting lineup ESPN projected for more points is the favorite. Each team's records as favorite and underdog, net upsets (upset wins minus upset losses), its biggest upset win and its worst loss as a favorite.", ["Upset tracker"]],
+      ["vsproj", "Vs. projection", "Insights → Luck", "#/insights/luck?at=projection", "Points a team's starters scored compared with ESPN's pre-game projection for that same lineup. About how the players performed, not lineup choices or opponents.", ["Vs. projection"]],
+      ["beatit", "Starters who beat it", "Insights → Luck → Vs. projection", "#/insights/luck?at=projection", "The share of a team's individual starts where the player outscored his own projection. A big difference from a low share means a few huge games; a high share means the whole lineup is beating expectations.", []],
+      ["sos", "Strength of schedule", "Insights → Schedule", "#/insights/schedule", "How much a team's opponents score per week vs. the league average (#1 = toughest), how they scored against you, and the projected strength of the opponents left.", ["Strength of schedule"]],
+      ["byes", "Byes ahead", "Insights → Schedule, My team", "#/insights/schedule?at=byes", "Projected points a team's best lineup loses in each remaining week because starters are on bye or expected to miss the game. Bench depth counts.", ["Byes ahead"]],
+    ]],
+    ["Lineups & draft", [
+      ["efficiency", "Manager efficiency", "Insights → Lineups", "#/insights/lineups", "Points started as a share of the best possible lineup each week, in hindsight.", ["Manager efficiency"]],
+      ["benchleft", "Points left on the bench", "My team, Insights → Lineups", "#/insights/lineups", "How many more points the best possible lineup would have scored than the one started.", []],
+      ["autopilot", "You vs. autopilot", "Insights → Lineups", "#/insights/lineups", "Autopilot starts the best lineup by ESPN's pre-game projections from your roster every week. Your calls is how many more (or fewer) points your real lineups scored; games swung counts games your calls won or lost compared with autopilot.", ["You vs. autopilot"]],
+      ["draftgrade", "Draft grades, steals and busts", "Insights → Draft", "#/insights/draft", "Each pick compared with same-position players drafted around the same spot, using points scored. Kickers and defenses aren't graded.", ["Draft grades", "Steals", "Busts"]],
+      ["redraft", "Hindsight redraft", "Insights → Draft", "#/insights/draft?view=redraft", "The draft redone knowing every player's points: each pick takes the most valuable player left, measured as points above a replacement-level player at his position.", ["Hindsight redraft"]],
+    ]],
+    ["What ifs", [
+      ["rules", "Rules lab", "Insights → What ifs", "#/insights/whatif", "This season's standings under other scoring and formats (PPR, half PPR, standard, a median game, best ball), with the same lineups and real stats rescored.", ["Rules lab"]],
+      ["swap", "Schedule swap", "Insights → What ifs", "#/insights/whatif?at=swap", "Each team's record if it had played every other team's schedule, using its real weekly scores.", ["Schedule swap"]],
+    ]],
+    ["My team & trades", [
+      ["waivers", "Waiver targets", "My team", "#/myteam", "Free agents that would improve your best lineup next week or over the rest of the season (2+ weeks), using ESPN's projections, with the easiest drop. Kicker and defense streams only when clearly better.", ["Waiver targets"]],
+      ["ros", "ROS rank and points", "My team → Roster", "#/myteam", "Rest-of-season position rank and projected points from ESPN.", []],
+      ["tradeideas", "Trade ideas", "Trades → Trade ideas", "#/trades/ideas", "Trades that would help both teams, matched from one roster's surplus to another's needs.", ["Your best trade partners", "Best fits in the league"]],
+      ["block", "Trade block", "Trades → Trade block", "#/trades/block", "Players each team is shopping and the positions it needs, with possible fits between teams.", ["Listings", "Possible fits"]],
+    ]],
+    ["Matchups", [
+      ["winprob", "Win probability", "Matchups", "#/matchups", "ESPN's live chance each team wins its matchup, shown while the week is in progress.", []],
+      ["bigplays", "Big plays", "Matchups → Big plays", "#/matchups/plays", "Touchdowns, 5+ point field goals, turnovers, big defensive plays and 30+ yard gains (50+ for a pass) by league players, caught from ESPN every minute during games, with the fantasy points that play was worth.", []],
+      ["monday", "Monday-night math", "Matchups", "#/matchups", "Once a matchup is down to players in games that haven't started, what each side needs and a win chance from those players' own game logs.", []],
+      ["reactions", "Reactions", "Matchups, Big plays, Standings", "#/matchups", "Tap an emoji under a matchup, a big play or the weekly high and low score to react as your team (same name and PIN as the games). Tap again to take it back; hold one to see who reacted.", []],
+    ]],
+    ["Games", [
+      ["pickem", "Pick'em", "Games", "#/games", "Pick the winner of every league matchup before the week's first kickoff.", []],
+      ["pick4", "Pick 4", "Games → Pick 4", "#/games/pick4", "Pick a QB, RB, WR and TE under a salary cap. Prices are $400 per projected point and move with the news; each spot locks at its player's kickoff.", []],
+      ["fachallenge", "Waiver wire challenge", "Games → Pick 4", "#/games/pick4?view=fa", "Pick 4 using only players who are free agents in our league.", []],
+      ["bullseye", "Bullseye", "Games → Bullseye", "#/games/bullseye", "Pick up to 5 players whose real points add up as close to the week's target as possible without going over. Going over is a bust.", []],
+      ["rankem", "Rank 'em", "Games → Rank 'em", "#/games/rankem", "Put five players at one position in order of the points they'll score. 3 points per exact spot, 1 for one spot off, 15 max.", []],
+      ["trivia", "League trivia", "Games → League trivia", "#/games/trivia", "Five questions a week about league history, easy to expert. One try each.", []],
+      ["pin", "Name and PIN", "Games, My team", "#/games", "Your 4-digit PIN, set the first time you use it, keeps anyone else from playing or reacting as you. One PIN works everywhere on the site.", []],
+    ]],
+  ];
+  const GLOSSARY_BY_TITLE = {};
+  GLOSSARY.forEach(([, items]) => items.forEach(([id, , , , , titles]) => titles.forEach(t => { GLOSSARY_BY_TITLE[t] = id; })));
+  function renderGlossary() {
+    const q = (state.params.get("q") || "").toLowerCase(), focus = state.params.get("t");
+    const groups = GLOSSARY.map(([g, items]) => [g, items.filter(([, term, where, , text]) => !q || (term + " " + where + " " + text).toLowerCase().includes(q))]).filter(([, it]) => it.length);
+    main.innerHTML = `<div class="section-head"><div><h1>Glossary</h1><p class="sub">Every stat and term on the site in one place. Tap a term's location to go there.</p></div></div>
+      <input id="gl-q" type="search" class="gl-q" placeholder="Search terms (e.g. luck, autopilot)" value="${esc(q)}" autocomplete="off">
+      ${groups.length ? groups.map(([g, items]) => `<section class="gl-group"><h2>${esc(g)}</h2><dl class="gl-list">${items.map(([id, term, where, link, text]) =>
+        `<div class="gl-item${id === focus ? " on" : ""}" id="gl-${id}"><dt>${esc(term)} <a class="gl-where" href="${esc(link)}">${esc(where)} ›</a></dt><dd>${esc(text)}</dd></div>`).join("")}</dl></section>`).join("")
+        : '<div class="empty">No terms match.</div>'}`;
+    if (focus) { const el = document.getElementById("gl-" + focus); if (el) el.scrollIntoView({ block: "center" }); }
+    if (GL_FOCUS) { const qi = document.getElementById("gl-q"); qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); GL_FOCUS = false; }
+  }
+  let GL_FOCUS = false;
+  main.addEventListener("input", e => {
+    if (e.target.id !== "gl-q") return;
+    GL_FOCUS = true;
+    const v = e.target.value.trim();
+    history.replaceState(null, "", "#/glossary" + (v ? "?q=" + encodeURIComponent(v) : ""));
+    state.params = new URLSearchParams(v ? "q=" + v : "");
+    renderGlossary();
+  });
 
   function renderSettings() {
     const S = D.settings;
@@ -2991,7 +3585,7 @@
   main.addEventListener("change", e => {
     if (e.target.id === "since-team" && e.target.value) { store.set("pk-member", e.target.value); PK.member = e.target.value; renderKeepScroll(renderStandings); return; }
     if (e.target.id === "sort") { state.sort = e.target.value; store.set("sort", state.sort); renderStandings(); }
-    if (e.target.id === "side-week") { state.sideWeek = Number(e.target.value); document.querySelector(".side").outerHTML = sidebar(); }
+    if (e.target.id === "side-week") { state.sideWeek = Number(e.target.value); document.querySelector(".side").outerHTML = sidebar(); rxHydrate(); }
     if (e.target.id === "swap-team") { state.swapTeam = e.target.value; renderKeepScroll(renderInsights); }
     if (e.target.id === "draft-team") { state.draftTeam = e.target.value; renderKeepScroll(renderInsights); }
     if (e.target.id === "rec-member") { location.hash = href("history", e.target.value ? { member: e.target.value } : {}, "records"); return; }

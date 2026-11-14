@@ -521,6 +521,228 @@ async function handlePick3(req, env, url) {
   return json(env, req, { error: "Not found" }, 404);
 }
 
+// ---------------------------------------------------------------- Bullseye and Rank 'em (Games)
+// Both borrow Pick 4's weekly player list (ESPN's projections under league scoring, injury tags, kickoff times), so
+// they add no ESPN calls beyond the points lookups. Same name + PIN as every other game.
+
+// a small seeded random generator, so a week's target / players are the same no matter who asks first
+function seeded(str) {
+  let h = 2166136261;
+  for (const c of str) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 1e6) / 1e6; };
+}
+const round2 = n => Math.round(n * 100) / 100;
+
+// weeks that had entries get their final results written into the season record once the week is over
+async function gameFinalize(env, st, prefix, score) {
+  const sKey = `${prefix}-season:${st.season}`;
+  const S = (await env.PICKEM.get(sKey, "json")) || { weeks: {}, open: [] };
+  const due = S.open.filter(w => w < st.week);
+  if (!due.length) return S;
+  for (const w of due) { const r = await score(w); if (r) S.weeks[w] = r; }
+  S.open = S.open.filter(w => !due.includes(w));
+  await env.PICKEM.put(sKey, JSON.stringify(S));
+  return S;
+}
+async function markOpen(env, prefix, season, week) {
+  const sKey = `${prefix}-season:${season}`;
+  const S = (await env.PICKEM.get(sKey, "json")) || { weeks: {}, open: [] };
+  if (!S.open.includes(week)) { S.open.push(week); await env.PICKEM.put(sKey, JSON.stringify(S)); }
+}
+async function postBody(req) { try { return await req.json(); } catch (_) { return null; } }
+
+// Bullseye: a random target each week (40.0-70.0). Pick up to 5 players whose real points add up as close to it as
+// possible without going over. Each player locks at his own kickoff, like Pick 4.
+const BULL_MAX = 5;
+const BULL_SNAP = ["id", "n", "pos", "team", "opp", "at", "proj"];
+const bullTarget = (season, week) => 40 + Math.floor(seeded(`bull|${season}|${week}`)() * 61) / 2;
+
+async function handleBull(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Game storage isn't set up yet." }, 503);
+  const st = await pickemWeek(env);
+  const body = req.method === "POST" ? await postBody(req) : null;
+  if (req.method === "POST" && !body) return json(env, req, { error: "Bad request" }, 400);
+  const S = await gameFinalize(env, st, "bull", async w => {
+    const E = await env.PICKEM.get(`bull-entries:${st.season}:${w}`, "json");
+    if (!E) return null;
+    const ids = [...new Set(Object.values(E.e).flatMap(x => x.picks.map(p => p.id)))];
+    const pts = await p3Points(env, st.season, E.sp, ids);
+    return { target: E.target, rows: Object.fromEntries(Object.entries(E.e).map(([m, x]) => [m, round2(x.picks.reduce((n, p) => n + (pts[p.id] || 0), 0))])) };
+  });
+  if (st.over) return json(env, req, { season: st.season, over: true, history: S.weeks });
+  const slate = await p3Slate(env, st, P3_MODES.all);
+  const target = bullTarget(st.season, st.week);
+  const now = Date.now();
+  const started = p => p && p.at != null && now >= p.at;
+  const byId = Object.fromEntries(slate.players.map(p => [p.id, p]));
+  const eKey = `bull-entries:${st.season}:${st.week}`;
+  const E = (await env.PICKEM.get(eKey, "json")) || { sp: slate.sp, target, e: {} };
+  const ptsFor = async picks => p3Points(env, st.season, slate.sp, [...new Set(picks.filter(started).map(p => p.id))]);
+  if (req.method === "GET" && url.pathname === "/bull") {
+    const pts = await ptsFor(Object.values(E.e).flatMap(x => x.picks));
+    // other people's players show once that player's game has started (he's locked by then)
+    const entries = Object.fromEntries(Object.entries(E.e).map(([m, x]) => [m, x.picks.map(p => started(p) ? { id: p.id, n: p.n, pos: p.pos, pts: pts[p.id] || 0 } : { hidden: true })]));
+    const players = slate.players.map(p => ({ id: p.id, n: p.n, pos: p.pos, team: p.team, opp: p.opp, at: p.at, proj: p.proj, inj: p.inj }));
+    return json(env, req, { season: st.season, week: st.week, target, max: BULL_MAX, now, made: slate.made, players, entries, history: S.weeks });
+  }
+  if (req.method !== "POST") return json(env, req, { error: "Not found" }, 404);
+  const member = String(body.member || "");
+  if (!st.members.includes(member)) return json(env, req, { error: "That name isn't in the league." }, 400);
+  const mine = (E.e[member] || { picks: [] }).picks;
+  const withPts = async picks => { const pts = await ptsFor(picks); return picks.map(p => ({ ...p, pts: started(p) ? pts[p.id] || 0 : null })); };
+  if (url.pathname === "/bull/mine") {
+    if (!(await env.PICKEM.get(`pin:${st.season}:${member}`))) return json(env, req, { picks: [], newPin: true });
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    return json(env, req, { picks: await withPts(mine) });
+  }
+  if (url.pathname === "/bull/save") {
+    const want = [...new Set((Array.isArray(body.picks) ? body.picks : []).map(Number).filter(Boolean))];
+    if (want.length > BULL_MAX) return json(env, req, { error: `Pick at most ${BULL_MAX} players.` }, 400);
+    for (const p of mine) if (started(p) && !want.includes(p.id)) return json(env, req, { error: `${p.n}'s game has started, so he stays in.` }, 409);
+    const next = [];
+    for (const id of want) {
+      const have = mine.find(p => p.id === id);
+      if (have) { next.push(have); continue; }
+      const p = byId[id];
+      if (!p) return json(env, req, { error: "That player isn't on this week's list." }, 400);
+      if (started(p)) return json(env, req, { error: `${p.n}'s game has already started. Pick someone who hasn't played yet.` }, 409);
+      if (p.inj === "OUT") return json(env, req, { error: `${p.n} has been ruled out this week.` }, 400);
+      next.push(Object.fromEntries(BULL_SNAP.map(f => [f, p[f]])));
+    }
+    if (!next.length) return json(env, req, { error: "Pick at least one player." }, 400);
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    const fresh = (await env.PICKEM.get(eKey, "json")) || { sp: slate.sp, target, e: {} };
+    fresh.e[member] = { picks: next, at: new Date().toISOString() };
+    await env.PICKEM.put(eKey, JSON.stringify(fresh));
+    await markOpen(env, "bull", st.season, st.week);
+    return json(env, req, { ok: true, picks: await withPts(next) });
+  }
+  return json(env, req, { error: "Not found" }, 404);
+}
+
+// Rank 'em: five players at one position (QB, RB, WR, TE in turn by week) with close projections, all playing Sunday
+// or later. Put them in order of the points they'll score; everything locks at the first of their kickoffs.
+// 3 points for each player in exactly the right spot, 1 for one spot off (tied players share their spots), 15 max.
+const RANK_POS = ["QB", "RB", "WR", "TE"];
+async function rankSlate(env, st) {
+  const key = `rank-slate:${st.season}:${st.week}`;
+  const have = await env.PICKEM.get(key, "json");
+  if (have) return have;
+  const P = await p3Slate(env, st, P3_MODES.all);
+  const now = Date.now();
+  const sunday = Math.min(...P.players.map(p => p.at).filter(a => new Date(a - 5 * 3600e3).getUTCDay() === 0));
+  const pos = RANK_POS[st.week % 4];
+  const rand = seeded(`rank|${st.season}|${st.week}`);
+  const pool = P.players.filter(p => p.pos === pos && p.inj !== "OUT" && p.at >= sunday && p.at > now + 3600e3)
+    .sort((a, b) => b.proj - a.proj).slice(0, pos === "QB" || pos === "TE" ? 16 : 30);
+  let slate;
+  if (pool.length < 5) slate = { none: true, pos };
+  else {
+    // a run of 8 neighbours by projection, then 5 of them: close enough that the order isn't obvious
+    const start = Math.floor(rand() * (pool.length - Math.min(8, pool.length) + 1));
+    const win = pool.slice(start, start + 8);
+    while (win.length > 5) win.splice(Math.floor(rand() * win.length), 1);
+    const players = win.map(p => ({ id: p.id, n: p.n, pos: p.pos, team: p.team, opp: p.opp, at: p.at, proj: p.proj }))
+      .sort((a, b) => a.n.localeCompare(b.n));
+    slate = { pos, sp: P.sp, lock: Math.min(...players.map(p => p.at)), players };
+  }
+  await env.PICKEM.put(key, JSON.stringify(slate));
+  return slate;
+}
+function rankScore(order, players, pts) {
+  const vals = players.map(p => pts[p.id] || 0);
+  return order.reduce((score, id, i) => {
+    const v = pts[id] || 0, hi = vals.filter(x => x > v).length, lo = hi + vals.filter(x => x === v).length - 1;
+    const d = i < hi ? hi - i : i > lo ? i - lo : 0;
+    return score + (d === 0 ? 3 : d === 1 ? 1 : 0);
+  }, 0);
+}
+
+async function handleRank(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Game storage isn't set up yet." }, 503);
+  const st = await pickemWeek(env);
+  const body = req.method === "POST" ? await postBody(req) : null;
+  if (req.method === "POST" && !body) return json(env, req, { error: "Bad request" }, 400);
+  const S = await gameFinalize(env, st, "rank", async w => {
+    const sl = await env.PICKEM.get(`rank-slate:${st.season}:${w}`, "json");
+    const E = await env.PICKEM.get(`rank-entries:${st.season}:${w}`, "json");
+    if (!sl || sl.none || !E) return null;
+    const pts = await p3Points(env, st.season, sl.sp, sl.players.map(p => p.id));
+    return { pos: sl.pos, rows: Object.fromEntries(Object.entries(E).map(([m, x]) => [m, rankScore(x.order, sl.players, pts)])) };
+  });
+  if (st.over) return json(env, req, { season: st.season, over: true, history: S.weeks });
+  const sl = await rankSlate(env, st);
+  const now = Date.now();
+  const eKey = `rank-entries:${st.season}:${st.week}`;
+  const E = (await env.PICKEM.get(eKey, "json")) || {};
+  const locked = !sl.none && now >= sl.lock;
+  const pts = locked ? await p3Points(env, st.season, sl.sp, sl.players.map(p => p.id)) : {};
+  if (req.method === "GET" && url.pathname === "/rank") {
+    if (sl.none) return json(env, req, { season: st.season, week: st.week, none: true, pos: sl.pos, history: S.weeks });
+    // nobody's order shows until everything locks
+    const entries = Object.fromEntries(Object.entries(E).map(([m, x]) => [m, locked ? { order: x.order, score: rankScore(x.order, sl.players, pts) } : { done: true }]));
+    const players = sl.players.map(p => ({ ...p, pts: locked ? (now >= p.at ? pts[p.id] || 0 : null) : undefined }));
+    return json(env, req, { season: st.season, week: st.week, pos: sl.pos, lock: sl.lock, locked, now, players, entries, history: S.weeks });
+  }
+  if (req.method !== "POST") return json(env, req, { error: "Not found" }, 404);
+  const member = String(body.member || "");
+  if (!st.members.includes(member)) return json(env, req, { error: "That name isn't in the league." }, 400);
+  if (url.pathname === "/rank/mine") {
+    if (!(await env.PICKEM.get(`pin:${st.season}:${member}`))) return json(env, req, { order: null, newPin: true });
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    return json(env, req, { order: E[member] ? E[member].order : null });
+  }
+  if (url.pathname === "/rank/save") {
+    if (sl.none) return json(env, req, { error: "There's no Rank 'em this week." }, 409);
+    if (locked) return json(env, req, { error: "This week's Rank 'em has locked." }, 409);
+    const order = (Array.isArray(body.order) ? body.order : []).map(Number);
+    const ids = sl.players.map(p => p.id);
+    if (order.length !== ids.length || new Set(order).size !== ids.length || !order.every(id => ids.includes(id)))
+      return json(env, req, { error: "Put all five players in order." }, 400);
+    const err = await checkPin(env, st.season, member, body.pin);
+    if (err) return json(env, req, { error: err }, 403);
+    const fresh = (await env.PICKEM.get(eKey, "json")) || {};
+    fresh[member] = { order, at: new Date().toISOString() };
+    await env.PICKEM.put(eKey, JSON.stringify(fresh));
+    await markOpen(env, "rank", st.season, st.week);
+    return json(env, req, { ok: true, order });
+  }
+  return json(env, req, { error: "Not found" }, 404);
+}
+
+// ---------------------------------------------------------------- reactions
+// One-tap emoji on matchups, big plays and the weekly high / low score. One of each emoji per member per item; tapping
+// again takes it back. One KV value per week: { item: { emoji: [member ids] } }.
+const REACT_EMOJI = ["🔥", "😂", "💀", "👏", "🗑️"];
+async function handleReact(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Reaction storage isn't set up yet." }, 503);
+  const st = await pickemWeek(env);
+  const body = req.method === "POST" ? await postBody(req) : null;
+  const week = Number(body ? body.week : url.searchParams.get("week")) || st.week;
+  if (!(week >= 1 && week <= Math.max(st.week, 1))) return json(env, req, { error: "No such week." }, 400);
+  const key = `react:${st.season}:${week}`;
+  if (req.method === "GET" && url.pathname === "/react") return json(env, req, { season: st.season, week, items: (await env.PICKEM.get(key, "json")) || {} });
+  if (req.method !== "POST" || url.pathname !== "/react/toggle") return json(env, req, { error: "Not found" }, 404);
+  if (!body) return json(env, req, { error: "Bad request" }, 400);
+  const member = String(body.member || ""), item = String(body.item || ""), emoji = String(body.emoji || "");
+  if (!st.members.includes(member)) return json(env, req, { error: "That name isn't in the league." }, 400);
+  if (!/^(g|p|hi|lo):[\w.-]{1,40}$/.test(item) || !REACT_EMOJI.includes(emoji)) return json(env, req, { error: "Bad reaction." }, 400);
+  const err = await checkPin(env, st.season, member, body.pin);
+  if (err) return json(env, req, { error: err }, 403);
+  const R = (await env.PICKEM.get(key, "json")) || {};
+  const it = R[item] = R[item] || {};
+  const list = it[emoji] = it[emoji] || [];
+  const i = list.indexOf(member);
+  if (i >= 0) list.splice(i, 1); else list.push(member);
+  if (!list.length) delete it[emoji];
+  if (!Object.keys(it).length) delete R[item];
+  await env.PICKEM.put(key, JSON.stringify(R));
+  return json(env, req, { ok: true, week, items: R });
+}
+
 // ---------------------------------------------------------------- live big-play feed
 // Every minute during NFL games, compare each rostered player's scoring with the last snapshot and turn the
 // changes into plays (TDs, field goals, turnovers, defensive plays, big gains). Stored in KV only when a play
@@ -932,6 +1154,12 @@ export default {
     if (url.pathname.startsWith("/pick3")) {
       try { return await handlePick3(req, env, url); }
       catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
+    }
+    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact]]) {
+      if (url.pathname.startsWith(pre)) {
+        try { return await fn(req, env, url); }
+        catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
+      }
     }
     if (url.pathname.startsWith("/trivia")) {
       try { return await handleTrivia(req, env, url); }

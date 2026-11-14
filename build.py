@@ -370,6 +370,9 @@ def build_season(season, is_current, names):
                 if any(week_proj.get(r["id"]) for r in lineup):
                     pool = [r for r in lineup if r["slot"] != "IR"]
                     auto = round(sum(r["pts"] or 0 for r in stats.best_lineup(pool, slot_counts, lambda r: week_proj.get(r["id"], 0.0))), 2)
+                # starters who outscored their own pre-game projection (Insights -> Vs. projection)
+                starters = [r for r in lineup if r["slot"] not in ("BE", "IR") and week_proj.get(r["id"])]
+                beat = [sum(1 for r in starters if (r["pts"] or 0) > week_proj[r["id"]]), len(starters)]
                 if not over and w == current_week:
                     for r in lineup:
                         r["proj"] = round(week_proj.get(r["id"], 0.0), 1)
@@ -381,7 +384,7 @@ def build_season(season, is_current, names):
                 for r in lineup:
                     names_seen[r["id"]] = r
                 g["sides"].append({
-                    "team": s["teamId"], "pts": round(pts or 0, 2), "projected": round(projected, 2), "auto": auto,
+                    "team": s["teamId"], "pts": round(pts or 0, 2), "projected": round(projected, 2), "auto": auto, "beat": beat,
                     "proj": round(s.get("totalProjectedPointsLive") or 0, 2) if live else None,
                     "winProb": s.get("winProbability") if live else None,
                     "lineup": lineup,

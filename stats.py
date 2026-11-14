@@ -511,7 +511,9 @@ def vs_projection(season):
             for s in g["sides"]:
                 if not s.get("projected"):
                     continue
-                a = agg.setdefault(s["team"], {"actual": 0.0, "proj": 0.0, "weeks": 0, "beat": 0, "best": None, "worst": None})
+                a = agg.setdefault(s["team"], {"actual": 0.0, "proj": 0.0, "weeks": 0, "beat": 0, "best": None, "worst": None, "sb": [0, 0]})
+                if s.get("beat"):
+                    a["sb"][0] += s["beat"][0]; a["sb"][1] += s["beat"][1]
                 d = s["pts"] - s["projected"]
                 a["actual"] += s["pts"]; a["proj"] += s["projected"]; a["weeks"] += 1
                 a["beat"] += 1 if d > 0 else 0
@@ -521,7 +523,8 @@ def vs_projection(season):
                     a["worst"] = [w["week"], round(d, 1)]
     return {t: {"actual": round(a["actual"], 1), "proj": round(a["proj"], 1), "diff": round(a["actual"] - a["proj"], 1),
                 "perWeek": round((a["actual"] - a["proj"]) / a["weeks"], 1), "weeks": a["weeks"], "beat": a["beat"],
-                "best": a["best"], "worst": a["worst"]} for t, a in agg.items()}
+                "best": a["best"], "worst": a["worst"],
+                "starters": a["sb"] if a["sb"][1] else None} for t, a in agg.items()}
 
 
 # ---------------------------------------------------------------- rules lab

@@ -38,7 +38,7 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   best QB, best 3 RBs, best 3 WRs (their two spots + FLEX) and best TE each week, in the same simulation. They
   rate the groups, so they don't sum to the power value (a FLEX-capable player counts in his own group).
 - **Insights** (6 pages, code in `stats.py`): *Playoff race* (`race`, with Hot & cold), *Luck* (`luck`: Luck, Close
-  games, Vs. projection), *Schedule* (`schedule`: strength of schedule, Byes ahead), *Lineups* (`lineups`: Efficiency,
+  games, Upset tracker, Vs. projection), *Schedule* (`schedule`: strength of schedule, Byes ahead), *Lineups* (`lineups`: Efficiency,
   You vs. autopilot), *Draft* (`draft`, `?view=redraft` for the hindsight redraft) and *What ifs* (`whatif`: Rules lab,
   Schedule swap). Old single-view links (`#/insights/close`, `/rules`, `/byes`, ...) redirect to their page with
   `?at=<view>` to scroll there (`INSIGHT_GROUPS` / `INSIGHT_ALIAS` in `site/app.js`). The views:
@@ -48,7 +48,11 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   - *Luck* (actual vs. all-play expected wins), *Close games* (record in games decided by under 10 points), *Schedule* (opponent strength so far and remaining),
     *Schedule swap* (every team's record on every other team's schedule, best and worst),
     *Hot & cold* (last 3 weeks vs. season average, adjusted for the league-wide swing),
-    *Vs. projection* (points scored vs. ESPN's pre-game projection for the lineup started),
+    *Upset tracker* (each team's record as ESPN's pre-game favorite and underdog by lineup projection, net upsets,
+    biggest upset win and worst loss as a favorite; computed in the browser from each side's `projected`, `upsetModel()`),
+    *Vs. projection* (points scored vs. ESPN's pre-game projection for the lineup started, plus *Starters who beat it*:
+    the share of individual starts that beat the player's own projection, from each side's `beat: [n, starters]` in
+    `build.py`),
     *Efficiency* (points started vs. best lineup), plus *You vs. autopilot*: each team's real lineups vs. the lineup
     ESPN's pre-game projections would have started from the same roster (IR excluded), with games those calls swung
     (`stats.autopilot`, from each side's `auto` score built in `build_season`).
@@ -108,7 +112,10 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   lineup/draft tiles, your NFL games to watch, byes ahead, full schedule (results, then remaining opponents) and roster
   with ROS ranks, and **Player news**: ESPN's fantasy news blurbs (Rotowire) for your rostered players, fetched
   in the browser from `site.api.espn.com/apis/fantasy/v2/games/ffl/news/players` (last 14 days, 3 per player, "New"
-  since your previous visit on that device). Your team is also highlighted on Standings, Matchups (your game first), Insights tables and the
+  since your previous visit on that device). **Lineup check** under your matchup flags starters who are out, on IR,
+  suspended or on a bye, with a link to your team on ESPN; Byes ahead and Waiver targets link to ESPN's add-players page
+  ("Fix it on ESPN" links, `ESPN_TEAM` / `ESPN_ADD`). **Customize** reorders or hides the sections (per device,
+  `lhq:me-layout`; on a computer Schedule stays in the right column). Your team is also highlighted on Standings, Matchups (your game first), Insights tables and the
   watch guide. Works in past seasons too (member ids are ESPN accounts). On phones Settings moves to a gear in the header.
 - **This week in league history** (Weekly matchups): a swipeable strip of the same week's notable moments from the
   other seasons (top/low score, closest game, blowout, best player game), with all-time ranks; each card opens that
@@ -227,6 +234,20 @@ Then put the Worker's URL in `site/config.js` (`liveApi`). When the ESPN cookies
 list in `site/app.js`. Add new features at the top of that list. The header button shows a dot until the latest
 day has been seen on that device (`lhq:wn-seen`).
 
+## Glossary
+
+`#/glossary` (linked from every page's footer): every stat and term grouped by area, searchable, each with where it
+lives. Sections whose title is listed in a glossary entry get an "In the glossary ›" link in their ⓘ explanation
+(`GLOSSARY` / `GLOSSARY_BY_TITLE` in `site/app.js`).
+
+## Reactions
+
+One-tap emoji (🔥 😂 💀 👏 🗑️) under each matchup card, each big play and the weekly high / low score (current
+season). You react as your team with the games' name + PIN; tap again to take it back, hold (or hover) for who reacted.
+Worker `GET /react?week=N`, `POST /react/toggle {member, pin, week, item, emoji}`; one KV value per week,
+`react:<season>:<week>` = `{ item: { emoji: [member ids] } }` with items `g:<matchup id>`, `p:<player id>-<time>`,
+`hi:top`, `lo:low`. The page fetches a week's reactions at most once a minute.
+
 ## Games tab
 
 `#/games`: Pick'em (moved from Matchups; old `#/matchups/pickem` links redirect) and **League trivia**
@@ -260,6 +281,24 @@ lineup). Change the price/cap rules with `P3_PER_PT`, `P3_MIN_PROJ` and `P3_CAP_
 the same game, but only players unrostered in this league (free agents or on waivers), projected 3+. The list is
 re-checked with every re-price: newly dropped players join, players picked up leave (they stay in lineups that have them). Same $400/point prices; the cap is 80% of the priciest free-agent QB + RB + WR + TE.
 Its own KV keys (`p3fa-slate`, `p3fa-entries`, `p3fa-season`) and leaderboard (`P3_MODES` in the worker).
+
+## Bullseye
+
+Games → Bullseye (`#/games/bullseye`, worker `/bull`, `/bull/mine`, `/bull/save`). Each week has a target from 40.0 to
+70.0 (seeded by season + week). Pick 1-5 players from Pick 4's player list; your score is their real points. Closest
+to the target without going over wins; over is a bust (ranked after everyone under, by how little they went over);
+within 1 point is a bullseye. Each player locks at his kickoff and others' players stay hidden until then. KV
+`bull-entries:<season>:<week>` (`{sp, target, e: {member: {picks}}}`), finished weeks scored once into
+`bull-season:<season>`. Leaderboard: weeks won, then bullseyes, then average miss.
+
+## Rank 'em
+
+Games → Rank 'em (`#/games/rankem`, worker `/rank`, `/rank/mine`, `/rank/save`). Each week one position (QB, RB, WR, TE
+in turn by week number): 5 players picked from a run of 8 neighbours by ESPN projection (top 16 QB/TE, top 30 RB/WR),
+all playing Sunday or later, frozen in KV `rank-slate:<season>:<week>`. Rank them by points; everything locks at the
+first of their kickoffs and nobody's order shows until then. 3 points per exact spot, 1 for one spot off (tied players
+share their spots), 15 max; the page also shows what ESPN's projected order would have scored. KV
+`rank-entries:<season>:<week>`, `rank-season:<season>`.
 
 ## Weekly pick'em
 
