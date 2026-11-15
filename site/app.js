@@ -2517,11 +2517,10 @@
   }
 
   // ---------------------------------------------------------------- trades
-  const TRADE_TABS = [["", "Trade history"], ["block", "Trade block"], ["ideas", "Trade ideas"], ["compare", "Compare players"]];
+  const TRADE_TABS = [["", "Trade history"], ["block", "Trade block"], ["compare", "Compare players"]];
 
   function renderTrades() {
     if (state.sub === "block") return renderBlock();
-    if (state.sub === "ideas") return renderTradeIdeas();
     if (state.sub === "compare") return renderCompare();
     const swap = '<div class="swap"><svg width="22" height="22" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>';
     const body = D.trades.map(tr => {
@@ -2551,71 +2550,7 @@
       <div class="trades">${body || '<div class="empty">No trades this season.</div>'}</div>`;
   }
 
-  // ---------------------------------------------------------------- trade ideas (matchmaker)
-  // Pairs teams whose rosters fit: each has a spare player (beyond its starters) at a position where the other's
-  // starter is weak, and the two spares are worth about the same rest-of-season. Both lineups get better.
   const TRADE_POS = ["QB", "RB", "WR", "TE"];
-  function tradeIdeas(minGain = 10, tol = 0.25) {
-    if (!L.isCurrent || L.over) return null;
-    const spots = {};
-    (D.settings.slots || []).forEach(x => { if (TRADE_POS.includes(x.slot)) spots[x.slot] = x.count; });
-    const healthy = p => p.ros > 0 && p.injury !== "INJURY_RESERVE" && p.slot !== "IR";
-    const depth = {};
-    D.teams.forEach(t => {
-      depth[t.id] = {};
-      TRADE_POS.forEach(pos => {
-        const list = t.roster.filter(p => p.pos === pos && healthy(p)).sort((a, b) => b.ros - a.ros);
-        const n = spots[pos] || 1;
-        depth[t.id][pos] = { weakest: list[n - 1] || null, weakestRos: list[n - 1] ? list[n - 1].ros : 0, spares: list.slice(n, n + 2) };
-      });
-    });
-    const deals = [];
-    for (const a of D.teams) for (const b of D.teams) {
-      if (a.id >= b.id) continue;
-      let best = null;
-      for (const x of TRADE_POS) for (const y of TRADE_POS) {
-        if (x === y) continue;
-        for (const pa of depth[a.id][x].spares) for (const pb of depth[b.id][y].spares) {
-          const gainB = pa.ros - depth[b.id][x].weakestRos, gainA = pb.ros - depth[a.id][y].weakestRos;
-          if (gainA < minGain || gainB < minGain) continue;              // both starting lineups must improve
-          if (Math.abs(pa.ros - pb.ros) > tol * Math.max(pa.ros, pb.ros)) continue; // roughly even value
-          const score = Math.min(gainA, gainB);
-          if (!best || score > best.score) best = { a, b, pa, pb, x, y, gainA, gainB, score,
-            outA: depth[a.id][y].weakest, outB: depth[b.id][x].weakest };
-        }
-      }
-      if (best) deals.push(best);
-    }
-    return deals.sort((p, q) => q.score - p.score);
-  }
-  function renderTradeIdeas() {
-    const head = `<div class="section-head"><div><h1>Trade ideas</h1>${expl("Teams whose rosters fit, with a swap that makes both lineups better.", "For every pair of teams: one has a spare player (beyond its starters) at a position where the other team's weakest starter is much worse, and the other way around. The two players are worth about the same rest-of-season (ESPN's projected points, within 25%), and each one would beat the starter he replaces by 10+ points. Injured-reserve players aren't included. These are ideas, not verdicts: needs, byes and the playoff schedule still matter.")}</div></div>${subnav("trades", TRADE_TABS, "ideas")}`;
-    const deals = tradeIdeas();
-    if (!deals) { main.innerHTML = head + `<div class="empty">Trade ideas are for the current season, while trades are still open.</div>`; return; }
-    const deadline = D.settings.tradeDeadline ? new Date(D.settings.tradeDeadline) : null;
-    const closed = deadline && Date.now() > deadline.getTime();
-    const pl = p => `<span class="slot ${esc(p.pos)}">${esc(p.pos)}</span> <b>${esc(p.name)}</b> <span class="muted">${esc(p.team)} · ${p.ros.toFixed(0)} ROS</span>`;
-    const card = d => {
-      const side = (t, gets, gain, out) => `<div class="ti-side${isMine(t) ? " mine" : ""}"><div class="mini-team">${logo(t)}<span><div>${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span></div>
-        <div class="ti-gets">Gets ${pl(gets)}</div>
-        <div class="team-mgr">Replaces ${out ? `${esc(out.name)} (${out.ros.toFixed(0)} ROS)` : "an empty spot"} · <b class="pos">+${gain.toFixed(0)}</b> ROS pts</div></div>`;
-      return `<article class="ti-card">${side(d.a, d.pb, d.gainA, d.outA)}<div class="ti-swap" aria-hidden="true">⇄</div>${side(d.b, d.pa, d.gainB, d.outB)}
-        <a class="ti-cmp wk-link" href="${href("trades", { a: d.pa.id, b: d.pb.id }, "compare")}">Compare these two ›</a></article>`;
-    };
-    const me = D.teams.find(t => isMine(t));
-    // your own partners: a looser bar (5+ points each way, values within 35%) so there's usually something to look at
-    const mine = me ? tradeIdeas(5, 0.35).filter(d => d.a === me || d.b === me).slice(0, 3) : [];
-    const top = deals.slice(0, 8);
-    main.innerHTML = head + (closed ? `<p class="note live">The trade deadline (${deadline.toLocaleDateString([], { month: "short", day: "numeric" })}) has passed; these are for fun.</p>` : deadline ? `<p class="note">Trade deadline: ${deadline.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}.</p>` : "") +
-      (me ? section("Your best trade partners", "Same idea with a slightly looser bar: both lineups gain 5+ points.", mine.length ? `<div class="ti-list">${mine.map(card).join("")}</div>` : `<div class="empty">No clean one-for-one fits for your roster right now.${(() => {
-        const spare = TRADE_POS.map(pos => {
-          const n = ((D.settings.slots || []).find(x => x.slot === pos) || {}).count || 1;
-          return me.roster.filter(p => p.pos === pos && p.ros > 0 && p.slot !== "IR" && p.injury !== "INJURY_RESERVE").sort((a, b) => b.ros - a.ros)[n];
-        }).filter(Boolean).sort((a, b) => b.ros - a.ros).slice(0, 2);
-        return spare.length ? ` Your best spare players (${spare.map(p => `${esc(p.name)}, ${p.ros.toFixed(0)} ROS`).join("; ")}) wouldn't start for the teams that need them, so a fair swap would take a 2-for-1 or a bigger name.` : "";
-      })()}</div>`) : "") +
-      section("Best fits in the league", me ? "" : "Tip: claim your team on My team to see your own best partners first.", top.length ? `<div class="ti-list">${top.map(card).join("")}</div>` : `<div class="empty">No clean fits right now.</div>`);
-  }
 
   // ---------------------------------------------------------------- compare players
   // Any two players who've been on a league roster this season, side by side under the league's scoring. Weekly
@@ -3558,7 +3493,6 @@
     ["2026-11-10", [
       ["Waiver targets", "My team", "Free agents that would improve your lineup next week and for the rest of the season, the easiest drop, and fill-ins for short-handed weeks.", "#/myteam"],
       ["Kicker & defense alerts", "My team → Waiver targets", "Warnings when your kicker or defense has a bye, with the best replacements, and streams only when one is clearly better.", "#/myteam"],
-      ["Trade ideas", "Trades → Trade ideas", "Trades that would help both teams, matched from each roster's surplus and needs.", "#/trades/ideas"],
       ["Compare players", "Trades → Compare players", "Any two players side by side, week by week, under your league's scoring.", "#/trades/compare"],
       ["Personal record books", "History → Record book, My team", "Pick any manager to see their own bests and worsts; your top marks show as tiles on My team.", "#/history/records"],
       ["Player history", "History → Player history", "Search any player to see every league team he's been on, how he got there and how he left.", "#/history/players"],
@@ -3658,7 +3592,6 @@
     ["My team & trades", [
       ["waivers", "Waiver targets", "My team", "#/myteam", "Free agents that would improve your best lineup next week or over the rest of the season (2+ weeks), using ESPN's projections, with the easiest drop. Kicker and defense streams only when clearly better.", ["Waiver targets"]],
       ["ros", "ROS rank and points", "My team → Roster", "#/myteam", "Rest-of-season position rank and projected points from ESPN.", []],
-      ["tradeideas", "Trade ideas", "Trades → Trade ideas", "#/trades/ideas", "Trades that would help both teams, matched from one roster's surplus to another's needs.", ["Your best trade partners", "Best fits in the league"]],
       ["block", "Trade block", "Trades → Trade block", "#/trades/block", "Players each team is shopping and the positions it needs, with possible fits between teams.", ["Listings", "Possible fits"]],
     ]],
     ["Matchups", [
