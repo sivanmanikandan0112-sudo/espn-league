@@ -105,6 +105,11 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   (`0-59 * * * *`, the same minute as the feed but a separate run). Subscriptions are in KV `push:subs` (max 36);
   state in `push:game:*`, `push:sent:*`, `push:tx`. Needs the `VAPID_PRIVATE` secret: run `worker/set-push-key.sh`
   once. iPhone/iPad: only from the Home Screen app (Share → Add to Home Screen).
+- **Trash talk** (under every matchup card, weekly recap and trade, current season): short comment threads posted as
+  your team with name + PIN (max 280 characters, one post per 10 seconds). Stored per week in KV `talk:<season>:w<N>`
+  (matchups `g:<id>`, recap `r:<week>`) and `talk:<season>:trades` (`t:<id>`), last 100 per thread. The author or the
+  commissioner (ADMIN_MEMBERS) can delete a post. A post on a matchup in the current week alerts both teams' devices
+  (alert kind `talk`, on by default). Posts show in League pulse.
 - **Personal record books**: History → Record book has a picker (whole league or any member); a member's book lists
   their highest/lowest scores, biggest wins, worst losses, closest games, longest win streaks and best player/bench
   games across every season. My team shows the #1 of each as tiles linking to the box score. Built by
@@ -295,7 +300,7 @@ picked. One KV value per season, `pulse:<season>`, the last 40 events; the same 
 
 ## Compact mode
 
-A per-device display setting (`lhq:compact`, the `compact` class on `<html>`): the Compact button in the header or
+A per-device display setting (`lhq:compact`, the `compact` class on `<html>`): the switch in
 Settings → Display. Tighter table rows, matchup cards, tiles, game lists and spacing, and the one-line explanation
 with ⓘ on every screen size. Tap targets stay at least 36 px. Styles are the `.compact` rules at the end of
 `site/style.css`.

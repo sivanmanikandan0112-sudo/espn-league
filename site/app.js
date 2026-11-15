@@ -70,10 +70,6 @@
     document.querySelectorAll("[data-compact]").forEach(b => { b.setAttribute("aria-pressed", on); if (b.type === "checkbox") b.checked = on; });
   }
   setCompact(!!store.get("compact", false));
-  document.addEventListener("click", e => {
-    const b = e.target.closest("button[data-compact]");
-    if (b) setCompact(!document.documentElement.classList.contains("compact"));
-  });
   document.addEventListener("change", e => {
     if (e.target.matches && e.target.matches("input[data-compact]")) setCompact(e.target.checked);
   });
@@ -149,6 +145,7 @@
     else if (tab === "myteam") renderMyTeam();
     else renderStandings();
     rxHydrate();
+    talkHydrate();
     pulseLoad();
   }
 
@@ -370,6 +367,15 @@
         link = "#/";
       }
       what = `reacted ${esc(e.e)} to ${target}`;
+    } else if (e.k === "talk") {
+      const [kind, id] = String(e.i || "").split(":");
+      if (kind === "g") {
+        const g = cur && (cur.weeks.find(w => w.week === e.w) || { games: [] }).games.find(x => String(x.id) === id);
+        const nm = t => esc(((cur.teams.find(x => x.id === t) || {}).name || "?"));
+        what = `talked trash on ${g && g.sides.length === 2 ? `${nm(g.sides[0].team)} vs. ${nm(g.sides[1].team)}` : `a week ${e.w} matchup`}`;
+        link = href("matchups", { week: e.w });
+      } else if (kind === "r") { what = `commented on the week ${id} recap`; link = href("matchups", { week: id }); }
+      else { what = "commented on a trade"; link = "#/trades"; }
     } else {
       [what, link] = {
         pickem: [`made pick'em picks for week ${e.w}`, "#/games"],
@@ -388,7 +394,7 @@
   const pulsePaint = () => document.querySelectorAll(".pulse").forEach(b => { b.innerHTML = pulseInner(); });
   function pulseInner() {
     if (!PULSE.events) return '<p class="note">Loading…</p>';
-    if (!PULSE.events.length) return '<p class="note">Nothing yet. Reactions, game entries and trade block updates show up here.</p>';
+    if (!PULSE.events.length) return '<p class="note">Nothing yet. Reactions, comments, game entries and trade block updates show up here.</p>';
     const list = PULSE.all ? PULSE.events : PULSE.events.slice(0, PULSE_SHOWN);
     return list.map(pulseLine).join("") + (PULSE.events.length > PULSE_SHOWN
       ? `<button type="button" class="linkbtn pulse-more" data-pulse-more>${PULSE.all ? "Show less" : `See all (${PULSE.events.length})`}</button>` : "");
@@ -698,7 +704,7 @@
     if (r.topPlayer) items.push(item("Player of the week", esc(r.topPlayer.name), `${esc(r.topPlayer.pos)} · ${fmt(r.topPlayer.pts)} pts for ${tn(r.topPlayer.team)}`));
     if (r.mostLeft && r.mostLeft.pts > 0) items.push(item("Most left on the bench", tn(r.mostLeft.team), `${fmt(r.mostLeft.pts)} pts better lineup available`));
     if (r.benchStar && r.benchStar.pts > 0) items.push(item("Best bench performance", esc(r.benchStar.name), `${fmt(r.benchStar.pts)} pts on ${tn(r.benchStar.team)}'s bench`));
-    return `<section class="recap"><div class="section-head"><h2>Week ${w} recap</h2><button type="button" class="share-btn" data-share="recap" data-week="${w}">${SHARE_ICON}Share</button></div><div class="recap-grid">${items.join("")}</div></section>`;
+    return `<section class="recap"><div class="section-head"><h2>Week ${w} recap</h2><button type="button" class="share-btn" data-share="recap" data-week="${w}">${SHARE_ICON}Share</button></div><div class="recap-grid">${items.join("")}</div>${talkRow("w" + w, "r:" + w)}</section>`;
   }
 
   const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"]];
@@ -956,7 +962,7 @@
         <button class="game-btn" data-game="${g.id}" aria-expanded="${isOpen}">${row(a)}${row(b)}
           ${isOpen ? wpBar : ""}${mondayMath(g, wk) || ""}<div class="game-foot"><span>${tier ? tier + " · " : ""}${liveG ? "In progress" : "Final"}</span><span>${isOpen ? "Hide box score ↑" : "Box score ↓"}</span></div>
         </button>
-        ${a && b ? rxRow(w, "g:" + g.id) : ""}
+        ${a && b ? rxRow(w, "g:" + g.id) + talkRow("w" + w, "g:" + g.id) : ""}
         ${isOpen && a && b ? (() => {
           const showB = focusTeam != null && b.team === focusTeam ? 1 : 0;
           return `<div class="box-actions"><button type="button" class="share-btn" data-share="game" data-week="${w}" data-game="${g.id}">${SHARE_ICON}Share ${wk.final ? "result" : "score"}</button></div>
@@ -2013,6 +2019,102 @@
     if (e.key === "Enter" && e.target.matches && e.target.matches("[data-rx-pin]")) { e.preventDefault(); e.target.closest(".rx").querySelector("[data-rx-go]").click(); }
   });
 
+
+  // ---------------------------------------------------------------- trash talk
+  // A short comment thread under each matchup, weekly recap and trade (current season), posted as your team with
+  // name + PIN like reactions. Threads are fetched per week (matchups + recap) or for all trades, at most once a minute.
+  const TK = { scopes: {}, open: null, msg: "", busy: false, drafts: {}, admins: null };
+  const TALK_MAX = 280;
+  function talkRow(scope, item) {
+    if (!rxOn()) return "";
+    return `<div class="tk" data-tk-scope="${esc(scope)}" data-tk-item="${esc(item)}">${talkInner(scope, item)}</div>`;
+  }
+  function talkInner(scope, item) {
+    const posts = ((TK.scopes[scope] || {}).items || {})[item] || [];
+    const key = scope + "|" + item, open = TK.open === key;
+    const n = posts.length;
+    const last = posts[n - 1];
+    const toggle = `<button type="button" class="tk-toggle" data-tk-toggle aria-expanded="${open}">💬 ${n ? `${n} comment${n === 1 ? "" : "s"}` : "Talk trash"}${open ? " ↑" : ""}</button>`;
+    if (!open) return toggle + (last ? `<span class="tk-peek"><b>${esc(nameOfMember(last.m))}:</b> ${esc(last.x)}</span>` : "");
+    const me = PK.member, admin = (TK.admins || []).includes(me);
+    const list = posts.map(p => `<li class="tk-post${p.m === me ? " mine" : ""}"><div class="tk-meta"><b>${esc(nameOfMember(p.m))}</b><span class="team-mgr">${pulseAgo(p.t)}</span>
+      ${p.m === me || admin ? `<button type="button" class="tk-del" data-tk-del="${esc(p.id)}" aria-label="Delete this comment" title="Delete">×</button>` : ""}</div><p>${esc(p.x)}</p></li>`).join("");
+    const draft = TK.drafts[key] || "";
+    const compose = PK.member && PK.pin
+      ? `<div class="tk-compose"><textarea data-tk-text rows="2" maxlength="${TALK_MAX}" placeholder="Say something, ${esc(nameOfMember(me))}…" aria-label="Your comment">${esc(draft)}</textarea>
+          <div class="tk-row"><span class="team-mgr tk-count">${[...draft].length}/${TALK_MAX}</span><button type="button" class="cta tk-send" data-tk-send${TK.busy ? " disabled" : ""}>Post</button></div></div>`
+      : `<div class="tk-sign"><span class="team-mgr">Post as your team:</span><select data-tk-member aria-label="Your name"><option value="">Your name</option>${pkMembers().map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
+          <input data-tk-pin type="password" inputmode="numeric" maxlength="4" placeholder="PIN" aria-label="PIN" autocomplete="off"><button type="button" class="linkbtn" data-tk-go>OK</button></div>`;
+    return toggle + `<ul class="tk-list">${list || '<li class="team-mgr tk-empty">No comments yet. Start it.</li>'}</ul>${compose}${TK.msg ? `<p class="tk-msg" role="status">${esc(TK.msg)}</p>` : ""}`;
+  }
+  function talkPaint(scope, item) {
+    document.querySelectorAll(`.tk[data-tk-scope="${scope}"]`).forEach(el => { if (!item || el.dataset.tkItem === item) el.innerHTML = talkInner(scope, el.dataset.tkItem); });
+  }
+  async function talkHydrate() {
+    if (!rxOn()) return;
+    const scopes = [...new Set([...document.querySelectorAll(".tk")].map(el => el.dataset.tkScope))];
+    if (scopes.length && TK.admins == null) { TK.admins = []; pkApi("/feedback").then(r => { TK.admins = (r && r.admins) || []; }).catch(() => {}); }
+    for (const sc of scopes) {
+      const have = TK.scopes[sc];
+      if (have && Date.now() - have.at < 60000) { talkPaint(sc); continue; }
+      const r = await pkApi(`/talk?scope=${sc}`).catch(() => null);
+      if (r && !r.error) TK.scopes[sc] = { at: Date.now(), items: r.items || {} };
+      talkPaint(sc);
+    }
+  }
+  async function talkSend(scope, item, body, path) {
+    TK.busy = true; TK.msg = ""; talkPaint(scope, item);
+    const r = await pkApi(path, { member: PK.member, pin: PK.pin, scope, item, ...body });
+    TK.busy = false;
+    if (r.error) { TK.msg = r.error; if (/PIN/.test(r.error)) PK.pin = ""; }
+    else { TK.scopes[scope] = { at: Date.now(), items: r.items || {} }; if (path === "/talk/post") delete TK.drafts[scope + "|" + item]; }
+    talkPaint(scope, item);
+    if (!r.error && path === "/talk/post") { const t = document.querySelector(`.tk[data-tk-scope="${scope}"][data-tk-item="${item}"] [data-tk-text]`); if (t) t.focus(); }
+  }
+  document.addEventListener("click", async e => {
+    const box = e.target.closest(".tk");
+    if (!box) return;
+    e.stopPropagation(); // keep a tap here from also opening the matchup around it
+    if (e.target.closest("select, input, textarea")) return;
+    e.preventDefault();
+    const scope = box.dataset.tkScope, item = box.dataset.tkItem, key = scope + "|" + item;
+    if (e.target.closest("[data-tk-toggle]")) {
+      const prev = TK.open;
+      TK.open = TK.open === key ? null : key; TK.msg = "";
+      if (prev && prev !== key) { const [ps, pi] = [prev.slice(0, prev.indexOf("|")), prev.slice(prev.indexOf("|") + 1)]; talkPaint(ps, pi); }
+      talkPaint(scope, item);
+      if (TK.open) { const t = box.querySelector("[data-tk-text]"); if (t) t.focus(); }
+      return;
+    }
+    if (e.target.closest("[data-tk-go]")) {
+      const member = box.querySelector("[data-tk-member]").value, pin = box.querySelector("[data-tk-pin]").value.trim();
+      if (!member || !/^\d{4}$/.test(pin)) { TK.msg = "Choose your name and enter your 4-digit PIN."; return talkPaint(scope, item); }
+      const r = await pkApi("/pickem/claim", { member, pin });
+      if (r.error) { TK.msg = r.error; return talkPaint(scope, item); }
+      PK.member = member; PK.pin = pin; store.set("pk-member", member);
+      if (store.get("pk-pin", "")) store.set("pk-pin", pin);
+      TK.msg = ""; return talkPaint(scope, item);
+    }
+    if (e.target.closest("[data-tk-send]")) {
+      const text = (TK.drafts[key] || "").trim();
+      if (!text) { TK.msg = "Write something first."; return talkPaint(scope, item); }
+      return talkSend(scope, item, { text }, "/talk/post");
+    }
+    const del = e.target.closest("[data-tk-del]");
+    if (del && confirm("Delete this comment?")) talkSend(scope, item, { id: del.dataset.tkDel }, "/talk/delete");
+  }, true);
+  document.addEventListener("input", e => {
+    if (!e.target.matches || !e.target.matches("[data-tk-text]")) return;
+    const box = e.target.closest(".tk"), key = box.dataset.tkScope + "|" + box.dataset.tkItem;
+    TK.drafts[key] = e.target.value;
+    const c = box.querySelector(".tk-count"); if (c) c.textContent = `${[...e.target.value].length}/${TALK_MAX}`;
+  });
+  document.addEventListener("keydown", e => {
+    if (!e.target.matches) return;
+    if (e.key === "Enter" && e.target.matches("[data-tk-pin]")) { e.preventDefault(); e.target.closest(".tk").querySelector("[data-tk-go]").click(); }
+    if (e.key === "Enter" && !e.shiftKey && e.target.matches("[data-tk-text]")) { e.preventDefault(); e.target.closest(".tk").querySelector("[data-tk-send]").click(); }
+  });
+
   async function pkContinue() {
     const member = document.getElementById("pk-member").value;
     const pin = document.getElementById("pk-pin").value.trim();
@@ -2542,7 +2644,7 @@
       const date = tr.date ? new Date(tr.date).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
       const when = [date, tr.week ? "Week " + tr.week : ""].filter(Boolean).join(" · ");
       return `<article class="trade"><div class="trade-head"><span>${when}</span><span class="trade-head-r">${tr.sides.reduce((n, s) => n + s.gets.length, 0)} players<button type="button" class="share-btn sm" data-share="trade" data-trade="${esc(tr.id)}" aria-label="Share this trade">${SHARE_ICON}</button></span></div>
-        <div class="trade-body">${sides.join(swap)}</div><div class="verdict">${verdict}</div></article>`;
+        <div class="trade-body">${sides.join(swap)}</div><div class="verdict">${verdict}</div>${talkRow("trades", "t:" + String(tr.id).replace(/[^\w.-]/g, "").slice(0, 40))}</article>`;
     }).join("");
     main.innerHTML = `<div class="section-head"><div><h1>Trade history <span class="pill">${D.trades.length} trades</span></h1>
         ${expl(`Every ${L.season} deal, graded by points scored in the new team's lineup.`, `Every deal that went through in ${L.season}, newest first, graded by points the received players scored in the new team's starting lineup for as long as they stayed. Bench points don't count: a trade only pays off if you play them.`)}</div></div>
@@ -3458,6 +3560,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-14", [
+      ["Trash talk", "Matchups, recaps, Trades", "Comment threads under every matchup, weekly recap and trade, posted as your team. Get an alert when someone posts on your matchup.", "#/matchups"],
       ["Game-day alerts", "Settings → Alerts", "Phone and browser notifications for lead changes, close finishes, final results, big plays, starters ruled out before kickoff, waiver results and trades. Pick which ones you want.", "#/settings"],
       ["Seed odds", "Insights → Playoff race", "Every team's chance of finishing at each seed, 1 through 12.", "#/insights/race?at=seeds"],
       ["Big plays: season", "Matchups → Big plays → Season", "Big plays added up by team and player, plus the biggest single plays of the season.", "#/matchups/plays?view=season"],
@@ -3475,7 +3578,7 @@
       ["Fix it on ESPN", "My team", "A lineup check under your matchup, plus buttons that open the exact ESPN page to fix a lineup or claim a player.", "#/myteam"],
       ["Glossary", "Footer, every ⓘ", "Every stat and term on the site in one searchable page.", "#/glossary"],
       ["League pulse", "Standings", "What people have been up to on the site: reactions, game entries and trade block updates (never anyone's picks).", "#/"],
-      ["Compact mode", "Header, Settings", "Tighter tables, cards and spacing so more fits on screen, with one-line explanations. Saved on your device.", "#/settings"],
+      ["Compact mode", "Settings → Display", "Tighter tables, cards and spacing so more fits on screen, with one-line explanations. Saved on your device.", "#/settings"],
     ]],
     ["2026-11-13", [
       ["Pick 4 prices follow the news", "Games → Pick 4", "Prices update every 30 minutes with ESPN's projections and injury news (Q / D / OUT tags, ▲/▼ since the week opened). Players already in your lineup keep the price you paid; the waiver wire list updates as players are dropped and picked up.", "#/games/pick4"],
@@ -3809,7 +3912,7 @@
 
     const compactOn = document.documentElement.classList.contains("compact");
     const display = `<section class="panel set-display"><label class="set-switch"><input type="checkbox" data-compact${compactOn ? " checked" : ""}>
-      <span><b>Compact mode</b><span class="team-mgr">Tighter tables, cards and spacing so more fits on screen, with one-line explanations (tap ⓘ for the rest). Saved on this device. The Compact button in the header does the same.</span></span></label></section>`;
+      <span><b>Compact mode</b><span class="team-mgr">Tighter tables, cards and spacing so more fits on screen, with one-line explanations (tap ⓘ for the rest). Saved on this device.</span></span></label></section>`;
     main.innerHTML = `<div class="section-head"><div><h1>League settings</h1><p class="sub">${L.season} season · straight from ESPN · updated ${esc(ago(D.updated))}</p></div></div>
       <h2 class="set-h">Display</h2>${display}
       <h2 class="set-h" id="alerts">Alerts</h2><section class="panel set-alerts" id="alerts-panel"></section>
@@ -3826,7 +3929,8 @@
   const ALERT_GROUPS = [
     ["Your matchup", [["lead", "Lead change", "When the lead in your matchup changes hands (at most once every 10 minutes)."],
       ["wire", "Down to the wire", "When your matchup comes down to the last few players, with who's left on each side."],
-      ["final", "Final result", "Win or loss, the final score and your new record."]]],
+      ["final", "Final result", "Win or loss, the final score and your new record."],
+      ["talk", "Trash talk on your matchup", "When someone posts a comment on your matchup this week."]]],
     ["Big plays", [["plays", "Your starters' big plays", "Touchdowns, 40+ yard plays, 50+ yard field goals and defensive scores."],
       ["playsAgainst", "Big plays against you", "The same plays by your opponent's starters."],
       ["playsAll", "Every big play in the league", "All of them, for every team. Busy on Sundays."]]],
@@ -3835,7 +3939,7 @@
       ["trades", "Trades involving your team", "When one goes through."], ["tradesAll", "Any league trade", "Every trade in the league."]]],
     ["Site games", [["picks", "Picks reminder", "3 hours before Pick'em locks and before Sunday's games, if you haven't made your picks."]]],
   ];
-  const ALERT_DEFAULTS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true, waivers: true, trades: true, tradesAll: false, picks: false };
+  const ALERT_DEFAULTS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true, waivers: true, trades: true, tradesAll: false, picks: false, talk: true };
   const AL = { key: undefined, sub: null, busy: false, msg: "", err: false };
   const alertCfg = () => {
     const c = store.get("alerts", {}) || {};

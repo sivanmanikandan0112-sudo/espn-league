@@ -968,6 +968,75 @@ async function handleReact(req, env, url) {
   return json(env, req, { ok: true, week, items: R });
 }
 
+
+// ---------------------------------------------------------------- trash talk
+// Short comment threads under matchups, weekly recaps and trades (current season), posted as your team with
+// name + PIN. One KV value per week ("w10": matchups and that week's recap) plus one for trades. The author or the
+// commissioner can delete a post. Posts on a matchup this week alert both teams (Settings → Alerts, "talk").
+const TALK_MAX = 280, TALK_KEEP = 100, TALK_GAP_MS = 10e3;
+async function handleTalk(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Comment storage isn't set up yet." }, 503);
+  const st = await pickemWeek(env);
+  const body = req.method === "POST" ? await postBody(req) : null;
+  if (req.method === "POST" && !body) return json(env, req, { error: "Bad request" }, 400);
+  const scope = String(body ? body.scope : url.searchParams.get("scope") || "");
+  const m = scope.match(/^w(\d{1,2})$/);
+  if (!(scope === "trades" || (m && +m[1] >= 1 && +m[1] <= Math.max(st.week, 1)))) return json(env, req, { error: "No such thread." }, 400);
+  const key = `talk:${st.season}:${scope}`;
+  if (req.method === "GET" && url.pathname === "/talk") return json(env, req, { season: st.season, scope, items: (await env.PICKEM.get(key, "json")) || {} });
+  if (req.method !== "POST") return json(env, req, { error: "Not found" }, 404);
+  const member = String(body.member || ""), item = String(body.item || "");
+  if (!st.members.includes(member)) return json(env, req, { error: "That name isn't in the league." }, 400);
+  if (!/^(g|r|t):[\w.-]{1,40}$/.test(item) || (scope === "trades") !== item.startsWith("t:")) return json(env, req, { error: "Bad thread." }, 400);
+  const err = await checkPin(env, st.season, member, body.pin);
+  if (err) return json(env, req, { error: err }, 403);
+  const T = (await env.PICKEM.get(key, "json")) || {};
+  const list = T[item] = T[item] || [];
+  if (url.pathname === "/talk/post") {
+    const text = String(body.text || "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+    if (!text) return json(env, req, { error: "Write something first." }, 400);
+    if ([...text].length > TALK_MAX) return json(env, req, { error: `Keep it under ${TALK_MAX} characters.` }, 400);
+    const now = Date.now();
+    if (Object.values(T).some(l => l.some(p => p.m === member && now - p.t < TALK_GAP_MS))) return json(env, req, { error: "Slow down: one post every 10 seconds." }, 429);
+    const post = { id: crypto.randomUUID().slice(0, 8), m: member, x: text, t: now };
+    list.push(post);
+    T[item] = list.slice(-TALK_KEEP);
+    await env.PICKEM.put(key, JSON.stringify(T));
+    await pulse(env, st.season, { m: member, k: "talk", x: `${scope}|${item}|${post.id}`, w: m ? +m[1] : null, i: item });
+    if (m && +m[1] === st.week && item.startsWith("g:")) {
+      try { await talkAlert(env, st, item.slice(2), member, text); } catch (e) { console.log("talk alert failed", String(e)); }
+    }
+    return json(env, req, { ok: true, items: T });
+  }
+  if (url.pathname === "/talk/delete") {
+    const i = list.findIndex(p => p.id === String(body.id || ""));
+    if (i < 0) return json(env, req, { ok: true, items: T });
+    if (list[i].m !== member && !admins(env).includes(member)) return json(env, req, { error: "Only the author or the commissioner can delete this." }, 403);
+    const [gone] = list.splice(i, 1);
+    if (!list.length) delete T[item];
+    await env.PICKEM.put(key, JSON.stringify(T));
+    await pulse(env, st.season, { m: gone.m, k: "talk", x: `${scope}|${item}|${gone.id}` }, true);
+    return json(env, req, { ok: true, items: T });
+  }
+  return json(env, req, { error: "Not found" }, 404);
+}
+
+async function talkAlert(env, st, gameId, poster, text) {
+  if (!vapidPublic(env)) return;
+  const g = st.games.find(x => String(x.id) === String(gameId));
+  if (!g) return;
+  const subs = await loadSubs(env);
+  if (!Object.keys(subs).length) return;
+  const info = await teamInfo(env, st.season);
+  const teamOf = {};
+  for (const [id, t] of Object.entries(info.teams)) for (const o of t.owners) teamOf[o] = +id;
+  const from = info.teams[teamOf[poster]];
+  const box = outbox(subs, teamOf);
+  box.add("talk", t => t === g.home || t === g.away, rec => rec.member === poster ? null : {
+    title: `${from ? from.name : "Someone"} on your matchup`, body: `"${text}"`, url: "#/matchups", tag: `talk-${gameId}` });
+  if (box.size()) await box.flush(env, Date.now());
+}
+
 // ---------------------------------------------------------------- live big-play feed
 // Every minute during NFL games, compare each rostered player's scoring with the last snapshot and turn the
 // changes into plays (TDs, field goals, turnovers, defensive plays, big gains). Stored in KV only when a play
@@ -1381,7 +1450,7 @@ export default {
       try { return await handlePick3(req, env, url); }
       catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
     }
-    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact], ["/pulse", handlePulse], ["/graph", handleGraph], ["/plays", handlePlays], ["/feedback", handleFeedback], ["/push", handlePush]]) {
+    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact], ["/pulse", handlePulse], ["/graph", handleGraph], ["/plays", handlePlays], ["/feedback", handleFeedback], ["/push", handlePush], ["/talk", handleTalk]]) {
       if (url.pathname.startsWith(pre)) {
         try { return await fn(req, env, url); }
         catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
@@ -1534,7 +1603,7 @@ async function maybeRebuild(env, now) {
 // minute (several alerts in the same minute are combined). KV is only written when something was sent or changed.
 const ALERT_CRON = "0-59 * * * *";
 const ALERT_KINDS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true,
-  waivers: true, trades: true, tradesAll: false, picks: false };
+  waivers: true, trades: true, tradesAll: false, picks: false, talk: true };
 const SUBS_KEY = "push:subs";
 const SUBS_MAX = 36; // each alert is one request; this keeps a busy minute inside the worker's per-run limit
 const LEAD_GAP_MS = 10 * 60e3;   // at most one lead-change alert per matchup every 10 minutes
@@ -1618,7 +1687,8 @@ function outbox(subs, teamOf) {
     add(kind, who, make) {
       for (const [id, rec] of Object.entries(subs)) {
         const team = teamOf[rec.member];
-        if (team == null || !rec.prefs[kind] || !who(team)) continue;
+        const on = kind in rec.prefs ? rec.prefs[kind] : ALERT_KINDS[kind]; // devices saved before a kind existed get its default
+        if (team == null || !on || !who(team)) continue;
         const m = make(rec, team);
         if (m) (box[id] = box[id] || []).push(m);
       }
