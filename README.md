@@ -258,7 +258,8 @@ and kept only if his official week stats have that kind of play (no more TDs/tur
 
 ## Feedback box
 
-Footer → "Suggest something / report a problem" (`#/feedback`). Ideas and problem reports go to the worker
+The Feedback button in the header (speech bubble; icon-only on phones and mid-size screens), the prompt at the top of
+What's new, or the footer link → "Suggest something" (`#/feedback`). Ideas and problem reports go to the worker
 (`POST /feedback/send`) and into one private KV list, `feedback:inbox` (latest 300). A message carries a name only
 when that member's PIN checks out (signed in to a game on the device, not ticked "anonymously"); otherwise it's
 anonymous. 5 messages per hour per address. Members listed in `ADMIN_MEMBERS` (wrangler.toml) see a Commissioner inbox

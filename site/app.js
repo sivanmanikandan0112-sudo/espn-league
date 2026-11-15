@@ -3524,7 +3524,7 @@
     ["2026-11-14", [
       ["Seed odds", "Insights → Playoff race", "Every team's chance of finishing at each seed, 1 through 12.", "#/insights/race?at=seeds"],
       ["Big plays: season", "Matchups → Big plays → Season", "Big plays added up by team and player, plus the biggest single plays of the season.", "#/matchups/plays?view=season"],
-      ["Feedback box", "Footer", "Send the commissioner an idea or a problem report, privately.", "#/feedback"],
+      ["Feedback box", "Header → Feedback", "Send the commissioner an idea or a problem report, privately.", "#/feedback"],
       ["Guess the graph", "Games → Guess the graph", "Whose season is this? Three bar charts of a player's weekly points every week (Easy, Medium, Hard); pick him from four names.", "#/games/graph"],
       ["Why you moved", "Standings, My team", "What changed a team's power value this week: injuries, roster moves, projection changes. ▲/▼ shows the power rank change.", "#/myteam"],
       ["Nemesis players", "History → Record book, My team", "The NFL players who've scored the most against you, all-time.", "#/history/records"],
@@ -3613,7 +3613,8 @@
     updateWhatsNewDot();
     const day = d => new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
     const n = CHANGELOG.reduce((k, [, items]) => k + items.length, 0);
-    main.innerHTML = `<div class="section-head"><div><h1>What's new</h1><p class="sub">Everything added to the site, newest first (${n} features so far).</p></div></div>` +
+    main.innerHTML = `<div class="section-head"><div><h1>What's new</h1><p class="sub">Everything added to the site, newest first (${n} features so far).</p></div></div>
+      <a class="wn-fb" href="#/feedback"><span><b>Have an idea, or spotted a problem?</b><span class="team-mgr">Tell the commissioner privately. Nobody else sees it.</span></span><span class="wn-fb-go">Suggest something →</span></a>` +
       CHANGELOG.map(([d, items]) => `<section class="wn-day"><h2>${esc(day(d))}${seen && d > seen ? ' <span class="badge new">New</span>' : ""}<span class="team-mgr">${items.length} ${items.length === 1 ? "addition" : "additions"}</span></h2>
         <ul class="wn-list">${items.map(([title, where, desc, link]) => `<li><a href="${esc(link)}">${esc(title)}</a>${where ? `<span class="wn-where">${esc(where)}</span>` : ""}<p>${esc(desc)}</p></li>`).join("")}</ul></section>`).join("");
   }

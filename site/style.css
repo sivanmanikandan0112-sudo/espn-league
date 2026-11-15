@@ -1412,3 +1412,17 @@ section.insight .mv { background: var(--surface); border: 1px solid var(--line);
 .fb-kinds { align-self: flex-start; }
 .fb-kinds button { padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--ink-2); background: none; border: 0; cursor: pointer; }
 .fb-kinds button.active { background: var(--accent); color: var(--accent-ink); }
+
+/* ---- feedback: header button and What's new prompt */
+.hdr-fb { margin-left: 0; }
+.wn-fb { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; margin: 4px 0 8px; padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  color: var(--ink); text-decoration: none; }
+.wn-fb .team-mgr { display: block; }
+.wn-fb-go { font-weight: 700; color: var(--accent); white-space: nowrap; }
+.wn-fb:hover { border-color: var(--accent); }
+/* mid-size screens: Feedback and Compact as icons so the header stays on one line */
+@media (min-width: 641px) and (max-width: 1180px) {
+  .hdr-fb .hdr-new-t, .hdr-compact .hdr-new-t { display: none; }
+  .hdr-fb, .hdr-compact { padding: 7px 9px; }
+}
