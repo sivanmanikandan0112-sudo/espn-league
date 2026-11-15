@@ -2131,15 +2131,15 @@
     ["schedule", "Schedule", ["schedule", "byes"]],
     ["lineups", "Lineups", ["efficiency"]],
     ["draft", "Draft", ["draft"]],
-    ["whatif", "What ifs", ["rules", "nomoves", "swap"]],
+    ["whatif", "What ifs", ["rules", "swap"]],
   ];
-  const INSIGHT_ALIAS = { seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", byes: "schedule", efficiency: "lineups", redraft: "draft", rules: "whatif", nomoves: "whatif", swap: "whatif" };
+  const INSIGHT_ALIAS = { seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", byes: "schedule", efficiency: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
   function insightHas(k) {
     return ({
       form: () => D.teams.some(x => x.form), seeds: () => D.teams.some(x => x.odds && x.odds.seeds), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0,
       byes: () => D.teams.some(x => x.byeCrunch && x.byeCrunch.length), draft: () => !!D.draft,
       redraft: () => !!(D.draft && D.draft.redraft), rules: () => !!(D.rulesLab && D.rulesLab.weeks),
-      swap: () => !!(D.scheduleSwap && D.scheduleSwap.weeks), nomoves: () => !!(D.noMoves && Object.keys(D.noMoves.teams || {}).length),
+      swap: () => !!(D.scheduleSwap && D.scheduleSwap.weeks),
     }[k] || (() => true))();
   }
   function insightTabs() {
@@ -2414,25 +2414,6 @@
         } }] : []),
         { label: "Best week", num: 1, cell: t => t.vsProj.best ? `${signed(t.vsProj.best[1])} <span class="muted">wk ${t.vsProj.best[0]}</span>` : "—" },
         { label: "Worst week", num: 1, cell: t => t.vsProj.worst ? `${signed(t.vsProj.worst[1])} <span class="muted">wk ${t.vsProj.worst[0]}</span>` : "—" },
-      ], rows));
-    },
-
-    nomoves() {
-      const N = D.noMoves;
-      const rows = D.teams.filter(t => N.teams[t.id]).map(t => ({ t, ...N.teams[t.id] })).sort((a, b) => b.wins - a.wins || b.ppw - a.ppw);
-      const avg = rows.reduce((n, r) => n + r.ppw, 0) / rows.length;
-      const rec = r => `${r[0]}–${r[1]}${r[2] ? "–" + r[2] : ""}`;
-      const pl = x => x ? `${esc(x.name)} <span class="muted">${x.pts.toFixed(1)}</span>` : "—";
-      const wins = w => w ? `<b class="${w > 0 ? "pos" : "neg"}">${w > 0 ? "+" : "−"}${Math.abs(w) % 1 ? Math.abs(w).toFixed(1) : Math.abs(w)}</b>` : "0";
-      return section("No-moves universe", { short: `If every team had kept its drafted roster all season (weeks 1–${N.through}): no pickups, drops or trades.`,
-        full: `Each team keeps exactly the players it drafted and starts its best possible lineup from them every week (byes and injuries included: with no moves, nobody fills in). The real schedule is replayed with those scores. To isolate roster moves from start/sit calls, it's compared with the best possible lineups from the rosters teams really had each week. <b>With moves</b> is the record those real rosters would have with best lineups (so it can differ from a team's actual record), <b>No moves</b> the record with the drafted rosters, and <b>Wins from moves</b> the difference; <b>Pts/week vs avg</b> is how many more points per week a team's moves added than the league's average team (${avg.toFixed(1)}), since every team's moves help it cover byes and injuries. <b>Best move</b> is the added player who scored the most in that team's best lineups; <b>Let go</b> is the drafted player, no longer on the team, who'd have scored the most in its no-moves lineups. Regular season, completed weeks.` }, table([
-        { label: "Team", cell: r => teamCell(r.t) },
-        { label: "With moves", num: 1, cell: r => rec(r.best) },
-        { label: "No moves", num: 1, cell: r => rec(r.univ) },
-        { label: "Wins from moves", num: 1, cell: r => wins(r.wins) },
-        { label: "Pts/week vs avg", num: 1, cell: r => signedPts(r.ppw - avg, true) },
-        { label: "Best move", cell: r => pl(r.bestAdd) },
-        { label: "Let go", cell: r => pl(r.missed) },
       ], rows));
     },
 
@@ -3541,7 +3522,6 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-14", [
-      ["No-moves universe", "Insights → What ifs", "The standings if nobody had made a single pickup, drop or trade, and who gained the most wins from their moves.", "#/insights/whatif?at=nomoves"],
       ["Seed odds", "Insights → Playoff race", "Every team's chance of finishing at each seed, 1 through 12.", "#/insights/race?at=seeds"],
       ["Big plays: season", "Matchups → Big plays → Season", "Big plays added up by team and player, plus the biggest single plays of the season.", "#/matchups/plays?view=season"],
       ["Feedback box", "Header → Feedback", "Send the commissioner an idea or a problem report, privately.", "#/feedback"],
@@ -3673,7 +3653,6 @@
       ["rules", "Rules lab", "Insights → What ifs", "#/insights/whatif", "This season's standings under other scoring and formats (PPR, half PPR, standard, a median game, best ball), with the same lineups and real stats rescored.", ["Rules lab"]],
       ["careerluck", "Career luck", "History → Champions & standings", "#/history", "Each manager's regular-season wins minus the wins their all-play record predicts, added up across every season they've played.", ["Career luck"]],
       ["nemesis", "Nemesis players", "History → Record book, My team", "#/history/records", "The NFL players who've scored the most points against you all-time, counting only games where they were in your opponent's starting lineup.", []],
-      ["nomoves", "No-moves universe", "Insights → What ifs", "#/insights/whatif?at=nomoves", "Standings if every team had kept its drafted roster all season with no pickups, drops or trades, starting its best lineup each week. Wins from moves compares that with the best lineups from the rosters teams really had.", ["No-moves universe"]],
       ["swap", "Schedule swap", "Insights → What ifs", "#/insights/whatif?at=swap", "Each team's record if it had played every other team's schedule, using its real weekly scores.", ["Schedule swap"]],
     ]],
     ["My team & trades", [
