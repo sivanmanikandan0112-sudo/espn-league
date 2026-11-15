@@ -442,10 +442,12 @@ def build_season(season, is_current, names):
     data["scheduleSwap"] = stats.schedule_swap(data)
     form = stats.hot_and_cold(data)
     vsproj = stats.vs_projection(data)
+    injuries = stats.injury_toll(data, data["_stats"], {PRO.get(tid, ""): wk for tid, wk in bye_weeks(season).items()})
     auto = stats.autopilot(data)
     for tid, t in teams.items():
         t["form"] = form.get(tid)
         t["vsProj"] = vsproj.get(tid)
+        t["injuries"] = injuries.get(tid, {"lost": 0.0, "missed": 0, "players": []}) if injuries else None
         t["autopilot"] = auto.get(tid)
     add_draft(data, season, actual, slot_counts)
     data["rulesLab"] = stats.rules_lab(data, data["_stats"], slot_counts)

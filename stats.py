@@ -530,6 +530,54 @@ def vs_projection(season):
                 "starters": a["sb"] if a["sb"][1] else None} for t, a in agg.items()}
 
 
+def injury_toll(season, player_stats, byes):
+    """Points each team lost to its players missing games, regular season. A miss is a week a player was on the
+    roster, his NFL team played (not its bye) and his stat line is empty: he didn't record a single stat, which is
+    almost always an injury. It only counts players who were starting for that team: in its starting lineup in at
+    least half the weeks he played for it. Each miss is valued at what he averaged in the games he played before it
+    (on any league team this season), or his average when healthy if he hadn't played yet. Free agents (no NFL team)
+    are left out. byes: NFL team abbreviation -> bye week."""
+    weeks = [w for w in regular_weeks(season) if w.get("final")]
+    played = lambda wk, pid: bool((player_stats.get("%d|%s" % (wk, pid)) or {}).get("r"))
+    log = {}     # pid -> [(week, pts)] games played on any league roster
+    stint = {}   # (team, pid) -> list of (week, slot, played)
+    info = {}
+    for w in weeks:
+        for g in w["games"]:
+            for s in g["sides"]:
+                for p in s["lineup"]:
+                    if p["pos"] == "D/ST":
+                        continue
+                    info[p["id"]] = p
+                    on = played(w["week"], p["id"])
+                    if on:
+                        log.setdefault(p["id"], []).append((w["week"], p["pts"]))
+                    stint.setdefault((s["team"], p["id"]), []).append((w["week"], p["slot"], on))
+    out = {}
+    for (team, pid), rows in stint.items():
+        games = [r for r in rows if r[2]]
+        if not games or sum(1 for r in games if r[1] not in ("BE", "IR")) * 2 < len(games):
+            continue
+        p = info[pid]
+        missed, lost = 0, 0.0
+        for wk, slot, on in rows:
+            if on or p["team"] in ("", "FA") or byes.get(p["team"]) == wk:
+                continue
+            before = [pts for gw, pts in log.get(pid, []) if gw < wk] or [pts for _, pts in log.get(pid, [])]
+            missed += 1
+            lost += sum(before) / len(before)
+        if missed:
+            t = out.setdefault(team, {"lost": 0.0, "missed": 0, "players": []})
+            t["lost"] += lost
+            t["missed"] += missed
+            t["players"].append({"id": pid, "name": p["name"], "pos": p["pos"], "missed": missed, "lost": round(lost, 1)})
+    for t in out.values():
+        t["lost"] = round(t["lost"], 1)
+        t["players"].sort(key=lambda x: -x["lost"])
+        t["players"] = t["players"][:4]
+    return out
+
+
 # ---------------------------------------------------------------- rules lab
 
 # ESPN's standard (non-PPR) scoring for offense and kickers. D/ST keeps the league's own rules in every version,

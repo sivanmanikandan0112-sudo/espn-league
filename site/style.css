@@ -1087,7 +1087,9 @@ button.tv-opt:hover { border-color: var(--ink-2); }
 /* insights pages: related views stacked */
 .ins-part { scroll-margin-top: 12px; }
 .ins-part + .ins-part { margin-top: 10px; }
-.ins-switch { margin: 16px 0 4px; }
+.ins-switch { margin: 16px 0 4px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.ins-switch::-webkit-scrollbar { display: none; }
+.ins-switch a { flex: none; }
 
 /* Pick 4 (Games) */
 .p3-wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; margin: 14px 0; align-items: start; }

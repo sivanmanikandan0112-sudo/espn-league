@@ -2225,24 +2225,29 @@
     return { teams, games, favWins };
   }
 
-  // Insights pages. Each groups related views as stacked sections; the old one-view sub-tabs still work as links
-  // (they open the page that holds them now, scrolled to that section).
+  // Insights pages. Each groups related views, shown one at a time with a switch at the top; the old one-view
+  // sub-tabs still work as links (they open the page that holds them now, on that view).
   const INSIGHT_GROUPS = [
     ["race", "Playoff race", ["race", "seeds", "form"]],
-    ["luck", "Luck", ["luck", "close", "upsets", "projection"]],
+    ["luck", "Luck", ["luck", "close", "upsets", "projection", "injury"]],
     ["schedule", "Schedule", ["schedule", "byes"]],
-    ["lineups", "Lineups", ["efficiency"]],
+    ["lineups", "Lineups", ["efficiency", "autopilot"]],
     ["draft", "Draft", ["draft"]],
     ["whatif", "What ifs", ["rules", "swap"]],
   ];
-  const INSIGHT_ALIAS = { seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", byes: "schedule", efficiency: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
+  const INSIGHT_ALIAS = { seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", injury: "luck", byes: "schedule", efficiency: "lineups", autopilot: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
   function insightHas(k) {
     return ({
-      form: () => D.teams.some(x => x.form), seeds: () => D.teams.some(x => x.odds && x.odds.seeds), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0,
+      form: () => D.teams.some(x => x.form), seeds: () => D.teams.some(x => x.odds && x.odds.seeds), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0, injury: () => D.teams.some(x => x.injuries), autopilot: () => D.teams.some(x => x.autopilot && x.autopilot.weeks),
       byes: () => D.teams.some(x => x.byeCrunch && x.byeCrunch.length), draft: () => !!D.draft,
       redraft: () => !!(D.draft && D.draft.redraft), rules: () => !!(D.rulesLab && D.rulesLab.weeks),
       swap: () => !!(D.scheduleSwap && D.scheduleSwap.weeks),
     }[k] || (() => true))();
+  }
+  function insightPartLabel(k) {
+    if (k === "race") return D.teams.some(t => t.odds) ? "Playoff odds" : "Final results";
+    return { seeds: "Seed odds", form: "Hot & cold", luck: "Luck", close: "Close games", upsets: "Upset tracker", projection: "Vs. projection",
+      injury: "Injury toll", schedule: "Strength of schedule", byes: "Byes ahead", efficiency: "Efficiency", autopilot: "You vs. autopilot", rules: "Rules lab", swap: "Schedule swap" }[k] || k;
   }
   function insightTabs() {
     const hasOdds = D.teams.some(t => t.odds);
@@ -2519,6 +2524,22 @@
       ], rows));
     },
 
+    injury() {
+      const rows = D.teams.filter(t => t.injuries).sort((a, b) => b.injuries.lost - a.injuries.lost);
+      const avg = rows.reduce((n, t) => n + t.injuries.lost, 0) / Math.max(1, rows.length);
+      const top = rows[0];
+      const lede = top && top.injuries.lost > 0 ? `<p class="note">${esc(top.name)} lost the most: <b>${top.injuries.lost.toFixed(1)} points</b> over ${top.injuries.missed} missed game${top.injuries.missed === 1 ? "" : "s"} (league average ${avg.toFixed(1)}).</p>` : "";
+      const hurt = t => t.injuries.players.length ? t.injuries.players.slice(0, 3).map(p => `<span class="nw">${esc(p.name)} <span class="muted">${p.missed} g · ${p.lost.toFixed(1)}</span></span>`).join("<br>") : '<span class="muted">None</span>';
+      return section("Injury toll", { short: "Points each team lost to its starters missing games.", full: `Every regular-season week a player missed while he was on the team: his NFL team played, but he didn't record a single stat (almost always an injury). Only players who were starting for that team count (in its starting lineup in at least half the games he played for it). Each missed game is valued at what he averaged in the games he'd played before it this season, or his healthy average if he got hurt before playing. It's what the player usually scored, before counting whoever replaced him. <b>Luck</b> is wins minus expected wins, so you can see who's been unlucky both ways.` }, lede + table([
+        { label: "Team", cell: teamCell },
+        { label: "Points lost", num: 1, cell: t => `<b>${t.injuries.lost.toFixed(1)}</b>` },
+        { label: "Games missed", num: 1, cell: t => t.injuries.missed },
+        { label: "Per week", num: 1, cell: t => (t.injuries.lost / Math.max(1, (D.weeks.filter(w => w.final && !w.playoffs).length))).toFixed(1) },
+        { label: "Costliest injuries", wide: 1, cell: hurt },
+        ...(rows.some(t => t.luck != null) ? [{ label: "Luck", num: 1, cell: t => t.luck != null ? signedPts(t.luck, true) : "—" }] : []),
+      ], rows));
+    },
+
     swap() {
       const S = D.scheduleSwap, G = S.grid;
       const rec = v => `${v[0]}–${v[1]}${v[2] ? "–" + v[2] : ""}`;
@@ -2560,8 +2581,10 @@
         { label: "Efficiency", num: 1, cell: t => `<span class="pbar"><span class="pbar-track"><span class="pbar-fill eff" style="width:${Math.max(0, Math.min(100, (t.efficiency - 70) / 30 * 100))}%"></span></span><span class="pbar-v">${t.efficiency.toFixed(1)}%</span></span>` },
         { label: "Bench pts left", num: 1, cell: t => Number(t.benchLeft).toFixed(1) },
         { label: "Points for", num: 1, cell: t => fmt(t.pf) },
-      ], rows)) + autopilotSection();
+      ], rows));
     },
+
+    autopilot() { return autopilotSection(); },
 
     draft() {
       const dr = D.draft;
@@ -2606,6 +2629,12 @@
       const sw = `<nav class="pg-by ins-switch" aria-label="Draft view">${[["draft", "Draft grades"], ["redraft", "Hindsight redraft"]].map(([k, label]) =>
         `<a href="${href("insights", k === "redraft" ? { view: k } : {}, "draft")}" class="${k === view ? "active" : ""}"${k === view ? ' aria-current="true"' : ""}>${label}</a>`).join("")}</nav>`;
       body = sw + INSIGHTS[view]();
+    } else if (keys.length > 1) {
+      // one part at a time, with a switch at the top (?at= picks the part, so old links and glossary links still work)
+      const at = keys.includes(state.params.get("at")) ? state.params.get("at") : keys[0];
+      const sw = `<nav class="pg-by ins-switch" aria-label="${esc(INSIGHT_GROUPS.find(([k]) => k === sub)[1])} views">${keys.map(k =>
+        `<a href="${href("insights", k === keys[0] ? {} : { at: k }, sub)}" class="${k === at ? "active" : ""}"${k === at ? ' aria-current="true"' : ""}>${insightPartLabel(k)}</a>`).join("")}</nav>`;
+      body = sw + `<div class="ins-part" id="ins-${at}">${INSIGHTS[at]()}</div>`;
     } else {
       body = keys.map(k => `<div class="ins-part" id="ins-${k}">${INSIGHTS[k]()}</div>`).join("");
     }
@@ -2613,9 +2642,9 @@
       ${subnav("insights", tabs, sub)}${body}`;
     const a = main.querySelector(".subnav .active");
     if (a) a.scrollIntoView({ block: "nearest", inline: "center" });
-    const at = state.params.get("at");
-    const part = at && main.querySelector("#ins-" + CSS.escape(at));
-    if (part && part !== main.querySelector(".ins-part")) setTimeout(() => part.scrollIntoView({ block: "start" }), 0);
+    const b = main.querySelector(".ins-switch .active");
+    if (b) b.scrollIntoView({ block: "nearest", inline: "center" });
+    window.scrollTo(0, 0);
   }
 
   // ---------------------------------------------------------------- trades
@@ -3560,6 +3589,8 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-14", [
+      ["Injury toll", "Insights → Luck", "Points each team lost to its starters missing games, and its costliest injuries.", "#/insights/luck?at=injury"],
+      ["One view at a time in Insights", "Insights", "Each Insights tab now has a switch at the top (like Pick 4's) instead of one long scroll.", "#/insights"],
       ["Trash talk", "Matchups, recaps, Trades", "Comment threads under every matchup, weekly recap and trade, posted as your team. Get an alert when someone posts on your matchup.", "#/matchups"],
       ["Game-day alerts", "Settings → Alerts", "Phone and browser notifications for lead changes, close finishes, final results, big plays, starters ruled out before kickoff, waiver results and trades. Pick which ones you want.", "#/settings"],
       ["Seed odds", "Insights → Playoff race", "Every team's chance of finishing at each seed, 1 through 12.", "#/insights/race?at=seeds"],
@@ -3587,7 +3618,7 @@
       ["Pick 4", "Games → Pick 4", "A weekly side game: a QB, RB, WR and TE from any NFL team under a salary cap, scored with this week's real points. Each spot locks at its player's kickoff.", "#/games/pick4"],
       ["Insights regrouped", "Insights", "14 sub-tabs became 6 pages: Playoff race (with Hot & cold), Luck (with Close games and Vs. projection), Schedule (with Byes ahead), Lineups, Draft (grades or the hindsight redraft) and What ifs (Rules lab and Schedule swap). Player history moved to History. Old links still work.", "#/insights"],
       ["What's new", "this page", "Every feature added to the site, by day. A dot on the header link means something's new since your last look.", "#/whatsnew"],
-      ["You vs. autopilot", "Insights → Lineups", "Your real lineups compared with the lineup ESPN's projections would have started from the same roster, and the games your calls swung.", "#/insights/lineups"],
+      ["You vs. autopilot", "Insights → Lineups", "Your real lineups compared with the lineup ESPN's projections would have started from the same roster, and the games your calls swung.", "#/insights/lineups?at=autopilot"],
       ["Player news", "My team", "ESPN's latest news on your players (injuries, practice reports, game lines), with what's new since your last visit marked.", "#/myteam"],
       ["Games tab", "new tab", "Pick'em moved here from Matchups, next to the new trivia.", "#/games"],
       ["League trivia", "Games → League trivia", "5 questions a week about your league's own history. One try, same name and PIN as pick'em, season leaderboard.", "#/games/trivia"],
@@ -3677,6 +3708,7 @@
       ["close", "Close games", "Insights → Luck", "#/insights/luck?at=close", "Records in regular-season games decided by under 10 points, which usually come down to one play.", ["Close games"]],
       ["upsets", "Upset tracker (favorite / underdog)", "Insights → Luck", "#/insights/luck?at=upsets", "Before each game, the team whose starting lineup ESPN projected for more points is the favorite. Each team's records as favorite and underdog, net upsets (upset wins minus upset losses), its biggest upset win and its worst loss as a favorite.", ["Upset tracker"]],
       ["vsproj", "Vs. projection", "Insights → Luck", "#/insights/luck?at=projection", "Points a team's starters scored compared with ESPN's pre-game projection for that same lineup. About how the players performed, not lineup choices or opponents.", ["Vs. projection"]],
+      ["injury", "Injury toll", "Insights → Luck → Injury toll", "#/insights/luck?at=injury", "Points a team lost to its starters missing games: each game a player who was starting for it sat out (his NFL team played, he recorded no stats), valued at what he'd averaged before. It's the player's usual output, before counting his replacement.", ["Injury toll"]],
       ["beatit", "Starters who beat it", "Insights → Luck → Vs. projection", "#/insights/luck?at=projection", "The share of a team's individual starts where the player outscored his own projection. A big difference from a low share means a few huge games; a high share means the whole lineup is beating expectations.", []],
       ["sos", "Strength of schedule", "Insights → Schedule", "#/insights/schedule", "How much a team's opponents score per week vs. the league average (#1 = toughest), how they scored against you, and the projected strength of the opponents left.", ["Strength of schedule"]],
       ["byes", "Byes ahead", "Insights → Schedule, My team", "#/insights/schedule?at=byes", "Projected points a team's best lineup loses in each remaining week because starters are on bye or expected to miss the game. Bench depth counts.", ["Byes ahead"]],
@@ -3684,7 +3716,7 @@
     ["Lineups & draft", [
       ["efficiency", "Manager efficiency", "Insights → Lineups", "#/insights/lineups", "Points started as a share of the best possible lineup each week, in hindsight.", ["Manager efficiency"]],
       ["benchleft", "Points left on the bench", "My team, Insights → Lineups", "#/insights/lineups", "How many more points the best possible lineup would have scored than the one started.", []],
-      ["autopilot", "You vs. autopilot", "Insights → Lineups", "#/insights/lineups", "Autopilot starts the best lineup by ESPN's pre-game projections from your roster every week. Your calls is how many more (or fewer) points your real lineups scored; games swung counts games your calls won or lost compared with autopilot.", ["You vs. autopilot"]],
+      ["autopilot", "You vs. autopilot", "Insights → Lineups", "#/insights/lineups?at=autopilot", "Autopilot starts the best lineup by ESPN's pre-game projections from your roster every week. Your calls is how many more (or fewer) points your real lineups scored; games swung counts games your calls won or lost compared with autopilot.", ["You vs. autopilot"]],
       ["draftgrade", "Draft grades, steals and busts", "Insights → Draft", "#/insights/draft", "Each pick compared with same-position players drafted around the same spot, using points scored. Kickers and defenses aren't graded.", ["Draft grades", "Steals", "Busts"]],
       ["redraft", "Hindsight redraft", "Insights → Draft", "#/insights/draft?view=redraft", "The draft redone knowing every player's points: each pick takes the most valuable player left, measured as points above a replacement-level player at his position.", ["Hindsight redraft"]],
     ]],

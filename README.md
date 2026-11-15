@@ -38,10 +38,15 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   best QB, best 3 RBs, best 3 WRs (their two spots + FLEX) and best TE each week, in the same simulation. They
   rate the groups, so they don't sum to the power value (a FLEX-capable player counts in his own group).
 - **Insights** (6 pages, code in `stats.py`): *Playoff race* (`race`, with Hot & cold), *Luck* (`luck`: Luck, Close
-  games, Upset tracker, Vs. projection), *Schedule* (`schedule`: strength of schedule, Byes ahead), *Lineups* (`lineups`: Efficiency,
+  games, Upset tracker, Vs. projection, Injury toll), *Schedule* (`schedule`: strength of schedule, Byes ahead), *Lineups* (`lineups`: Efficiency,
   You vs. autopilot), *Draft* (`draft`, `?view=redraft` for the hindsight redraft) and *What ifs* (`whatif`: Rules lab,
-  Schedule swap). Old single-view links (`#/insights/close`, `/rules`, `/byes`, ...) redirect to their page with
-  `?at=<view>` to scroll there (`INSIGHT_GROUPS` / `INSIGHT_ALIAS` in `site/app.js`). The views:
+  Schedule swap). A page with several views shows one at a time, with a pill switch at the top (like Pick 4's);
+  `?at=<view>` picks it. Old single-view links (`#/insights/close`, `/rules`, `/byes`, ...) redirect to their page
+  with `?at=<view>` (`INSIGHT_GROUPS` / `INSIGHT_ALIAS` in `site/app.js`). The views:
+  - *Injury toll* (on Luck): points each team lost to starters missing games (`injuries` per team, `injury_toll` in
+    `stats.py`). A miss = on the roster, NFL team not on bye, empty stat line; only players in that team's starting
+    lineup in at least half the games they played for it; valued at their average before the miss (or healthy
+    average). Regular season.
   - *Seed odds* (on Playoff race): each team's chance of every seed 1-N from the same simulations (`odds.seeds`),
     as a shaded grid with divider lines at the bye and playoff cuts.
   - *Playoff race*: playoff / bye / title odds from 10,000 simulated finishes (team strengths shrunk halfway to
