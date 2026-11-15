@@ -1603,7 +1603,7 @@ async function maybeRebuild(env, now) {
 // minute (several alerts in the same minute are combined). KV is only written when something was sent or changed.
 const ALERT_CRON = "0-59 * * * *";
 const ALERT_KINDS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true,
-  waivers: true, trades: true, tradesAll: false, picks: false, talk: true };
+  waivers: true, trades: true, tradesAll: false, picks: false, talk: true, practice: true };
 const SUBS_KEY = "push:subs";
 const SUBS_MAX = 36; // each alert is one request; this keeps a busy minute inside the worker's per-run limit
 const LEAD_GAP_MS = 10 * 60e3;   // at most one lead-change alert per matchup every 10 minutes
@@ -1841,7 +1841,11 @@ async function scheduleAlerts(env, box, subs, teamOf, info, yr, week, now) {
   const pickLock = kicks[0];
   const pickemDue = pickLock && now >= pickLock - 3 * 3600e3 && now < pickLock - 3 * 3600e3 + 15 * 60e3;
   const pick4Due = sundayMain && now >= sundayMain - 3 * 3600e3 && now < sundayMain - 3 * 3600e3 + 15 * 60e3;
-  if (!lineupAt && !pickemDue && !pick4Due) return;
+  // practice report: Thursday and Friday at 6 p.m. Eastern (the site build has that morning's report by then)
+  const etNow = new Intl.DateTimeFormat("en-US", { weekday: "short", hour: "numeric", hourCycle: "h23", timeZone: "America/New_York" }).formatToParts(now);
+  const etDayNow = etNow.find(x => x.type === "weekday").value, etHour = +etNow.find(x => x.type === "hour").value;
+  const pracDue = ["Thu", "Fri"].includes(etDayNow) && etHour === 18 && new Date(now).getUTCMinutes() < 15;
+  if (!lineupAt && !pickemDue && !pick4Due && !pracDue) return;
   const key = `push:sent:${yr}:${sp}`;
   const sent = (await env.PICKEM.get(key, "json")) || {};
   let changed = false;
@@ -1869,6 +1873,27 @@ async function scheduleAlerts(env, box, subs, teamOf, info, yr, week, now) {
         }
         if (issues.length) box.add("trouble", x => x === t.id, rec => ({ title: "Lineup check", tag: `lineup-${lineupAt}`, url: "#/myteam",
           body: `Kickoff at ${when(lineupAt, rec.tz, false)}: ${issues.join("; ")}. Fix it on ESPN before then.` }));
+      }
+    }
+  }
+  if (pracDue) {
+    const day = new Date(now).toISOString().slice(0, 10);
+    const want = new Set(Object.values(subs).filter(r => ("practice" in r.prefs ? r.prefs.practice : true) && teamOf[r.member] != null && !sent[`pr|${teamOf[r.member]}|${day}`]).map(r => teamOf[r.member]));
+    const P = want.size ? await cached(`alert-practice-${day}`, 600, async () => (await (await fetch(SITE_DATA(env) + "practice.json?t=" + Date.now())).json())) : null;
+    if (P && P.players) {
+      const d = await cached(`alert-rosters-${yr}-${sp}`, 120, () => espn(env, yr, `view=mRoster&view=mSettings&scoringPeriodId=${sp}`));
+      const short = { DNP: "didn't practice", LP: "limited in practice", FP: "full practice" };
+      for (const t of d.teams || []) {
+        if (!want.has(t.id)) continue;
+        sent[`pr|${t.id}|${day}`] = 1; changed = true;
+        const notes = [];
+        for (const e of ((t.roster || {}).entries || []).filter(e => isStarterSlot(e.lineupSlotId))) {
+          const p = (e.playerPoolEntry || {}).player || {}, g = games[p.proTeamId], pr = P.players[String(p.id)];
+          if (!pr || !g || g.at <= now) continue;
+          if (!(["DNP", "LP"].includes(pr.s) || ["Out", "Doubtful", "Questionable"].includes(pr.g))) continue;
+          notes.push(`${p.fullName}: ${[pr.s ? short[pr.s] : "", pr.g || ""].filter(Boolean).join(", ")}${pr.i && !/^Not injury related/i.test(pr.i) ? ` (${pr.i})` : ""}`);
+        }
+        if (notes.length) box.add("practice", x => x === t.id, () => ({ title: "Practice report", tag: `practice-${day}`, url: "#/myteam", body: notes.join(". ") + "." }));
       }
     }
   }

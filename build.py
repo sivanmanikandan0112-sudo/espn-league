@@ -18,6 +18,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import power  # noqa: E402
+import nfldata  # noqa: E402
 import stats  # noqa: E402
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -422,6 +423,7 @@ def build_season(season, is_current, names):
         if is_current:
             add_power_moves(data, teams, season)
             data["_graph"] = graph_pool(season, latest)
+            add_nfl_usage(data, teams, season, current_week, regular)
     else:
         add_season_strength(data, teams, regular, slot_counts)
 
@@ -502,6 +504,21 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
 
 
 _LIVE = {}
+
+
+def add_nfl_usage(data, teams, season, current_week, regular):
+    """Usage, role and practice-report data from nflverse (nfldata.py), matched to ESPN ids. Optional: a download
+    failure only leaves it out."""
+    try:
+        wanted = {r["id"] for t in teams.values() for r in t["roster"]} | {f["id"] for f in data.get("freeAgents", [])}
+        nfl, practice = nfldata.build(season, wanted, data["weeks"], current_week, regular, live_site_file("practice.json"))
+    except Exception as e:  # noqa: BLE001
+        print("  nflverse data skipped (%s)" % e)
+        return
+    if nfl:
+        data["nfl"] = nfl
+        data["_practice"] = practice
+        print("  nflverse: %d players, %d teams, %d on this week's injury report" % (len(nfl["players"]), len(nfl["teams"]), len(practice["players"])))
 
 
 def live_site_file(name):
@@ -1136,6 +1153,10 @@ def main():
         data = build_season(season, season == args.season, names)
         stats_blob = data.pop("_stats", {})
         graph = data.pop("_graph", None)
+        practice = data.pop("_practice", None)
+        if practice:
+            with open(os.path.join(DATA_DIR, "practice.json"), "w") as f:
+                json.dump(practice, f, separators=(",", ":"))
         if graph:
             with open(os.path.join(DATA_DIR, "graph.json"), "w") as f:
                 json.dump(graph, f, separators=(",", ":"))

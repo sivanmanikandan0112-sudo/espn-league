@@ -123,6 +123,16 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   score; `meetings` in `index.js` history, keyed by the two member ids in sorted order), season by season, and each
   one's record against common opponents. Opens on you vs. your most-played opponent; Share makes an image. The
   personal Record book links to it.
+- **Usage, roles and practice reports** (`nfldata.py`, current season, `nfl` in the season file): public nflverse
+  files downloaded at build (ffverse expected fantasy points, PFR snap counts, weekly target share, the official
+  injury report), matched to ESPN ids with DynastyProcess's player id table. *▲ Due / ▼ Hot* (last 5 games, 3+
+  games, 3+ points a game from usage-expected), *Role ↑ / ↓* (last 2 games vs. the 3 before: snaps ±15 or targets ±8
+  points; not QBs) on My team's roster, Waiver targets and the Trade block; a usage line and snap/target strip in the
+  player card; this week's practice status / game status / injury on the roster and under the lineup check, with a
+  day-by-day log the build carries over in `data/practice.json`; *Vs. usage* under Insights → Luck (starters'
+  points vs. expected, regular season, PPR). The worker sends a "Practice report" alert (kind `practice`) on
+  Thursday and Friday at 6 p.m. ET for starters who missed or were limited in practice or are Q/D/Out. Any file
+  that fails to download is simply left out.
 - **Personal record books**: History → Record book has a picker (whole league or any member); a member's book lists
   their highest/lowest scores, biggest wins, worst losses, closest games, longest win streaks and best player/bench
   games across every season. My team shows the #1 of each as tiles linking to the box score. Built by

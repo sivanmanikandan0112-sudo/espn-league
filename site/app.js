@@ -246,6 +246,43 @@
     return `Starts ${n} of ${powerWeekCount()} wks${p.returns ? ` · back ~wk ${p.returns}` : ""}`;
   }
 
+
+  // ---------------------------------------------------------------- nflverse usage, role and practice (build: nfldata.py)
+  // Only in the current season's data (D.nfl). Expected points use the model's own PPR scoring, not this league's.
+  const nflP = id => (L.isCurrent && D.nfl && D.nfl.players && D.nfl.players[String(id)]) || null;
+  const PRAC = { DNP: "Did not practice", LP: "Limited", FP: "Full" };
+  const pracInjury = i => i && /^Not injury related/i.test(i) ? "rest" : i;
+  function usageChips(id) {
+    const x = nflP(id);
+    if (!x) return "";
+    const out = [];
+    if (x.tag && x.avg) out.push(`<span class="uchip ${x.tag}" title="Last ${x.avg[2]} games: ${x.avg[0].toFixed(1)} pts a game; his usage was worth ${x.avg[1].toFixed(1)} (expected points, PPR)">${x.tag === "due" ? "▲ Due" : "▼ Hot"}</span>`);
+    if (x.role && x.roleWhy) {
+      const [s0, s1, t0, t1] = x.roleWhy;
+      out.push(`<span class="uchip role-${x.role}" title="Last 2 games vs. the 3 before: snaps ${s0}% → ${s1}%${t0 != null && t1 != null ? `, targets ${t0}% → ${t1}% of the team's` : ""}">Role ${x.role === "up" ? "↑" : "↓"}</span>`);
+    }
+    return out.join("");
+  }
+  function practiceText(id, short) {
+    const x = nflP(id), pr = x && x.pr;
+    if (!pr) return "";
+    const log = (pr.log || []).map(([d, st]) => `${short ? st : PRAC[st] || st} ${esc(d)}`).join(" → ");
+    const inj = pracInjury(pr.i);
+    return [log ? (short ? log : "Practice: " + log) : "", pr.g ? `<b>${esc(pr.g)}</b>` : "", inj ? esc(inj) : ""].filter(Boolean).join(" · ");
+  }
+  const practiceWorry = id => { const pr = (nflP(id) || {}).pr; return !!pr && (["DNP", "LP"].includes(pr.s) || ["Out", "Doubtful", "Questionable"].includes(pr.g)); };
+  function usagePanel(id) {
+    const x = nflP(id);
+    if (!x) return "";
+    const parts = [];
+    if (x.avg) parts.push(`<p class="u-line"><b>Usage:</b> ${x.avg[0].toFixed(1)} pts a game over his last ${x.avg[2]}; his usage was worth <b>${x.avg[1].toFixed(1)}</b>${x.tag ? ` ${usageChips(id).split("</span>")[0]}</span>` : ""}. <span class="muted">Expected points from targets, carries, air yards and field position (nflverse, PPR).</span></p>`);
+    if (x.u && x.u.length) parts.push(`<table class="u-strip"><thead><tr><th></th>${x.u.map(r => `<th>Wk ${r[0]}</th>`).join("")}</tr></thead><tbody>
+      <tr><th>Snaps</th>${x.u.map(r => `<td>${r[1] != null ? `<span class="u-bar"><span style="width:${r[1]}%"></span></span>${r[1]}%` : "—"}</td>`).join("")}</tr>
+      ${x.u.some(r => r[2]) ? `<tr><th>Targets</th>${x.u.map(r => `<td>${r[2] != null ? r[2] + "%" : "—"}</td>`).join("")}</tr>` : ""}</tbody></table>`);
+    if (x.pr) parts.push(`<p class="u-line">${practiceText(id)}</p>`);
+    return parts.length ? `<div class="u-panel">${parts.join("")}</div>` : "";
+  }
+
   function playerCard(p) {
     const bench = p.slot === "BE" || p.slot === "IR";
     const slotCls = POS.includes(p.slot) ? p.slot : POS.includes(p.pos) && !bench ? p.pos : "";
@@ -255,6 +292,9 @@
     } else {
       rankLine = `<span class="num" title="Rest-of-season rank among all ${esc(p.pos)}s, by ESPN projection (${Math.round(p.ros || 0)} pts)">${p.rosRank ? "ROS " + esc(p.pos) + " " + p.rosRank : "ROS —"}</span>${p.injury ? `<span class="inj" title="${esc(p.injury.replace(/_/g, " "))}">${esc(INJ[p.injury] || p.injury.replace(/_/g, " "))}</span>` : ""}`;
       if (p.starts != null) extra = `<div class="pstarts" title="How often this player makes the best lineup in weeks ${PW()}, averaged over 500 simulated rest-of-seasons with injuries">${startsText(p)}</div>`;
+      const chips = usageChips(p.id), prac = practiceText(p.id, true);
+      if (chips) rankLine += chips;
+      if (prac) extra += `<div class="pprac" title="This week's official injury report">${prac}</div>`;
     }
     return `<div class="pcard${bench ? " bench" : ""}">
       <div class="pcard-top"><span class="slot ${esc(slotCls)}">${esc(p.slot)}</span><span>${esc(p.pos)}${p.team ? " · " + esc(p.team) : ""}</span></div>
@@ -2229,16 +2269,16 @@
   // sub-tabs still work as links (they open the page that holds them now, on that view).
   const INSIGHT_GROUPS = [
     ["race", "Playoff race", ["race", "seeds", "form"]],
-    ["luck", "Luck", ["luck", "close", "upsets", "projection", "injury"]],
+    ["luck", "Luck", ["luck", "close", "upsets", "projection", "usage", "injury"]],
     ["schedule", "Schedule", ["schedule", "byes"]],
     ["lineups", "Lineups", ["efficiency", "autopilot"]],
     ["draft", "Draft", ["draft"]],
     ["whatif", "What ifs", ["rules", "swap"]],
   ];
-  const INSIGHT_ALIAS = { seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", injury: "luck", byes: "schedule", efficiency: "lineups", autopilot: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
+  const INSIGHT_ALIAS = { seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", usage: "luck", injury: "luck", byes: "schedule", efficiency: "lineups", autopilot: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
   function insightHas(k) {
     return ({
-      form: () => D.teams.some(x => x.form), seeds: () => D.teams.some(x => x.odds && x.odds.seeds), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0, injury: () => D.teams.some(x => x.injuries), autopilot: () => D.teams.some(x => x.autopilot && x.autopilot.weeks),
+      form: () => D.teams.some(x => x.form), seeds: () => D.teams.some(x => x.odds && x.odds.seeds), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0, injury: () => D.teams.some(x => x.injuries), usage: () => !!(D.nfl && D.nfl.teams && Object.keys(D.nfl.teams).length), autopilot: () => D.teams.some(x => x.autopilot && x.autopilot.weeks),
       byes: () => D.teams.some(x => x.byeCrunch && x.byeCrunch.length), draft: () => !!D.draft,
       redraft: () => !!(D.draft && D.draft.redraft), rules: () => !!(D.rulesLab && D.rulesLab.weeks),
       swap: () => !!(D.scheduleSwap && D.scheduleSwap.weeks),
@@ -2246,7 +2286,7 @@
   }
   function insightPartLabel(k) {
     if (k === "race") return D.teams.some(t => t.odds) ? "Playoff odds" : "Final results";
-    return { seeds: "Seed odds", form: "Hot & cold", luck: "Luck", close: "Close games", upsets: "Upset tracker", projection: "Vs. projection",
+    return { seeds: "Seed odds", form: "Hot & cold", luck: "Luck", close: "Close games", upsets: "Upset tracker", projection: "Vs. projection", usage: "Vs. usage",
       injury: "Injury toll", schedule: "Strength of schedule", byes: "Byes ahead", efficiency: "Efficiency", autopilot: "You vs. autopilot", rules: "Rules lab", swap: "Schedule swap" }[k] || k;
   }
   function insightTabs() {
@@ -2522,6 +2562,24 @@
         { label: "Best week", num: 1, cell: t => t.vsProj.best ? `${signed(t.vsProj.best[1])} <span class="muted">wk ${t.vsProj.best[0]}</span>` : "—" },
         { label: "Worst week", num: 1, cell: t => t.vsProj.worst ? `${signed(t.vsProj.worst[1])} <span class="muted">wk ${t.vsProj.worst[0]}</span>` : "—" },
       ], rows));
+    },
+
+    usage() {
+      const U = D.nfl.teams;
+      const rows = D.teams.filter(t => U[t.id]).sort((a, b) => U[b.id].diff - U[a.id].diff);
+      const u = t => U[t.id];
+      const top = rows[0], bot = rows[rows.length - 1];
+      const lede = top && bot ? `<p class="note"><b>${esc(top.name)}</b>'s starters have scored ${signed(u(top).diff)} more than their usage was worth; <b>${esc(bot.name)}</b>'s ${signed(u(bot).diff)}.</p>` : "";
+      return section("Vs. usage", { short: "Points your starters scored vs. what their usage was worth.", full: `For every regular-season week, each starter's fantasy points compared with his <b>expected points</b>: what a player with his exact usage (targets, carries, air yards, where on the field) scores on average, from nflverse's ffopportunity model. A team well above it has been getting extra touchdowns and big plays from the same work, which tends not to last; well below means the work is there and the points should follow. Unlike Vs. projection, this ignores ESPN's pre-game guess and looks at what actually happened on the field. Both numbers use the model's standard PPR scoring, not this league's, and leave out kickers and defenses. <b>TDs</b> are touchdowns scored vs. expected from the same usage.` }, lede + table([
+        { label: "Team", cell: teamCell },
+        { label: "Points", num: 1, cell: t => u(t).fp.toFixed(1) },
+        { label: "Usage worth", num: 1, cell: t => u(t).xfp.toFixed(1) },
+        { label: "Difference", num: 1, cell: t => signedPts(u(t).diff, true) },
+        { label: "Per start", num: 1, cell: t => signedPts(u(t).diff / Math.max(1, u(t).games), true) },
+        { label: "TDs vs. expected", num: 1, cell: t => `${u(t).td.toFixed(0)} <span class="muted">vs ${u(t).tdx.toFixed(1)}</span>` },
+        { label: "Most above", cell: t => u(t).over ? `${esc(u(t).over[0])} <span class="muted">${signed(u(t).over[1])}</span>` : "—" },
+        { label: "Most below", cell: t => u(t).under ? `${esc(u(t).under[0])} <span class="muted">${signed(u(t).under[1])}</span>` : "—" },
+      ], rows)) + `<p class="note">On My team, Waiver targets and the Trade block, <span class="uchip due">▲ Due</span> marks a player scoring 3+ points a game below his usage over his last 5 games (likely to bounce back), <span class="uchip hot">▼ Hot</span> one scoring 3+ above it (likely to cool off).</p>`;
     },
 
     injury() {
@@ -2809,7 +2867,7 @@
       if (aGives.length || bGives.length) fits.push({ A, B, aGives, bGives, two: aGives.length > 0 && bGives.length > 0 });
     }));
     fits.sort((x, y) => (y.two - x.two) || (y.aGives.length + y.bGives.length) - (x.aGives.length + x.bGives.length));
-    const chip = p => `<span class="tb-chip" title="${p.src === "espn" ? "Set on ESPN" : "Set here"}"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>${esc(p.name)}${p.rosRank ? ` <span class="muted">${esc(p.pos)}${p.rosRank}</span>` : ""}<span class="tb-src">${p.src === "espn" ? "ESPN" : "here"}</span></span>`;
+    const chip = p => `<span class="tb-chip" title="${p.src === "espn" ? "Set on ESPN" : "Set here"}"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span>${esc(p.name)}${p.rosRank ? ` <span class="muted">${esc(p.pos)}${p.rosRank}</span>` : ""}${usageChips(p.id)}<span class="tb-src">${p.src === "espn" ? "ESPN" : "here"}</span></span>`;
     const fitLine = f => {
       const gives = (who, list) => list.length ? `<b>${esc(who.t.name)}</b> has ${list.map(p => esc(p.name) + " (" + esc(p.pos) + ")").join(", ")}` : "";
       const parts = [gives(f.A, f.aGives) && gives(f.A, f.aGives) + ` for ${esc(f.B.t.name)}`, gives(f.B, f.bGives) && gives(f.B, f.bGives) + ` for ${esc(f.A.t.name)}`].filter(Boolean);
@@ -3455,6 +3513,10 @@
             return bad.length
               ? `<div class="me-fix warn"><span><b>Lineup check:</b> you're starting ${bad.map(x => `${esc(x.p.name)} (${x.why})`).join(", ")}.</span>${espnBtn(ESPN_TEAM(t), "Fix it on ESPN")}</div>`
               : `<div class="me-fix"><span>Lineup check: every starter is set to play.</span>${espnBtn(ESPN_TEAM(t), "Open lineup on ESPN")}</div>`;
+          })()}${(() => {
+            // this week's injury report for starters who haven't played yet (nflverse, updated each morning)
+            const watch = (mine.lineup || []).filter(p => !["BE", "IR"].includes(p.slot) && !(p.pts > 0) && practiceWorry(p.id));
+            return watch.length ? `<div class="me-fix prac"><span><b>Practice report:</b> ${watch.map(p => `${esc(p.name)} (${practiceText(p.id, true)})`).join("; ")}.</span></div>` : "";
           })()}`);
       }
     }
@@ -3508,7 +3570,7 @@
     // roster
     const rank = p => cur ? p.rosRank : p.posRank, pts = p => cur ? p.ros : p.seasonPts;
     const roster = section("Roster", cur ? "Rest-of-season rank and projected points." : "Where each player finished.", table([
-      { label: "Player", cell: p => `<span class="tcell"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700">${esc(p.slot)}</span><span><span class="tname">${esc(p.name)}</span><span class="team-mgr">${esc(p.pos)} · ${esc(p.team)}${p.injury ? " · " + esc(p.injury.replace(/_/g, " ").toLowerCase()) : ""}</span></span></span>` },
+      { label: "Player", cell: p => `<span class="tcell"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700">${esc(p.slot)}</span><span><span class="tname">${esc(p.name)}${cur ? usageChips(p.id) : ""}</span><span class="team-mgr">${esc(p.pos)} · ${esc(p.team)}${p.injury ? " · " + esc(p.injury.replace(/_/g, " ").toLowerCase()) : ""}</span>${cur && practiceText(p.id, true) ? `<span class="pprac">${practiceText(p.id, true)}</span>` : ""}</span></span>` },
       { label: cur ? "ROS rank" : "Finish", num: 1, cell: p => rank(p) ? esc(p.pos) + rank(p) : "—" },
       { label: cur ? "ROS pts" : "Season pts", num: 1, cell: p => pts(p) != null ? Number(pts(p)).toFixed(1) : "—" },
     ], t.roster));
@@ -3610,7 +3672,7 @@
     const drop = costs.length ? costs[0].b : null;
     const pool = FA.filter(f => TRADE_POS.includes(f.pos));
     const tag = f => `${f.waivers ? '<span class="badge">Waivers</span>' : '<span class="badge new">Free agent</span>'}${f.injury ? ` <span class="badge cold">${esc(f.injury.replace(/_/g, " ").toLowerCase())}</span>` : ""}`;
-    const who = f => `<span class="slot ${esc(f.pos)}">${esc(f.pos)}</span><span class="pick-name"><b>${esc(f.name)}</b> ${tag(f)}`;
+    const who = f => `<span class="slot ${esc(f.pos)}">${esc(f.pos)}</span><span class="pick-name"><b>${esc(f.name)}</b> ${tag(f)}${usageChips(f.id)}`;
     const out = (before, after, pl) => { const gone = [...before.used].filter(id => !after.used.has(id)); const p = pl.find(x => x.id === gone[0]); return p ? p.name : null; };
     // 1. next week
     const thisWeek = pool.map(f => { const after = lineup(mine.concat(f), next); return { f, gain: after.pts - base.pts, over: out(base, after, mine) }; })
@@ -3731,6 +3793,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-14", [
+      ["Usage, roles and practice reports", "My team, Waiver targets, Trade block, Insights → Luck", "▲ Due / ▼ Hot tags from expected fantasy points, Role ↑/↓ from snap and target share, this week's practice reports, a usage strip in the player card, and Vs. usage under Luck.", "#/insights/luck?at=usage"],
       ["Tale of the tape", "History → Tale of the tape", "Any two managers side by side across every season: win %, titles, average finish, best season, longest win streak, every head-to-head meeting and common opponents.", "#/history/h2h"],
       ["Injury toll", "Insights → Luck", "Points each team lost to its starters missing games, and its costliest injuries.", "#/insights/luck?at=injury"],
       ["One view at a time in Insights", "Insights", "Each Insights tab now has a switch at the top (like Pick 4's) instead of one long scroll.", "#/insights"],
@@ -3851,6 +3914,10 @@
       ["close", "Close games", "Insights → Luck", "#/insights/luck?at=close", "Records in regular-season games decided by under 10 points, which usually come down to one play.", ["Close games"]],
       ["upsets", "Upset tracker (favorite / underdog)", "Insights → Luck", "#/insights/luck?at=upsets", "Before each game, the team whose starting lineup ESPN projected for more points is the favorite. Each team's records as favorite and underdog, net upsets (upset wins minus upset losses), its biggest upset win and its worst loss as a favorite.", ["Upset tracker"]],
       ["vsproj", "Vs. projection", "Insights → Luck", "#/insights/luck?at=projection", "Points a team's starters scored compared with ESPN's pre-game projection for that same lineup. About how the players performed, not lineup choices or opponents.", ["Vs. projection"]],
+      ["usage", "Vs. usage (expected points)", "Insights → Luck → Vs. usage", "#/insights/luck?at=usage", "Fantasy points compared with expected points: what a player's exact usage (targets, carries, air yards, field position) scores on average, from nflverse's ffopportunity model, in standard PPR scoring. Above it usually doesn't last; below it usually bounces back.", ["Vs. usage"]],
+      ["duehot", "▲ Due / ▼ Hot", "My team, Waiver targets, Trade block", "#/insights/luck?at=usage", "A player scoring 3+ points a game below (Due) or above (Hot) what his usage was worth over his last 5 games, with at least 3 games played.", []],
+      ["role", "Role ↑ / Role ↓", "My team, Waiver targets, Trade block", "#/myteam", "His last 2 games vs. the 3 before: snap share up or down 15+ points, or target share up or down 8+ points. Often the first sign a player gained or lost a job. Not shown for quarterbacks.", []],
+      ["practice", "Practice report", "My team, lineup check, Alerts", "#/myteam", "This week's official NFL injury report: practice participation (did not practice, limited, full), the game status once it's set (Questionable, Doubtful, Out) and the injury. The site logs how it changes day to day.", []],
       ["injury", "Injury toll", "Insights → Luck → Injury toll", "#/insights/luck?at=injury", "Points a team lost to its starters missing games: each game a player who was starting for it sat out (his NFL team played, he recorded no stats), valued at what he'd averaged before. It's the player's usual output, before counting his replacement.", ["Injury toll"]],
       ["beatit", "Starters who beat it", "Insights → Luck → Vs. projection", "#/insights/luck?at=projection", "The share of a team's individual starts where the player outscored his own projection. A big difference from a low share means a few huge games; a high share means the whole lineup is beating expectations.", []],
       ["sos", "Strength of schedule", "Insights → Schedule", "#/insights/schedule", "How much a team's opponents score per week vs. the league average (#1 = toughest), how they scored against you, and the projected strength of the opponents left.", ["Strength of schedule"]],
@@ -4109,12 +4176,13 @@
     ["Big plays", [["plays", "Your starters' big plays", "Touchdowns, 40+ yard plays, 50+ yard field goals and defensive scores."],
       ["playsAgainst", "Big plays against you", "The same plays by your opponent's starters."],
       ["playsAll", "Every big play in the league", "All of them, for every team. Busy on Sundays."]]],
-    ["Your lineup", [["trouble", "Starter in trouble", "90 minutes before kickoff: a starter who's out, on IR, on a bye, or an empty lineup spot."]]],
+    ["Your lineup", [["trouble", "Starter in trouble", "90 minutes before kickoff: a starter who's out, on IR, on a bye, or an empty lineup spot."],
+      ["practice", "Practice report", "Thursday and Friday evenings: a starter who didn't practice or was limited, or is listed Questionable, Doubtful or Out."]]],
     ["Moves", [["waivers", "Waiver results", "Which claims you won or missed when waivers run."],
       ["trades", "Trades involving your team", "When one goes through."], ["tradesAll", "Any league trade", "Every trade in the league."]]],
     ["Site games", [["picks", "Picks reminder", "3 hours before Pick'em locks and before Sunday's games, if you haven't made your picks."]]],
   ];
-  const ALERT_DEFAULTS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true, waivers: true, trades: true, tradesAll: false, picks: false, talk: true };
+  const ALERT_DEFAULTS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true, waivers: true, trades: true, tradesAll: false, picks: false, talk: true, practice: true };
   const AL = { key: undefined, sub: null, busy: false, msg: "", err: false };
   const alertCfg = () => {
     const c = store.get("alerts", {}) || {};
@@ -4491,7 +4559,7 @@
       <div class="stat-head"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span><div style="min-width:0"><div class="stat-name">${esc(p.name)}</div>
       <div class="team-mgr">${esc(p.team)} · Week ${week}${L.season !== IDX.current ? ", " + L.season : ""} · ${esc((teamById[team] || {}).name || "")}${p.slot === "BE" || p.slot === "IR" ? " (bench)" : ""}</div></div>
       <div class="stat-pts">${fmt(p.pts)}<small>fantasy pts</small></div></div>
-      <div class="stat-body"><div class="empty">Loading stats…</div></div>
+      <div class="stat-body"><div class="empty">Loading stats…</div></div>${usagePanel(p.id)}
       <div class="stat-actions"><a class="cta stat-cmp" href="${href("trades", { a: p.id }, "compare")}">Compare with…</a>
         <a class="linkbtn" href="${href("history", { player: p.id }, "players")}">League history ›</a></div>
       <button type="button" class="linkbtn share-close">Close</button></div>`;
