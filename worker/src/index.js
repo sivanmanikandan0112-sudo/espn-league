@@ -862,6 +862,9 @@ async function handlePlays(req, env) {
     return { season: st.season, weeks: weeks.map(w => w.week), current: st.week,
       teams: Object.values(teams).map(T => ({ ...T, pts: r1(T.pts), benchPts: r1(T.benchPts) })).sort((a, b) => b.plays - a.plays || b.pts - a.pts),
       players: Object.values(players).map(P => ({ ...P, pts: r1(P.pts) })).sort((a, b) => b.plays - a.plays || b.pts - a.pts).slice(0, 10),
+      // the same, top 10 at each position (otherwise the overall list is all quarterbacks)
+      byPos: Object.fromEntries([...new Set(Object.values(players).map(P => P.pos || "?"))].map(pos => [pos, Object.values(players)
+        .filter(P => (P.pos || "?") === pos).map(P => ({ ...P, pts: r1(P.pts) })).sort((a, b) => b.plays - a.plays || b.pts - a.pts).slice(0, 10)])),
       biggest: all.filter(e => e.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 10),
       benchBest: all.filter(e => !e.starter && e.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 5) };
   });

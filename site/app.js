@@ -813,15 +813,31 @@
       { label: "Points", num: 1, cell: r => r.pts.toFixed(1) },
       { label: "On the bench", num: 1, cell: r => r.bench ? `${r.bench} <span class="muted">(${r.benchPts.toFixed(1)} pts)</span>` : "0" },
     ], S.teams));
-    const players = section("Most big plays by a player", "", table([
+    // one position at a time (the overall list is all quarterbacks); old worker responses without byPos fall back to it
+    const BP = S.byPos || null;
+    const posKeys = BP ? ["QB", "RB", "WR", "TE", "K", "D/ST"].filter(k => (BP[k] || []).length).concat(Object.keys(BP).filter(k => !["QB", "RB", "WR", "TE", "K", "D/ST"].includes(k) && BP[k].length)) : [];
+    const pos = posKeys.includes(store.get("plays-pos", "")) ? store.get("plays-pos", "") : posKeys[0];
+    const playerTable = list => table([
       { label: "Player", cell: r => `<span class="tcell"><span class="slot ${esc(r.pos)}">${esc(r.pos)}</span><span><span class="tname">${esc(r.name)}</span><span class="team-mgr">${esc(r.nfl || "")} · ${r.teams.map(id => esc((teamById[id] || {}).name || "?")).join(", ")}</span></span></span>` },
       { label: "Big plays", num: 1, cell: r => `<b>${r.plays}</b>` },
       { label: "TDs", num: 1, cell: r => r.tds },
       { label: "Points", num: 1, cell: r => r.pts.toFixed(1) },
-    ], S.players));
+    ], list);
+    const players = BP && posKeys.length
+      ? section("Most big plays by position", { short: "The league's players with the most big plays at each position.", full: "Every league player's big plays this season (by whichever fantasy team had him at the time), top 10 at each position. Split by position because quarterbacks would fill the whole list: every touchdown pass and long completion counts for the passer too." },
+          `<nav class="pg-by ins-switch bp-pos" aria-label="Position">${posKeys.map(k => `<a href="#" role="button" data-bp-pos="${esc(k)}" class="${k === pos ? "active" : ""}" aria-pressed="${k === pos}">${esc(k)}</a>`).join("")}</nav>`
+          + posKeys.map(k => `<div class="bp-list" data-bp-list="${esc(k)}"${k === pos ? "" : " hidden"}>${playerTable(BP[k])}</div>`).join(""))
+      : section("Most big plays by a player", "", playerTable(S.players));
     const big = section("Biggest single plays", "", `<div class="rec-card wrap">${S.biggest.map(playRow).join("")}</div>`);
     const bench = S.benchBest.length ? section("Best plays wasted on the bench", "", `<div class="rec-card wrap">${S.benchBest.map(playRow).join("")}</div>`) : "";
     main.innerHTML = head + playsSwitch("season") + `<p class="pg-sum">${L.season} season · ${span} · ${S.teams.reduce((n, t) => n + t.plays + t.bench, 0)} big plays</p>` + teams + big + players + bench;
+    main.querySelectorAll("[data-bp-pos]").forEach(a => a.addEventListener("click", e => {
+      e.preventDefault();
+      const k = a.dataset.bpPos;
+      store.set("plays-pos", k);
+      main.querySelectorAll("[data-bp-pos]").forEach(x => { const on = x === a; x.classList.toggle("active", on); x.setAttribute("aria-pressed", on); });
+      main.querySelectorAll("[data-bp-list]").forEach(x => { x.hidden = x.dataset.bpList !== k; });
+    }));
   }
 
   function renderPlays() {
@@ -3792,6 +3808,9 @@
   // Every feature added to the site, grouped by the day it went live (newest first). Add new features at the top.
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
+    ["2026-11-15", [
+      ["Big plays by position", "Matchups → Big plays → Season", "The player leaderboard is now split by position (QB, RB, WR, TE, K, D/ST), top 10 each, since quarterbacks filled the whole list.", "#/matchups/plays?view=season"],
+    ]],
     ["2026-11-14", [
       ["Usage, roles and practice reports", "My team, Waiver targets, Trade block, Insights → Luck", "▲ Due / ▼ Hot tags from expected fantasy points, Role ↑/↓ from snap and target share, this week's practice reports, a usage strip in the player card, and Vs. usage under Luck.", "#/insights/luck?at=usage"],
       ["Tale of the tape", "History → Tale of the tape", "Any two managers side by side across every season: win %, titles, average finish, best season, longest win streak, every head-to-head meeting and common opponents.", "#/history/h2h"],
