@@ -95,6 +95,16 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   player's own games this season (`gameLogs` in the current season's data; seeded so it doesn't jump each minute).
 - **Share cards**: Share buttons on weekly recaps, matchups, trades and the bracket draw a 1080px image in the browser
   (canvas, no server) to share, copy or download.
+- **Game-day alerts** (Settings → Alerts): Web Push notifications from the live worker, following the team claimed on
+  My team. Lead changes (at most one per matchup every 10 minutes), "down to the wire" (nobody playing, 1–4 starters
+  left in later games, the trailing team among them), final results, big plays (TDs, 40+ yd plays, 50+ yd FGs, D/ST
+  scores: yours, against you, or league-wide), a lineup check 90 min before each kickoff (starter out / IR / suspended;
+  byes and empty spots before Sunday's 1 p.m. games), waiver results and trades (checked when the league fingerprint
+  changes), and an optional reminder 3 h before Pick'em locks and before Sunday's games for Pick 4. Each device gets
+  one notification per minute at most (several alerts combine), with optional quiet hours. Runs on its own cron
+  (`0-59 * * * *`, the same minute as the feed but a separate run). Subscriptions are in KV `push:subs` (max 36);
+  state in `push:game:*`, `push:sent:*`, `push:tx`. Needs the `VAPID_PRIVATE` secret: run `worker/set-push-key.sh`
+  once. iPhone/iPad: only from the Home Screen app (Share → Add to Home Screen).
 - **Personal record books**: History → Record book has a picker (whole league or any member); a member's book lists
   their highest/lowest scores, biggest wins, worst losses, closest games, longest win streaks and best player/bench
   games across every season. My team shows the #1 of each as tiles linking to the box score. Built by

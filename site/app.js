@@ -3428,6 +3428,7 @@
     if (r.error) { ME.msg = r.error; return renderMyTeam(); }
     ME.member = member; ME.msg = ""; ME.err = false;
     store.set("me", member);
+    alertsResync();
     PK.member = member; PK.pin = pin; store.set("pk-member", member);
     route();
   });
@@ -3457,6 +3458,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-14", [
+      ["Game-day alerts", "Settings → Alerts", "Phone and browser notifications for lead changes, close finishes, final results, big plays, starters ruled out before kickoff, waiver results and trades. Pick which ones you want.", "#/settings"],
       ["Seed odds", "Insights → Playoff race", "Every team's chance of finishing at each seed, 1 through 12.", "#/insights/race?at=seeds"],
       ["Big plays: season", "Matchups → Big plays → Season", "Big plays added up by team and player, plus the biggest single plays of the season.", "#/matchups/plays?view=season"],
       ["Feedback box", "Header → Feedback", "Send the commissioner an idea or a problem report, privately.", "#/feedback"],
@@ -3810,10 +3812,143 @@
       <span><b>Compact mode</b><span class="team-mgr">Tighter tables, cards and spacing so more fits on screen, with one-line explanations (tap ⓘ for the rest). Saved on this device. The Compact button in the header does the same.</span></span></label></section>`;
     main.innerHTML = `<div class="section-head"><div><h1>League settings</h1><p class="sub">${L.season} season · straight from ESPN · updated ${esc(ago(D.updated))}</p></div></div>
       <h2 class="set-h">Display</h2>${display}
+      <h2 class="set-h" id="alerts">Alerts</h2><section class="panel set-alerts" id="alerts-panel"></section>
       ${glance}
       <h2 class="set-h">Roster & season</h2><div class="rec-grid set-grid">${roster}${schedule}${moves}${draft}</div>
       <h2 class="set-h">Scoring</h2><div class="rec-grid set-grid">${groups.join("")}${other}${dst}</div>`;
+    initAlerts();
   }
+
+
+  // ---------------------------------------------------------------- game-day alerts (Settings → Alerts)
+  // Notifications from the live worker (Web Push). Which alerts and the quiet hours are saved on this device and sent
+  // to the worker with this browser's subscription; alerts follow the team claimed on My team.
+  const ALERT_GROUPS = [
+    ["Your matchup", [["lead", "Lead change", "When the lead in your matchup changes hands (at most once every 10 minutes)."],
+      ["wire", "Down to the wire", "When your matchup comes down to the last few players, with who's left on each side."],
+      ["final", "Final result", "Win or loss, the final score and your new record."]]],
+    ["Big plays", [["plays", "Your starters' big plays", "Touchdowns, 40+ yard plays, 50+ yard field goals and defensive scores."],
+      ["playsAgainst", "Big plays against you", "The same plays by your opponent's starters."],
+      ["playsAll", "Every big play in the league", "All of them, for every team. Busy on Sundays."]]],
+    ["Your lineup", [["trouble", "Starter in trouble", "90 minutes before kickoff: a starter who's out, on IR, on a bye, or an empty lineup spot."]]],
+    ["Moves", [["waivers", "Waiver results", "Which claims you won or missed when waivers run."],
+      ["trades", "Trades involving your team", "When one goes through."], ["tradesAll", "Any league trade", "Every trade in the league."]]],
+    ["Site games", [["picks", "Picks reminder", "3 hours before Pick'em locks and before Sunday's games, if you haven't made your picks."]]],
+  ];
+  const ALERT_DEFAULTS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true, waivers: true, trades: true, tradesAll: false, picks: false };
+  const AL = { key: undefined, sub: null, busy: false, msg: "", err: false };
+  const alertCfg = () => {
+    const c = store.get("alerts", {}) || {};
+    return { prefs: Object.assign({}, ALERT_DEFAULTS, c.prefs || {}), quiet: Object.assign({ on: false, from: 23, to: 8 }, c.quiet || {}), member: c.member || "" };
+  };
+  const alertsSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isStandalone = () => navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+  const b64uBytes = s => { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; return Uint8Array.from(atob(s), c => c.charCodeAt(0)); };
+  async function pushApi(path, body) {
+    const r = await fetch(LIVE_API_BASE() + path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || "The alerts server didn't answer.");
+    return d;
+  }
+  async function alertSave() {
+    const c = alertCfg();
+    await pushApi("/push/save", { sub: AL.sub.toJSON(), member: ME.member, prefs: c.prefs, quiet: c.quiet, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+    store.set("alerts", { ...c, member: ME.member });
+  }
+  // the claimed team changed on My team: move this device's alerts to it
+  async function alertsResync() {
+    if (!alertsSupported() || !ME.member) return;
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      AL.sub = reg && await reg.pushManager.getSubscription();
+      if (AL.sub && alertCfg().member !== ME.member) await alertSave();
+    } catch (_) { /* tried again next time Settings opens */ }
+  }
+  function alertsHtml() {
+    const el = document.getElementById("alerts-panel");
+    if (!el) return;
+    const intro = `<p class="team-mgr al-intro">Notifications on this device for your matchup, big plays, your lineup and moves. They follow the team you've claimed on My team.</p>`;
+    const status = AL.msg ? `<p class="al-msg${AL.err ? " err" : ""}" role="status">${esc(AL.msg)}</p>` : "";
+    let body;
+    if (!alertsSupported()) {
+      body = isIos() && !isStandalone()
+        ? `<p>On iPhone and iPad, alerts work once the site is on your Home Screen: tap <b>Share</b>, then <b>Add to Home Screen</b>, and open League HQ from there.</p>`
+        : `<p>This browser can't show alerts. Try Chrome, Edge, Firefox or Safari.</p>`;
+    } else if (isIos() && !isStandalone()) {
+      body = `<p>On iPhone and iPad, alerts work once the site is on your Home Screen: tap <b>Share</b>, then <b>Add to Home Screen</b>, and open League HQ from there.</p>`;
+    } else if (!ME.member) {
+      body = `<p>Claim your team on <a href="#/myteam">My team</a> first, so alerts know which matchup is yours.</p>`;
+    } else if (AL.key === undefined) {
+      body = `<p class="team-mgr">Checking…</p>`;
+    } else if (!AL.key) {
+      body = `<p>Alerts aren't switched on for the site yet.</p>`;
+    } else if (Notification.permission === "denied") {
+      body = `<p>Notifications are blocked for this site. Allow them in your browser's site settings, then come back here.</p>`;
+    } else if (!AL.sub) {
+      body = `<button type="button" class="cta al-on" data-al="on"${AL.busy ? " disabled" : ""}>Turn on alerts</button>`;
+    } else {
+      const c = alertCfg();
+      const hours = sel => Array.from({ length: 24 }, (_, h) => `<option value="${h}"${h === sel ? " selected" : ""}>${new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: "numeric" })}</option>`).join("");
+      body = ALERT_GROUPS.map(([g, items]) => `<fieldset class="al-group"><legend>${g}</legend>${items.map(([k, label, note]) =>
+        `<label class="set-switch"><input type="checkbox" data-al-k="${k}"${c.prefs[k] ? " checked" : ""}><span><b>${label}</b><span class="team-mgr">${note}</span></span></label>`).join("")}</fieldset>`).join("") +
+        `<fieldset class="al-group"><legend>Quiet hours</legend><label class="set-switch"><input type="checkbox" data-al-q="on"${c.quiet.on ? " checked" : ""}><span><b>Don't send alerts overnight</b><span class="team-mgr">Alerts during these hours are skipped, not saved for later.</span></span></label>
+          <div class="al-quiet"><label>From <select data-al-q="from">${hours(c.quiet.from)}</select></label><label>to <select data-al-q="to">${hours(c.quiet.to)}</select></label></div></fieldset>
+        <div class="al-actions"><button type="button" class="cta" data-al="test"${AL.busy ? " disabled" : ""}>Send a test alert</button><button type="button" class="wk-link al-off" data-al="off"${AL.busy ? " disabled" : ""}>Turn off alerts on this device</button></div>`;
+    }
+    el.innerHTML = intro + body + status;
+  }
+  async function initAlerts() {
+    alertsHtml();
+    if (!alertsSupported() || !ME.member) return;
+    try {
+      const [info, reg] = await Promise.all([pushApi("/push"), navigator.serviceWorker.getRegistration()]);
+      AL.key = info.key || null;
+      AL.sub = reg ? await reg.pushManager.getSubscription() : null;
+      if (AL.sub && alertCfg().member !== ME.member) await alertSave();
+    } catch (e) { AL.key = AL.key === undefined ? null : AL.key; AL.msg = e.message; AL.err = true; }
+    alertsHtml();
+  }
+  async function alertAction(kind) {
+    AL.busy = true; AL.msg = ""; AL.err = false; alertsHtml();
+    try {
+      if (kind === "on") {
+        if ((await Notification.requestPermission()) !== "granted") throw new Error("Notifications weren't allowed, so alerts are off.");
+        const reg = await navigator.serviceWorker.ready;
+        AL.sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(AL.key) });
+        await alertSave();
+        AL.msg = "Alerts are on for this device.";
+      } else if (kind === "off") {
+        const sub = AL.sub;
+        AL.sub = null;
+        if (sub) { await pushApi("/push/remove", { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe().catch(() => {}); }
+        AL.msg = "Alerts are off for this device.";
+      } else if (kind === "test") {
+        await pushApi("/push/test", { endpoint: AL.sub.endpoint });
+        AL.msg = "Test sent. It should show up in a few seconds.";
+      } else {
+        await alertSave();
+        AL.msg = "Saved.";
+      }
+    } catch (e) { AL.msg = e.message; AL.err = true; }
+    AL.busy = false;
+    alertsHtml();
+  }
+  document.addEventListener("click", e => {
+    const b = e.target.closest && e.target.closest("[data-al]");
+    if (b && !b.disabled) alertAction(b.dataset.al);
+  });
+  document.addEventListener("change", e => {
+    const t = e.target;
+    if (!t.matches || !t.closest("#alerts-panel")) return;
+    const c = alertCfg();
+    if (t.dataset.alK) c.prefs[t.dataset.alK] = t.checked;
+    else if (t.dataset.alQ === "on") c.quiet.on = t.checked;
+    else if (t.dataset.alQ) c.quiet[t.dataset.alQ] = Number(t.value);
+    else return;
+    store.set("alerts", c);
+    alertAction("save");
+  });
 
   // ---------------------------------------------------------------- events
   window.addEventListener("hashchange", () => { route(); window.scrollTo(0, 0); });

@@ -1,3 +1,4 @@
+import { sendPush, vapidPublic } from "./push.js";
 import { makeQuiz } from "./trivia.js";
 // League HQ live worker.
 //
@@ -6,7 +7,9 @@ import { makeQuiz } from "./trivia.js";
 //   cron        -> every minute: the big-play feed, and a GitHub rebuild of the full site whenever anything besides
 //                  live scores changes on ESPN (plus every 5 min during games and every 30 min regardless).
 //
-// Secrets (set with `wrangler secret put`): ESPN_S2, ESPN_SWID, and optionally GITHUB_TOKEN.
+//   /push/*     -> game-day alerts: subscribe, unsubscribe, test (see "game-day alerts" near the end).
+//
+// Secrets (set with `wrangler secret put`): ESPN_S2, ESPN_SWID, optionally GITHUB_TOKEN, and VAPID_PRIVATE for alerts.
 // Vars (wrangler.toml): LEAGUE_ID, SITE_ORIGIN, GITHUB_REPO, GITHUB_WORKFLOW.
 
 const POS = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST" };
@@ -1378,7 +1381,7 @@ export default {
       try { return await handlePick3(req, env, url); }
       catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
     }
-    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact], ["/pulse", handlePulse], ["/graph", handleGraph], ["/plays", handlePlays], ["/feedback", handleFeedback]]) {
+    for (const [pre, fn] of [["/bull", handleBull], ["/rank", handleRank], ["/react", handleReact], ["/pulse", handlePulse], ["/graph", handleGraph], ["/plays", handlePlays], ["/feedback", handleFeedback], ["/push", handlePush]]) {
       if (url.pathname.startsWith(pre)) {
         try { return await fn(req, env, url); }
         catch (e) { return json(env, req, { error: String(e.message || e) }, 502); }
@@ -1419,6 +1422,8 @@ export default {
 
   // Runs every minute: the big-play feed, plus deciding whether the full site needs rebuilding now.
   async scheduled(event, env, ctx) {
+    // game-day alerts run on their own trigger, so their pushes don't share this run's request budget
+    if (event.cron === ALERT_CRON) { ctx.waitUntil(runAlerts(env, event.scheduledTime).catch(e => console.log("alerts failed", String(e)))); return; }
     if (env.PICKEM) ctx.waitUntil(updateFeed(env).catch(e => console.log("feed update failed", String(e))));
     ctx.waitUntil(maybeRebuild(env, new Date(event.scheduledTime)).catch(e => console.log("rebuild check failed", String(e))));
   },
@@ -1519,4 +1524,383 @@ async function maybeRebuild(env, now) {
     if (age != null && age > (games ? 6.5 : 31.5)) reasons.push(`catch-up: last rebuild ${Math.round(age)} min ago`);
   }
   if (reasons.length) await dispatchRebuild(env, reasons.join(", ")).catch(e => console.log("GitHub dispatch failed", String(e)));
+}
+
+// ---------------------------------------------------------------- game-day alerts (Web Push)
+// Phones and browsers subscribe from Settings → Alerts. A separate once-a-minute check (ALERT_CRON) looks for:
+// lead changes, "down to the wire" moments and final results in your matchup; big plays (yours, against you, or
+// league-wide); a starter who's out, on a bye or an empty spot 90 minutes before kickoff; waiver results and trades;
+// and an optional reminder before Pick'em locks / Sunday's Pick 4. Each subscriber gets at most one notification per
+// minute (several alerts in the same minute are combined). KV is only written when something was sent or changed.
+const ALERT_CRON = "0-59 * * * *";
+const ALERT_KINDS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true,
+  waivers: true, trades: true, tradesAll: false, picks: false };
+const SUBS_KEY = "push:subs";
+const SUBS_MAX = 36; // each alert is one request; this keeps a busy minute inside the worker's per-run limit
+const LEAD_GAP_MS = 10 * 60e3;   // at most one lead-change alert per matchup every 10 minutes
+const TROUBLE_LEAD_MS = 90 * 60e3; // "starter in trouble" goes out 90 minutes before that player's kickoff
+const BAD_STATUS = { OUT: "out", INJURY_RESERVE: "on IR", SUSPENSION: "suspended" };
+
+const loadSubs = async env => (await env.PICKEM.get(SUBS_KEY, "json")) || {};
+const subId = async endpoint => (await sha1(endpoint)).slice(0, 20);
+const teamName = t => t.name || [t.location, t.nickname].filter(Boolean).join(" ") || `Team ${t.id}`;
+const isStarterSlot = s => s !== 20 && s !== 21;
+function validTz(tz) {
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return String(tz); } catch (_) { return "America/New_York"; }
+}
+const hour = h => Number.isInteger(h) && h >= 0 && h <= 23;
+const when = (ms, tz, withDay = true) => new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit",
+  ...(withDay ? { weekday: "short" } : {}) }).format(ms);
+const f1 = n => (Math.round(n * 10) / 10).toFixed(1);
+
+async function handlePush(req, env, url) {
+  if (!env.PICKEM) return json(env, req, { error: "Alerts storage isn't set up." }, 503);
+  if (req.method === "GET" && url.pathname === "/push") return json(env, req, { key: vapidPublic(env), kinds: ALERT_KINDS });
+  if (req.method !== "POST") return json(env, req, { error: "Not found" }, 404);
+  const body = await postBody(req);
+  if (!body) return json(env, req, { error: "Bad request" }, 400);
+  const sub = body.sub || {};
+  const endpoint = String(sub.endpoint || body.endpoint || "");
+  if (!/^https:\/\/[^\s]+$/.test(endpoint) || endpoint.length > 1000) return json(env, req, { error: "Bad subscription" }, 400);
+  const id = await subId(endpoint);
+  const subs = await loadSubs(env);
+  if (url.pathname === "/push/save") {
+    if (!vapidPublic(env)) return json(env, req, { error: "Alerts aren't switched on for the site yet." }, 503);
+    const keys = sub.keys || {};
+    if (typeof keys.p256dh !== "string" || typeof keys.auth !== "string" || keys.p256dh.length > 200 || keys.auth.length > 100)
+      return json(env, req, { error: "Bad subscription" }, 400);
+    const member = String(body.member || "");
+    if (!(await pickemWeek(env)).members.includes(member)) return json(env, req, { error: "Claim your team on My team first." }, 400);
+    if (!subs[id] && Object.keys(subs).length >= SUBS_MAX) return json(env, req, { error: "Too many devices have alerts on." }, 429);
+    const p = body.prefs || {}, q = body.quiet || {};
+    subs[id] = {
+      sub: { endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth } }, member,
+      prefs: Object.fromEntries(Object.entries(ALERT_KINDS).map(([k, d]) => [k, k in p ? !!p[k] : d])),
+      quiet: { on: !!q.on, from: hour(q.from) ? q.from : 23, to: hour(q.to) ? q.to : 8 },
+      tz: validTz(body.tz), at: (subs[id] || {}).at || Date.now(),
+    };
+    await env.PICKEM.put(SUBS_KEY, JSON.stringify(subs));
+    return json(env, req, { ok: true });
+  }
+  if (url.pathname === "/push/remove") {
+    if (subs[id]) { delete subs[id]; await env.PICKEM.put(SUBS_KEY, JSON.stringify(subs)); }
+    return json(env, req, { ok: true });
+  }
+  if (url.pathname === "/push/test") {
+    const rec = subs[id];
+    if (!rec) return json(env, req, { error: "Turn alerts on first." }, 404);
+    const rl = `push:test:${id}`;
+    if (await env.PICKEM.get(rl)) return json(env, req, { error: "One test a minute." }, 429);
+    await env.PICKEM.put(rl, "1", { expirationTtl: 60 });
+    const status = await sendPush(env, rec.sub, { title: "League HQ alerts are on", body: "This is what an alert looks like. Tap it to open the site.", url: "#/settings", tag: "lhq-test" }, { ttl: 300 });
+    if (status === 404 || status === 410) {
+      delete subs[id];
+      await env.PICKEM.put(SUBS_KEY, JSON.stringify(subs));
+      return json(env, req, { error: "This device's alert sign-up expired. Turn alerts off and back on." }, 410);
+    }
+    return json(env, req, status < 300 ? { ok: true } : { error: `The push service said ${status}.` }, status < 300 ? 200 : 502);
+  }
+  return json(env, req, { error: "Not found" }, 404);
+}
+
+function quietNow(rec, now) {
+  if (!rec.quiet || !rec.quiet.on) return false;
+  const h = Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hourCycle: "h23", timeZone: rec.tz }).format(now)) % 24;
+  const { from, to } = rec.quiet;
+  return from === to ? false : from < to ? h >= from && h < to : h >= from || h < to;
+}
+
+// Collects alerts per subscriber, then sends one notification each (several in one minute are combined).
+function outbox(subs, teamOf) {
+  const box = {};
+  return {
+    // who(team id) -> should this subscriber get it; make(rec) -> { title, body, url, tag }
+    add(kind, who, make) {
+      for (const [id, rec] of Object.entries(subs)) {
+        const team = teamOf[rec.member];
+        if (team == null || !rec.prefs[kind] || !who(team)) continue;
+        const m = make(rec, team);
+        if (m) (box[id] = box[id] || []).push(m);
+      }
+    },
+    size: () => Object.keys(box).length,
+    async flush(env, now) {
+      const gone = [];
+      await Promise.all(Object.entries(box).map(async ([id, msgs]) => {
+        const rec = subs[id];
+        if (quietNow(rec, now)) return;
+        const msg = msgs.length === 1 ? msgs[0] : { title: `${msgs.length} League HQ alerts`, body: msgs.map(m => `${m.title}: ${m.body}`).join("\n"), url: msgs[0].url, tag: "lhq-batch" };
+        msg.body = String(msg.body).slice(0, 1200);
+        try {
+          const s = await sendPush(env, rec.sub, msg);
+          if (s === 404 || s === 410) gone.push(id);
+          else if (s >= 300) console.log("push refused", s);
+        } catch (e) { console.log("push failed", String(e)); }
+      }));
+      if (gone.length) {
+        const fresh = await loadSubs(env);
+        gone.forEach(id => delete fresh[id]);
+        await env.PICKEM.put(SUBS_KEY, JSON.stringify(fresh));
+      }
+      return gone.length;
+    },
+  };
+}
+
+// Team names, owners, records and the current scoring period.
+async function teamInfo(env, yr) {
+  return cached(`alert-teams-${yr}`, 300, async () => {
+    const d = await espn(env, yr, "view=mTeam&view=mStatus");
+    const teams = {};
+    for (const t of d.teams || []) {
+      const r = (t.record || {}).overall || {};
+      teams[t.id] = { name: teamName(t), owners: t.owners || [], w: r.wins || 0, l: r.losses || 0, t: r.ties || 0 };
+    }
+    return { sp: d.status.latestScoringPeriod, teams };
+  });
+}
+
+// NFL team abbreviation -> { state: "pre" | "in" | "post", at: kickoff ms } for this week's games.
+async function nflStatus() {
+  return cached("nfl-status", 50, async () => {
+    const d = await (await fetch(`${NFL_SITE}/scoreboard`)).json();
+    const out = {};
+    for (const e of d.events || []) {
+      const c = (e.competitions || [])[0] || {};
+      const state = ((c.status || e.status || {}).type || {}).state;
+      for (const x of c.competitors || []) out[x.team.abbreviation] = { state, at: Date.parse(e.date) };
+    }
+    return out;
+  });
+}
+
+// Feed plays worth an alert: touchdowns, 40+ yard plays (and 50+ yard field goals), and defensive scores.
+function bigPlay(e) {
+  if (!e.starter || e.kind === "stat correction" || e.label === "stat correction") return false;
+  if (/TD\b/.test(e.label) || e.pos === "D/ST") return true;
+  if (/^(50|60)\+ yd field goal/.test(e.label)) return true;
+  const m = String(e.label).match(/^(\d+)-yd /);
+  return !!(m && +m[1] >= 40);
+}
+
+async function matchupAlerts(env, box, info, yr, week, now) {
+  if (!(await gamesOn(yr, week, now))) return;
+  const [lv, nfl] = await Promise.all([cached("alert-live", 50, () => liveWeek(env)), nflStatus().catch(() => ({}))]);
+  if (lv.week !== week) return;
+  const key = `push:game:${yr}:${week}`;
+  const prev = await env.PICKEM.get(key, "json");
+  const S = prev || { lead: {}, leadAt: {}, final: {}, wire: {}, playT: now };
+  let changed = !prev;
+  const T = info.teams, nm = id => (T[id] ? T[id].name : `Team ${id}`);
+  const stateOf = p => (nfl[p.team] || {}).state || "none"; // none = bye / no game this week
+  for (const g of lv.games) {
+    if (g.sides.length !== 2 || S.final[g.id]) continue;
+    const [a, b] = g.sides;
+    const lead = a.pts > b.pts ? a.team : b.pts > a.pts ? b.team : null;
+    const both = t => t === a.team || t === b.team;
+    const side = t => (t === a.team ? [a, b] : [b, a]);
+    const starters = s => s.lineup.filter(p => !["BE", "IR"].includes(p.slot));
+    const left = s => starters(s).filter(p => stateOf(p) === "pre");
+    const playing = [a, b].some(s => starters(s).some(p => stateOf(p) === "in"));
+    const anyKnown = Object.keys(nfl).length > 0;
+    // final: every starter on both sides has finished (or has no game)
+    if (anyKnown && !playing && !left(a).length && !left(b).length && starters(a).concat(starters(b)).some(p => stateOf(p) === "post")) {
+      S.final[g.id] = 1; changed = true;
+      box.add("final", both, (rec, t) => {
+        const [me, op] = side(t), won = me.pts > op.pts, tie = me.pts === op.pts, r = T[t] || { w: 0, l: 0, t: 0 };
+        const rec2 = [r.w + (won ? 1 : 0), r.l + (!won && !tie ? 1 : 0)].concat(r.t || tie ? [r.t + (tie ? 1 : 0)] : []).join("–");
+        return { title: won ? "You won!" : tie ? "It's a tie" : "Final: a loss", tag: `final-${g.id}`, url: "#/matchups",
+          body: `${f1(me.pts)} to ${f1(op.pts)} vs ${nm(op.team)}${g.playoff ? "" : `. You're now ${rec2}`}.` };
+      });
+      continue;
+    }
+    // lead change (the first lead of the week isn't a change)
+    if (lead && S.lead[g.id] !== lead) {
+      if (S.lead[g.id] && now - (S.leadAt[g.id] || 0) >= LEAD_GAP_MS) {
+        S.leadAt[g.id] = now;
+        box.add("lead", both, (rec, t) => {
+          const [me, op] = side(t), up = lead === t;
+          return { title: up ? "You took the lead" : `${nm(op.team)} took the lead`, tag: `lead-${g.id}`, url: "#/matchups",
+            body: `${f1(me.pts)} to ${f1(op.pts)}${up ? "" : ` (down ${f1(op.pts - me.pts)})`}.` };
+        });
+      }
+      S.lead[g.id] = lead; changed = true;
+    }
+    // down to the wire: nobody playing right now, 1-4 starters left in later games, the trailing team still has one
+    const la = left(a), lb = left(b), rest = la.concat(lb);
+    const trailing = a.pts < b.pts ? la : b.pts < a.pts ? lb : rest;
+    if (anyKnown && !playing && rest.length >= 1 && rest.length <= 4 && trailing.length &&
+        starters(a).concat(starters(b)).some(p => stateOf(p) === "post")) {
+      const sig = rest.map(p => p.id).sort().join(",");
+      if (S.wire[g.id] !== sig) {
+        S.wire[g.id] = sig; changed = true;
+        box.add("wire", both, (rec, t) => {
+          const [me, op] = side(t), diff = me.pts - op.pts;
+          const who = s => left(s).map(p => `${p.name} (${p.team}, ${when((nfl[p.team] || {}).at || now, rec.tz)})`).join(", ") || "nobody";
+          return { title: "Down to the wire", tag: `wire-${g.id}`, url: "#/matchups",
+            body: `${diff > 0 ? `You lead by ${f1(diff)}` : diff < 0 ? `You trail by ${f1(-diff)}` : "Tied"} vs ${nm(op.team)}. Left for you: ${who(me)}. For them: ${who(op)}.` };
+        });
+      }
+    }
+  }
+  // big plays from the live feed (written by updateFeed each minute)
+  const feed = await env.PICKEM.get(`feed:${yr}:${week}`, "json");
+  const fresh = ((feed && feed.events) || []).filter(e => e.t > S.playT);
+  if (fresh.length) {
+    S.playT = Math.max(...fresh.map(e => e.t)); changed = true;
+    for (const e of fresh.filter(bigPlay).sort((x, y) => x.t - y.t)) {
+      const make = (title) => () => ({ title, tag: `play-${e.pid}-${e.t}`, url: "#/matchups",
+        body: `${e.name} (${e.nfl}): ${e.label}, ${e.delta >= 0 ? "+" : ""}${f1(e.delta)} pts. ${nm(e.team)} ${f1(e.score[0])}, ${nm(e.opp)} ${f1(e.score[1])}.` });
+      box.add("plays", t => t === e.team, make("Big play for you"));
+      box.add("playsAgainst", t => t === e.opp, make("Big play against you"));
+      box.add("playsAll", t => t !== e.team && t !== e.opp, make(`Big play: ${nm(e.team)}`));
+    }
+  }
+  if (changed) await env.PICKEM.put(key, JSON.stringify(S), { expirationTtl: 21 * 86400 });
+}
+
+// The day of the week (in New York) a kickoff falls on, e.g. "Sun".
+const etDay = ms => new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "America/New_York" }).format(ms);
+
+async function scheduleAlerts(env, box, subs, teamOf, info, yr, week, now) {
+  const sp = info.sp;
+  const games = (await proGames(yr))[sp] || {};
+  const kicks = [...new Set(Object.values(games).map(g => g.at))].sort((x, y) => x - y);
+  const sundayMain = kicks.find(k => etDay(k) === "Sun");
+  const lineupAt = kicks.find(k => now >= k - TROUBLE_LEAD_MS && now < k - TROUBLE_LEAD_MS + 15 * 60e3);
+  const pickLock = kicks[0];
+  const pickemDue = pickLock && now >= pickLock - 3 * 3600e3 && now < pickLock - 3 * 3600e3 + 15 * 60e3;
+  const pick4Due = sundayMain && now >= sundayMain - 3 * 3600e3 && now < sundayMain - 3 * 3600e3 + 15 * 60e3;
+  if (!lineupAt && !pickemDue && !pick4Due) return;
+  const key = `push:sent:${yr}:${sp}`;
+  const sent = (await env.PICKEM.get(key, "json")) || {};
+  let changed = false;
+  const T = info.teams;
+  if (lineupAt) {
+    const want = new Set(Object.values(subs).filter(r => r.prefs.trouble && teamOf[r.member] != null && !sent[`lu|${teamOf[r.member]}|${lineupAt}`]).map(r => teamOf[r.member]));
+    if (want.size) {
+      const d = await cached(`alert-rosters-${yr}-${sp}`, 120, () => espn(env, yr, `view=mRoster&view=mSettings&scoringPeriodId=${sp}`));
+      const need = ((d.settings || {}).rosterSettings || {}).lineupSlotCounts || {};
+      for (const t of d.teams || []) {
+        if (!want.has(t.id)) continue;
+        sent[`lu|${t.id}|${lineupAt}`] = 1; changed = true;
+        const entries = ((t.roster || {}).entries || []).filter(e => isStarterSlot(e.lineupSlotId));
+        const issues = [];
+        for (const e of entries) {
+          const p = (e.playerPoolEntry || {}).player || {}, g = games[p.proTeamId];
+          if (g && g.at === lineupAt && BAD_STATUS[p.injuryStatus]) issues.push(`${p.fullName} is ${BAD_STATUS[p.injuryStatus]}`);
+          if (!g && lineupAt === sundayMain) issues.push(`${p.fullName} is on a bye`);
+        }
+        if (lineupAt === sundayMain) {
+          const filled = {};
+          entries.forEach(e => { filled[e.lineupSlotId] = (filled[e.lineupSlotId] || 0) + 1; });
+          const empty = Object.entries(need).filter(([s]) => isStarterSlot(+s)).reduce((n, [s, c]) => n + Math.max(0, c - (filled[s] || 0)), 0);
+          if (empty) issues.push(`${empty} lineup spot${empty === 1 ? " is" : "s are"} empty`);
+        }
+        if (issues.length) box.add("trouble", x => x === t.id, rec => ({ title: "Lineup check", tag: `lineup-${lineupAt}`, url: "#/myteam",
+          body: `Kickoff at ${when(lineupAt, rec.tz, false)}: ${issues.join("; ")}. Fix it on ESPN before then.` }));
+      }
+    }
+  }
+  if (pickemDue || pick4Due) {
+    const members = [...new Set(Object.values(subs).filter(r => r.prefs.picks).map(r => r.member))];
+    const p4 = pick4Due ? (await env.PICKEM.get(`p3-entries:${yr}:${week}`, "json")) || {} : {};
+    for (const m of members) {
+      if (pickemDue && !sent[`pk|${m}`]) {
+        sent[`pk|${m}`] = 1; changed = true;
+        if (!(await env.PICKEM.get(`picks:${yr}:${week}:${m}`))) box.add("picks", () => true, rec => rec.member === m ? { title: "Pick'em closes soon",
+          tag: "picks-pickem", url: "#/games", body: `Picks lock at ${when(pickLock, rec.tz)}. You haven't made yours yet.` } : null);
+      }
+      if (pick4Due && !sent[`p4|${m}`]) {
+        sent[`p4|${m}`] = 1; changed = true;
+        const e = p4[m] || {};
+        if (!P3_SLOTS.some(s => e[s])) box.add("picks", () => true, rec => rec.member === m ? { title: "Pick 4 reminder",
+          tag: "picks-p4", url: "#/games/pick4", body: `Sunday's games start at ${when(sundayMain, rec.tz, false)}. You haven't set a Pick 4 lineup yet.` } : null);
+      }
+    }
+  }
+  if (changed) await env.PICKEM.put(key, JSON.stringify(sent), { expirationTtl: 21 * 86400 });
+}
+
+// Waiver results and trades: checked only when the league fingerprint (maybeRebuild) has changed since last time.
+async function moveAlerts(env, box, info, yr) {
+  const fp = await env.PICKEM.get("watch:fp", "json");
+  if (!fp) return;
+  const st = await env.PICKEM.get("push:tx", "json");
+  if (st && st.fp === fp.hash) return;
+  const sp = info.sp;
+  const lists = await Promise.all([sp, sp + 1].map(p => espn(env, yr, `view=mTransactions2&scoringPeriodId=${p}`).then(d => d.transactions || []).catch(() => [])));
+  const all = lists.flat();
+  const byId = Object.fromEntries(all.map(t => [t.id, t]));
+  const done = t => t.status === "EXECUTED" || /^FAILED/.test(String(t.status));
+  const ids = all.filter(done).map(t => t.id);
+  if (!st) { await env.PICKEM.put("push:tx", JSON.stringify({ fp: fp.hash, seen: ids.slice(-600) })); return; }
+  const seen = new Set(st.seen);
+  const fresh = all.filter(t => done(t) && !seen.has(t.id));
+  const waivers = fresh.filter(t => t.type === "WAIVER");
+  const trades = [];
+  const tradeKeys = new Set();
+  for (const t of fresh) {
+    if (!["TRADE_ACCEPT", "TRADE_UPHOLD"].includes(t.type) || t.status !== "EXECUTED") continue;
+    const k = t.relatedTransactionId || t.id;
+    if (tradeKeys.has(k) || seen.has("tr:" + k)) continue;
+    const items = ((t.items || []).length ? t.items : (byId[t.relatedTransactionId] || {}).items || []).filter(i => i.type === "TRADE");
+    if (!items.length) continue;
+    tradeKeys.add(k);
+    trades.push(items);
+  }
+  // player names: from the rosters, then ESPN's player lookup for anyone dropped
+  const pids = [...new Set(waivers.flatMap(t => (t.items || []).map(i => i.playerId)).concat(trades.flat().map(i => i.playerId)))];
+  const names = {};
+  if (pids.length) {
+    try {
+      const d = await espnFiltered(env, yr, "view=kona_player_info", { players: { filterIds: { value: pids } } });
+      for (const x of d.players || []) names[x.id] = (x.player || {}).fullName;
+    } catch (e) { console.log("alert names failed", String(e)); }
+  }
+  const nm = id => names[id] || "a player";
+  const T = info.teams, tn = id => (T[id] ? T[id].name : `Team ${id}`);
+  const byTeam = {};
+  for (const t of waivers) {
+    const add = (t.items || []).find(i => i.type === "ADD"), drop = (t.items || []).find(i => i.type === "DROP");
+    if (!add) continue;
+    const r = byTeam[t.teamId] = byTeam[t.teamId] || { won: [], missed: [] };
+    if (t.status === "EXECUTED") r.won.push(nm(add.playerId) + (drop ? ` (dropped ${nm(drop.playerId)})` : ""));
+    else r.missed.push(nm(add.playerId));
+  }
+  for (const [team, r] of Object.entries(byTeam)) {
+    box.add("waivers", t => t === +team, () => ({ title: "Waiver results", tag: "waivers", url: "#/myteam",
+      body: [r.won.length ? `Won: ${r.won.join(", ")}.` : "", r.missed.length ? `Missed: ${r.missed.join(", ")}.` : ""].filter(Boolean).join(" ") }));
+  }
+  for (const items of trades) {
+    const teams = [...new Set(items.map(i => i.toTeamId))];
+    const gets = id => items.filter(i => i.toTeamId === id).map(i => nm(i.playerId)).join(", ") || "nothing";
+    box.add("trades", t => teams.includes(t), (rec, t) => {
+      const other = teams.filter(x => x !== t);
+      return { title: "Trade done", tag: "trade", url: "#/trades", body: `With ${other.map(tn).join(" and ")}: you get ${gets(t)}; they get ${other.map(gets).join("; ")}.` };
+    });
+    box.add("tradesAll", t => !teams.includes(t), () => ({ title: "League trade", tag: "trade", url: "#/trades",
+      body: teams.map(x => `${tn(x)} gets ${gets(x)}`).join("; ") + "." }));
+  }
+  const keep = st.seen.concat(fresh.map(t => t.id), [...tradeKeys].map(k => "tr:" + k)).slice(-600);
+  await env.PICKEM.put("push:tx", JSON.stringify({ fp: fp.hash, seen: keep }));
+}
+
+async function runAlerts(env, now = Date.now()) {
+  if (!env.PICKEM || !vapidPublic(env)) return;
+  const subs = await loadSubs(env);
+  if (!Object.keys(subs).length) return;
+  const wk = await pickemWeek(env);
+  if (wk.over) return;
+  const info = await teamInfo(env, wk.season);
+  const teamOf = {};
+  for (const [id, t] of Object.entries(info.teams)) for (const o of t.owners) teamOf[o] = +id;
+  const box = outbox(subs, teamOf);
+  const step = (name, p) => p.catch(e => console.log(`alerts: ${name} failed`, String(e)));
+  await Promise.all([
+    step("matchups", matchupAlerts(env, box, info, wk.season, wk.week, now)),
+    step("schedule", scheduleAlerts(env, box, subs, teamOf, info, wk.season, wk.week, now)),
+    step("moves", moveAlerts(env, box, info, wk.season)),
+  ]);
+  if (box.size()) await box.flush(env, now);
 }

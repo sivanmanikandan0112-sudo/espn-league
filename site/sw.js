@@ -64,3 +64,24 @@ self.addEventListener("fetch", event => {
   }
   // anything else (the live worker, ESPN images) goes straight to the network
 });
+
+// Game-day alerts (Settings → Alerts): the live worker sends { title, body, url, tag }; tapping one opens that page.
+self.addEventListener("push", event => {
+  let m = {};
+  try { m = event.data ? event.data.json() : {}; } catch (_) { m = { body: event.data ? event.data.text() : "" }; }
+  event.waitUntil(self.registration.showNotification(m.title || "League HQ", {
+    body: m.body || "", tag: m.tag || undefined, renotify: !!m.tag,
+    icon: "icons/icon-192.png", badge: "icons/icon-192.png", data: { url: m.url || "" },
+  }));
+});
+
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const target = new URL(event.notification.data && event.notification.data.url || "", self.registration.scope).toString();
+  event.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const open = wins.find(w => w.url.startsWith(self.registration.scope));
+    if (open) { await open.focus(); return open.navigate ? open.navigate(target).catch(() => {}) : null; }
+    return self.clients.openWindow(target);
+  })());
+});

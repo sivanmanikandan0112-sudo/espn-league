@@ -8,6 +8,7 @@ SITE_ORIGIN = "https://sivanmanikandan0112-sudo.github.io"
 GITHUB_REPO = "sivanmanikandan0112-sudo/espn-league"
 GITHUB_WORKFLOW = "refresh.yml"
 SITE_DATA = "https://sivanmanikandan0112-sudo.github.io/espn-league/data/"
+# Game-day alerts (Web Push) need one secret, VAPID_PRIVATE: the signing key, made and stored by set-push-key.sh.
 # league member ids (as on the site) who can read the feedback inbox
 ADMIN_MEMBERS = "{C852CB33-A2B0-426C-BE8C-007DA699A41A}"
 
@@ -15,7 +16,8 @@ ADMIN_MEMBERS = "{C852CB33-A2B0-426C-BE8C-007DA699A41A}"
 # rosters, lineups, trades, records or settings change on ESPN (plus every 5 min during games, every 30 min always).
 # Rebuilds only run if a GITHUB_TOKEN secret is set.
 [triggers]
-crons = ["* * * * *"]
+# The second schedule is the same "every minute", written differently so it runs on its own: game-day alerts.
+crons = ["* * * * *", "0-59 * * * *"]
 
 # Weekly pick'em: PINs and picks
 [[kv_namespaces]]
