@@ -448,6 +448,7 @@ def build_season(season, is_current, names):
         t["vsProj"] = vsproj.get(tid)
         t["autopilot"] = auto.get(tid)
     add_draft(data, season, actual, slot_counts)
+    add_no_moves(data, season, per_week, slot_counts)
     data["rulesLab"] = stats.rules_lab(data, data["_stats"], slot_counts)
     if is_current and not over:
         data["gameLogs"] = stats.game_logs(data, data["_stats"])
@@ -499,8 +500,18 @@ def add_power(data, teams, slot_counts, best_fa, latest, final_week, season):
     data["league"]["powerWeeks"] = [power_weeks[0], power_weeks[-1]]
 
 
+_LIVE = {}
+
+
 def live_site_file(name):
     """A data file as the live site has it right now (the previous build), or None."""
+    if name in _LIVE:
+        return _LIVE[name]
+    _LIVE[name] = _live_site_file(name)
+    return _LIVE[name]
+
+
+def _live_site_file(name):
     try:
         req = urllib.request.Request(LIVE_SITE + name + "?t=%d" % time.time(), headers={"User-Agent": "espn-league-site"})
         with urllib.request.urlopen(req, timeout=20) as r:
@@ -758,6 +769,84 @@ def add_playoff_odds(data, main, teams, regular, current_week):
     for tid, o in odds.items():
         teams[tid]["odds"] = o
     return schedule, strength
+
+
+def weekly_points(season, ids, through):
+    """Fantasy points (league scoring) for these players in each week 1..through: {player id: {week: pts}}."""
+    out = {}
+    ids = list(ids)
+    for i in range(0, len(ids), 150):
+        filt = json.dumps({"players": {"filterIds": {"value": ids[i:i + 150]},
+                                       "filterStatsForTopScoringPeriodIds": {"value": 18, "additionalValue": ["00%d" % season]}}})
+        for e in fetch(season, params=[("view", "kona_player_info")], headers={"X-Fantasy-Filter": filt}).get("players", []):
+            p = e.get("player") or {}
+            wk = out.setdefault(p.get("id"), {})
+            for st in p.get("stats", []):
+                if (st.get("statSourceId") == 0 and st.get("statSplitTypeId") == 1 and st.get("seasonId") == season
+                        and 1 <= (st.get("scoringPeriodId") or 0) <= through):
+                    wk[st["scoringPeriodId"]] = st.get("appliedTotal") or 0.0
+    return out
+
+
+def add_no_moves(data, season, per_week, slot_counts):
+    """Insights -> What ifs -> No-moves universe: every team keeps its drafted roster all season (no pickups, drops or
+    trades) and starts its best lineup from it each week; the real schedule is replayed with those scores. Compared
+    with the same best-lineup scoring of the rosters teams really had (per_week from stats.efficiency), so the
+    difference is what roster moves did, not lineup calls. Completed regular-season weeks only; the result is reused
+    from the live site until another week is complete (drafted players' weekly points need one ESPN query)."""
+    draft = data.get("draft")
+    weeks = stats.regular_weeks(data)
+    if not draft or not draft.get("picks") or not weeks:
+        return
+    through = max(w["week"] for w in weeks)
+    prev = (live_site_file("%d.js" % season) or {}).get("noMoves")
+    if prev and prev.get("through") == through:
+        data["noMoves"] = prev
+        return
+    picks = draft["picks"]
+    pts = weekly_points(season, {p["id"] for p in picks}, through)
+    drafted = defaultdict(list)
+    for p in picks:
+        drafted[p["team"]].append(p)
+    univ = {}  # (week, team) -> (score, {player id: pts started})
+    for w in weeks:
+        for tid, players in drafted.items():
+            pool = [{"id": p["id"], "pos": p["pos"], "pts": pts.get(p["id"], {}).get(w["week"], 0.0)} for p in players]
+            best = stats.best_lineup(pool, slot_counts, lambda x: x["pts"])
+            univ[(w["week"], tid)] = (sum(x["pts"] for x in best), {x["id"]: x["pts"] for x in best})
+    rec = defaultdict(lambda: {"u": [0, 0, 0], "b": [0, 0, 0], "uPf": 0.0, "bPf": 0.0, "weeks": 0,
+                               "adds": defaultdict(float), "gone": defaultdict(float)})
+    names = {p["id"]: p["name"] for p in picks}
+    res = lambda a, b: 0 if a > b else 1 if a < b else 2
+    for w in weeks:
+        for g in w["games"]:
+            if len(g["sides"]) != 2:
+                continue
+            a, b = g["sides"]
+            if (w["week"], a["team"]) not in univ or (w["week"], b["team"]) not in univ:
+                continue
+            for me, opp in ((a, b), (b, a)):
+                r = rec[me["team"]]
+                u, uo = univ[(w["week"], me["team"])][0], univ[(w["week"], opp["team"])][0]
+                bm, bo = per_week.get((w["week"], me["team"]), (0, 0))[1], per_week.get((w["week"], opp["team"]), (0, 0))[1]
+                r["u"][res(u, uo)] += 1; r["b"][res(bm, bo)] += 1
+                r["uPf"] += u; r["bPf"] += bm; r["weeks"] += 1
+                # the moves behind the difference: players they added who made their real best lineup, and drafted
+                # players no longer on the team who'd have started in the no-moves lineup
+                mine = {p["id"] for p in drafted[me["team"]]}
+                real = {p["id"]: p for p in me["lineup"]}
+                for x in stats.best_lineup(me["lineup"], slot_counts, lambda p: p["pts"]):
+                    if x["id"] not in mine:
+                        r["adds"][x["id"]] += x["pts"]; names.setdefault(x["id"], x["name"])
+                for pid, v in univ[(w["week"], me["team"])][1].items():
+                    if pid not in real:
+                        r["gone"][pid] += v
+    top = lambda d: (lambda k: {"id": k, "name": names.get(k, "?"), "pts": round(d[k], 1)})(max(d, key=d.get)) if d else None
+    data["noMoves"] = {"through": through, "teams": {str(tid): {
+        "univ": r["u"], "best": r["b"], "univPf": round(r["uPf"], 1), "bestPf": round(r["bPf"], 1), "weeks": r["weeks"],
+        "wins": r["b"][0] + r["b"][2] / 2 - (r["u"][0] + r["u"][2] / 2), "ppw": round((r["bPf"] - r["uPf"]) / r["weeks"], 1) if r["weeks"] else 0,
+        "bestAdd": top(r["adds"]), "missed": top(r["gone"])} for tid, r in rec.items()}}
+    print("  no-moves universe through week %d" % through)
 
 
 def add_draft(data, season, actual, slot_counts):

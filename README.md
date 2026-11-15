@@ -49,6 +49,11 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
     Past seasons show final results.
   - *Luck* (actual vs. all-play expected wins), *Close games* (record in games decided by under 10 points), *Schedule* (opponent strength so far and remaining),
     *Schedule swap* (every team's record on every other team's schedule, best and worst),
+    *No-moves universe* (What ifs: every team keeps its drafted roster with no moves and starts its best lineup each
+    week; the real schedule replayed with those scores vs. best lineups from the real rosters; wins and points per week
+    from moves, best added player, best drafted player let go. `add_no_moves()` in `build.py`: drafted players' weekly
+    points come from one ESPN query per completed week; the result is reused from the live site until the next week
+    is complete),
     *Hot & cold* (last 3 weeks vs. season average, adjusted for the league-wide swing),
     *Upset tracker* (each team's record as ESPN's pre-game favorite and underdog by lineup projection, net upsets,
     biggest upset win and worst loss as a favorite; computed in the browser from each side's `projected`, `upsetModel()`),
