@@ -115,6 +115,14 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   (matchups `g:<id>`, recap `r:<week>`) and `talk:<season>:trades` (`t:<id>`), last 100 per thread. The author or the
   commissioner (ADMIN_MEMBERS) can delete a post. A post on a matchup in the current week alerts both teams' devices
   (alert kind `talk`, on by default). Posts show in League pulse.
+- **Tale of the tape** (History → Tale of the tape, `#/history/h2h?a=<member>&b=<member>`; replaced the old Head to
+  head picker): two managers side by side across every season - seasons, record, win %, championships (with years),
+  finals, playoff trips and record, average finish and best season (completed seasons), longest win streak (from
+  `records.js`), points per game, career luck - with the better value highlighted and a "leads the tape" count. Below:
+  the head-to-head series (record, points, current streak, each side's biggest win, every meeting linking to its box
+  score; `meetings` in `index.js` history, keyed by the two member ids in sorted order), season by season, and each
+  one's record against common opponents. Opens on you vs. your most-played opponent; Share makes an image. The
+  personal Record book links to it.
 - **Personal record books**: History → Record book has a picker (whole league or any member); a member's book lists
   their highest/lowest scores, biggest wins, worst losses, closest games, longest win streaks and best player/bench
   games across every season. My team shows the #1 of each as tiles linking to the box score. Built by

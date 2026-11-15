@@ -881,6 +881,7 @@ def build_history(seasons_data, names, current_members):
     rec = defaultdict(lambda: {"seasons": [], "w": 0, "l": 0, "t": 0, "pf": 0.0, "pa": 0.0, "titles": 0,
                                "finals": 0, "playoffs": 0, "best": None, "pw": 0, "pl": 0})
     h2h = defaultdict(lambda: [0, 0, 0, 0.0, 0.0])  # (a, b) -> wins, losses, ties, pf, pa (a's view)
+    meetings = defaultdict(list)  # "a|b" (a < b) -> [season, week, a's points, b's points, 1 if playoff, game id]
     champions = []
     for data in sorted(seasons_data, key=lambda d: d["league"]["season"]):
         lg = data["league"]
@@ -918,6 +919,9 @@ def build_history(seasons_data, names, current_members):
                 for me, opp in ((a, b), (b, a)):
                     for o1 in tm.get(me["team"], {}).get("owners", []):
                         for o2 in tm.get(opp["team"], {}).get("owners", []):
+                            if o1 < o2:
+                                meetings["%s|%s" % (o1, o2)].append([lg["season"], w["week"], round(me["pts"], 2), round(opp["pts"], 2),
+                                                                     1 if g["tier"] == "WINNERS_BRACKET" else 0, g["id"]])
                             h = h2h[(o1, o2)]
                             h[0 if me["pts"] > opp["pts"] else 1 if me["pts"] < opp["pts"] else 2] += 1
                             h[3] += me["pts"]; h[4] += opp["pts"]
@@ -956,6 +960,7 @@ def build_history(seasons_data, names, current_members):
     members.sort(key=lambda m: (-m["titles"], -m["pct"]))
     return {"members": members, "champions": sorted(champions, key=lambda c: -c["season"]),
             "h2h": {"%s|%s" % k: [v[0], v[1], v[2], round(v[3], 1), round(v[4], 1)] for k, v in h2h.items()},
+            "meetings": {k: sorted(v, key=lambda x: (-x[0], -x[1])) for k, v in meetings.items()},
             "records": record_book(seasons_data), "rivalries": rivalries(h2h),
             "badges": stats.badges(seasons_data, h2h, current_members), "careerLuck": career_luck,
             "thisWeek": stats.this_week_history(seasons_data)}

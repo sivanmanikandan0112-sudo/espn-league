@@ -2897,7 +2897,7 @@
   });
 
   // ---------------------------------------------------------------- history
-  const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Head to head"], ["rivalries", "Rivalries"], ["records", "Record book"], ["badges", "Badges"], ["players", "Player history"]];
+  const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Tale of the tape"], ["rivalries", "Rivalries"], ["records", "Record book"], ["badges", "Badges"], ["players", "Player history"]];
   const BADGE_ICON = { champ: "🏆", runner: "🥈", seed1: "👑", pfking: "💰", comeback: "🔄", streak: "🔥", weektop: "⭐", seasonhigh: "🚀",
     club200: "💯", perfect: "🎯", blowout: "💥", nailbiter: "😅", heartbreak: "💔", robbed: "😤", stolen: "🍀", beatall: "⚔️", dud: "🧊", basement: "🪦" };
   // one member's badges: [{def, list: [[badge, season, week, game, detail]...] newest first}] in the badge order
@@ -2984,24 +2984,26 @@
         careerLuckSection(H);
     },
 
+    // Tale of the tape: two owners side by side across every season, plus their head-to-head series
     h2h(H) {
       const m = H.members, active = m.filter(x => x.active);
-      if (!state.h2hA) state.h2hA = (active[0] || m[0]).id;
-      if (!state.h2hB) state.h2hB = (active[1] || m[1] || m[0]).id;
+      const has = id => m.some(x => x.id === id);
+      if (has(state.params.get("a"))) state.h2hA = state.params.get("a");
+      if (has(state.params.get("b"))) state.h2hB = state.params.get("b");
+      if (!has(state.h2hA)) state.h2hA = (ME.member && has(ME.member) ? ME.member : (active[0] || m[0]).id);
+      if (!has(state.h2hB) || state.h2hB === state.h2hA) state.h2hB = tapeRival(H, state.h2hA);
       const opt = sel => m.map(x => `<option value="${esc(x.id)}"${x.id === sel ? " selected" : ""}>${esc(x.name)}${x.active ? "" : " (former)"}</option>`).join("");
-      const h = H.h2h[state.h2hA + "|" + state.h2hB];
-      const a = m.find(x => x.id === state.h2hA), b = m.find(x => x.id === state.h2hB);
-      let body;
-      if (state.h2hA === state.h2hB) body = '<p class="muted">Pick two different members.</p>';
-      else if (!h || h[0] + h[1] + h[2] === 0) body = `<p class="muted">${esc(a.name)} and ${esc(b.name)} have never played each other.</p>`;
-      else {
-        const g = h[0] + h[1] + h[2];
-        const lead = h[0] > h[1] ? a.name + " leads" : h[1] > h[0] ? b.name + " leads" : "All square";
-        body = `<div class="h2h-score"><div><div class="big">${h[0]}</div><div class="kicker">${esc(a.name)}</div></div><div class="h2h-dash">–</div><div><div class="big">${h[1]}</div><div class="kicker">${esc(b.name)}</div></div></div>
-          <p class="note">${esc(lead)}${h[2] ? " · " + h[2] + " tie" + (h[2] > 1 ? "s" : "") : ""} · Points ${h[3].toFixed(1)} – ${h[4].toFixed(1)} · ${(h[3] / g).toFixed(1)} vs ${(h[4] / g).toFixed(1)} per game</p>`;
-      }
-      return section("Head to head", `Every regular-season and playoff meeting since ${IDX.seasons[IDX.seasons.length - 1]}.`,
-        `<div class="panel h2h"><div class="h2h-pick"><select id="h2h-a" aria-label="First manager">${opt(state.h2hA)}</select><span class="muted">vs</span><select id="h2h-b" aria-label="Second manager">${opt(state.h2hB)}</select></div>${body}</div>`);
+      const A = m.find(x => x.id === state.h2hA), B = m.find(x => x.id === state.h2hB);
+      const pick = `<div class="panel h2h"><div class="h2h-pick"><select id="h2h-a" aria-label="First manager">${opt(A.id)}</select><span class="muted">vs</span><select id="h2h-b" aria-label="Second manager">${opt(B.id)}</select>
+        <button type="button" class="share-btn" data-share="tape">${SHARE_ICON}Share</button></div></div>`;
+      if (A.id === B.id) return section("Tale of the tape", "", pick + '<p class="muted">Pick two different managers.</p>');
+      setTimeout(() => tapeStreaks(A.id, B.id), 0);
+      return section("Tale of the tape", { short: `${esc(A.name)} vs. ${esc(B.name)} across every season since ${IDX.seasons[IDX.seasons.length - 1]}.`,
+          full: "Each row compares the two managers' whole league careers; the better number is highlighted, and the line on top counts the rows each one wins. Average finish and best season use completed seasons only (a season in progress shows its current standing in the season table). Win streaks are within one regular season. Head to head counts regular-season and winners-bracket playoff games." },
+          pick + tapeHtml(H, A, B)) +
+        section("Head to head", "", tapeSeries(H, A, B)) +
+        section("Season by season", "Each season's team, record and finish.", tapeSeasons(A, B)) +
+        section("Common opponents", "Each one's all-time record against everyone else they've both played.", tapeCommon(H, A, B));
     },
 
     rivalries(H) {
@@ -3030,6 +3032,146 @@
       return pick + leagueRecordBook(H);
     },
   };
+
+
+  // ---------------------------------------------------------------- tale of the tape (History → Tale of the tape)
+  const tapeGames = (H, a, b) => (H.h2h[a + "|" + b] || [0, 0, 0]).slice(0, 3).reduce((x, y) => x + y, 0);
+  function tapeRival(H, a) {
+    const others = H.members.filter(x => x.id !== a);
+    const best = others.slice().sort((x, y) => tapeGames(H, a, y.id) - tapeGames(H, a, x.id) || (y.active - x.active))[0];
+    return (best || H.members[0]).id;
+  }
+  const doneSeasons = x => x.seasons.filter(s => s.finish);
+  function tapeStats(H, x) {
+    const done = doneSeasons(x);
+    const avgFinish = done.length ? done.reduce((n, s) => n + s.finish, 0) / done.length : null;
+    const pct = s => (s.w + s.t / 2) / Math.max(1, s.w + s.l + s.t);
+    const best = done.slice().sort((p, q) => p.finish - q.finish || pct(q) - pct(p) || q.season - p.season)[0] || null;
+    const years = H.champions.filter(c => (c.owners || []).includes(x.id)).map(c => c.season).sort();
+    const luck = (H.careerLuck || []).find(c => c.id === x.id);
+    return { avgFinish, best, years, luck: luck ? luck.luck : null };
+  }
+  function tapeRows(H, A, B) {
+    const a = tapeStats(H, A), b = tapeStats(H, B);
+    const rec = x => `${x.w}–${x.l}${x.t ? "–" + x.t : ""}`;
+    const bestTxt = s => s ? `${s.season}: ${finishText(s.finish)} <span class="muted">${s.w}–${s.l}${s.t ? "–" + s.t : ""}</span>` : "—";
+    // [label, a html, b html, a number, b number, higher is better (null = no winner)]
+    return [
+      ["Seasons", A.seasons.length, B.seasons.length, null, null, null],
+      ["Record", rec(A), rec(B), null, null, null],
+      ["Win %", (A.pct * 100).toFixed(1) + "%", (B.pct * 100).toFixed(1) + "%", A.pct, B.pct, true],
+      ["Championships", A.titles + (a.years.length ? ` <span class="muted">${a.years.join(", ")}</span>` : ""), B.titles + (b.years.length ? ` <span class="muted">${b.years.join(", ")}</span>` : ""), A.titles, B.titles, true],
+      ["Finals", A.finals, B.finals, A.finals, B.finals, true],
+      ["Playoff trips", A.playoffs, B.playoffs, A.playoffs, B.playoffs, true],
+      ["Playoff record", `${A.playoffW}–${A.playoffL}`, `${B.playoffW}–${B.playoffL}`, null, null, null],
+      ["Average finish", a.avgFinish != null ? a.avgFinish.toFixed(1) : "—", b.avgFinish != null ? b.avgFinish.toFixed(1) : "—", a.avgFinish, b.avgFinish, false],
+      ["Best season", bestTxt(a.best), bestTxt(b.best), a.best ? a.best.finish : null, b.best ? b.best.finish : null, false],
+      ["Longest win streak", '<span data-tape-streak="a">…</span>', '<span data-tape-streak="b">…</span>', null, null, true, "streak"],
+      ["Points per game", A.ppg.toFixed(1), B.ppg.toFixed(1), A.ppg, B.ppg, true],
+      ["Career luck", a.luck != null ? `${a.luck > 0 ? "+" : a.luck < 0 ? "−" : ""}${Math.abs(a.luck).toFixed(1)} W` : "—", b.luck != null ? `${b.luck > 0 ? "+" : b.luck < 0 ? "−" : ""}${Math.abs(b.luck).toFixed(1)} W` : "—", null, null, null],
+    ];
+  }
+  const tapeWinner = (r) => {
+    const [, , , x, y, hi] = r;
+    if (hi == null || x == null || y == null || x === y) return 0;
+    return (hi ? x > y : x < y) ? 1 : 2;
+  };
+  function tapeHtml(H, A, B) {
+    const rows = tapeRows(H, A, B);
+    const won = [0, 0, 0];
+    rows.forEach(r => { won[tapeWinner(r)]++; });
+    const verdict = won[1] === won[2] ? `Dead even on the tape, ${won[1]}–${won[2]}` : `${esc((won[1] > won[2] ? A : B).name)} leads the tape ${Math.max(won[1], won[2])}–${Math.min(won[1], won[2])}`;
+    return `<p class="tape-verdict" data-tape-verdict data-a="${won[1]}" data-b="${won[2]}">${verdict}</p>
+      <div class="tape" role="table" aria-label="${esc(A.name)} vs. ${esc(B.name)}">
+        <div class="tape-row tape-head" role="row"><b role="columnheader">${esc(A.name)}</b><span role="columnheader"></span><b role="columnheader">${esc(B.name)}</b></div>
+        ${rows.map(r => { const w = tapeWinner(r); return `<div class="tape-row"${r[6] ? ` data-tape-row="${r[6]}"` : ""} role="row"><span class="tape-v${w === 1 ? " win" : ""}" role="cell">${r[1]}</span><span class="tape-k" role="rowheader">${r[0]}</span><span class="tape-v${w === 2 ? " win" : ""}" role="cell">${r[2]}</span></div>`; }).join("")}
+      </div>`;
+  }
+  // longest win streaks come from the record book file, loaded when the page opens
+  async function tapeStreaks(a, b) {
+    let all = null;
+    try { all = await loadRecords(); } catch (_) { /* leave the dashes */ }
+    const box = main.querySelector('[data-tape-row="streak"]');
+    if (!box) return;
+    const st = id => ((all && all[id] && all[id].streaks) || [])[0];
+    const sa = st(a), sb = st(b);
+    const txt = x => x ? `${x.len} <span class="muted">${x.season}, wks ${x.from}–${x.to}</span>` : "—";
+    box.querySelector('[data-tape-streak="a"]').innerHTML = txt(sa);
+    box.querySelector('[data-tape-streak="b"]').innerHTML = txt(sb);
+    const la = sa ? sa.len : 0, lb = sb ? sb.len : 0;
+    const cells = box.querySelectorAll(".tape-v");
+    if (la !== lb) {
+      cells[la > lb ? 0 : 1].classList.add("win");
+      const v = main.querySelector("[data-tape-verdict]");
+      if (v) {
+        const wa = +v.dataset.a + (la > lb ? 1 : 0), wb = +v.dataset.b + (lb > la ? 1 : 0);
+        v.dataset.a = wa; v.dataset.b = wb;
+        v.textContent = wa === wb ? `Dead even on the tape, ${wa}–${wb}` : `${(wa > wb ? memberName(a) : memberName(b))} leads the tape ${Math.max(wa, wb)}–${Math.min(wa, wb)}`;
+      }
+    }
+  }
+  function tapeMeetings(H, A, B) {
+    const flip = A.id > B.id;
+    const list = H.meetings ? (H.meetings[flip ? B.id + "|" + A.id : A.id + "|" + B.id] || []) : null;
+    return list && list.map(([season, week, x, y, po, game]) => ({ season, week, a: flip ? y : x, b: flip ? x : y, playoff: !!po, game }));
+  }
+  function tapeSeries(H, A, B) {
+    const h = H.h2h[A.id + "|" + B.id];
+    if (!h || h[0] + h[1] + h[2] === 0) return `<p class="muted">${esc(A.name)} and ${esc(B.name)} have never played each other.</p>`;
+    const g = h[0] + h[1] + h[2];
+    const lead = h[0] > h[1] ? A.name + " leads" : h[1] > h[0] ? B.name + " leads" : "All square";
+    const score = `<div class="h2h-score"><div><div class="big">${h[0]}</div><div class="kicker">${esc(A.name)}</div></div><div class="h2h-dash">–</div><div><div class="big">${h[1]}</div><div class="kicker">${esc(B.name)}</div></div></div>
+      <p class="note">${esc(lead)}${h[2] ? " · " + h[2] + " tie" + (h[2] > 1 ? "s" : "") : ""} · Points ${h[3].toFixed(1)} – ${h[4].toFixed(1)} · ${(h[3] / g).toFixed(1)} vs ${(h[4] / g).toFixed(1)} per game</p>`;
+    const M = tapeMeetings(H, A, B);
+    if (!M) return score + '<p class="muted">Every meeting shows here after the next site update.</p>';
+    // current streak in the series (newest first)
+    let streak = "";
+    if (M.length) {
+      const res = x => x.a > x.b ? "a" : x.b > x.a ? "b" : "t";
+      const first = res(M[0]);
+      let n = 0; while (n < M.length && res(M[n]) === first) n++;
+      streak = first === "t" ? "Last meeting was a tie" : `${esc((first === "a" ? A : B).name)} has won ${n === 1 ? "the last meeting" : `the last ${n}`}`;
+    }
+    const big = side => M.filter(x => side === "a" ? x.a > x.b : x.b > x.a).sort((p, q) => Math.abs(q.a - q.b) - Math.abs(p.a - p.b))[0];
+    const ba = big("a"), bb = big("b");
+    const link = x => { const p = new URLSearchParams({ week: x.week }); if (x.season !== IDX.current) p.set("season", x.season); if (x.game != null) p.set("game", x.game); return "#/matchups?" + p; };
+    const bigLine = (x, who) => x ? `<span>${esc(who.name)}'s biggest win: <b>+${Math.abs(x.a - x.b).toFixed(1)}</b> <a class="wk-link" href="${link(x)}">${x.season} ${x.playoff ? "playoffs" : "wk " + x.week}</a></span>` : "";
+    const rows = M.map(x => {
+      const w = x.a > x.b ? 1 : x.b > x.a ? 2 : 0;
+      return `<a class="tape-game" href="${link(x)}"><span class="tape-when">${x.season} · ${x.playoff ? "Playoffs wk " : "Wk "}${x.week}${x.playoff ? ' <span class="badge po">PO</span>' : ""}</span>
+        <span class="tape-sc${w === 1 ? " win" : ""}">${fmt(x.a)}</span><span class="muted">–</span><span class="tape-sc${w === 2 ? " win" : ""}">${fmt(x.b)}</span><span class="go">Box score →</span></a>`;
+    }).join("");
+    return score + `<div class="tape-facts">${[streak ? `<span>${streak}</span>` : "", bigLine(ba, A), bigLine(bb, B)].filter(Boolean).join("")}</div>
+      <div class="tape-games"><div class="tape-games-h"><span>Every meeting</span><b>${esc(A.name)}</b><span></span><b>${esc(B.name)}</b><span></span></div>${rows}</div>`;
+  }
+  function tapeSeasons(A, B) {
+    const years = [...new Set(A.seasons.concat(B.seasons).map(s => s.season))].sort((x, y) => y - x);
+    const cell = (s, other) => {
+      if (!s) return '<span class="muted">Not in the league</span>';
+      const pos = s.finish || s.standing, opos = other ? other.finish || other.standing : null;
+      const win = opos != null && pos < opos;
+      return `<span class="tape-season${win ? " win" : ""}">${logoImg(s.logo, s.team)}<span><b>${esc(s.team)}</b><span class="team-mgr">${s.w}–${s.l}${s.t ? "–" + s.t : ""} · ${s.finish ? finishText(s.finish) : "#" + s.standing + " so far"}</span></span></span>`;
+    };
+    return `<div class="table-wrap"><table class="tbl tape-tbl"><thead><tr><th>Season</th><th>${esc(A.name)}</th><th>${esc(B.name)}</th></tr></thead><tbody>${years.map(y => {
+      const a = A.seasons.find(s => s.season === y), b = B.seasons.find(s => s.season === y);
+      return `<tr><td class="lead" data-label="Season"><a class="wk-link" href="#/${y === IDX.current ? "" : "?season=" + y}">${y}</a></td><td data-label="${esc(A.name)}">${cell(a, b)}</td><td data-label="${esc(B.name)}">${cell(b, a)}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+  }
+  function tapeCommon(H, A, B) {
+    const rec = (x, y) => H.h2h[x + "|" + y];
+    const pct = r => r ? (r[0] + r[2] / 2) / Math.max(1, r[0] + r[1] + r[2]) : 0;
+    const rows = H.members.filter(o => o.id !== A.id && o.id !== B.id).map(o => ({ o, a: rec(A.id, o.id), b: rec(B.id, o.id) }))
+      .filter(r => r.a && r.b && r.a[0] + r.a[1] + r.a[2] && r.b[0] + r.b[1] + r.b[2]).sort((p, q) => (q.o.active - p.o.active) || p.o.name.localeCompare(q.o.name));
+    if (!rows.length) return '<p class="muted">They haven\'t played any of the same managers yet.</p>';
+    const tot = [0, 0];
+    rows.forEach(r => { const d = pct(r.a) - pct(r.b); if (d > 1e-9) tot[0]++; else if (d < -1e-9) tot[1]++; });
+    const fmtRec = r => `${r[0]}–${r[1]}${r[2] ? "–" + r[2] : ""}`;
+    return `<p class="note">${esc(A.name)} has the better record against ${tot[0]}, ${esc(B.name)} against ${tot[1]}${rows.length - tot[0] - tot[1] ? `, even against ${rows.length - tot[0] - tot[1]}` : ""}.</p>` + table([
+      { label: "Opponent", cell: r => `<b>${esc(r.o.name)}</b>${r.o.active ? "" : ' <span class="badge former">Former</span>'}` },
+      { label: esc(A.name), num: 1, cell: r => `<span class="${pct(r.a) > pct(r.b) + 1e-9 ? "tape-win" : ""}">${fmtRec(r.a)}</span>` },
+      { label: esc(B.name), num: 1, cell: r => `<span class="${pct(r.b) > pct(r.a) + 1e-9 ? "tape-win" : ""}">${fmtRec(r.b)}</span>` },
+    ], rows);
+  }
 
   function loadRecords() {
     if (window.LEAGUE_RECORDS && window.LEAGUE_RECORDS.all) return Promise.resolve(window.LEAGUE_RECORDS.all);
@@ -3098,7 +3240,7 @@
     const m = box.dataset.recMember;
     let all = null;
     try { all = await loadRecords(); } catch (_) { box.innerHTML = `<div class="empty">Couldn't load the record book. Try again in a minute.</div>`; return; }
-    box.innerHTML = all[m] ? `<p class="sub" style="margin:0 0 10px">${esc(memberName(m))}'s records across every season, playoffs included.</p>` + personalBookHtml(all[m], m) : `<div class="empty">No games yet.</div>`;
+    box.innerHTML = all[m] ? `<p class="sub" style="margin:0 0 10px">${esc(memberName(m))}'s records across every season, playoffs included. <a class="wk-link" href="${href("history", { a: m }, "h2h")}">Compare with another manager ›</a></p>` + personalBookHtml(all[m], m) : `<div class="empty">No games yet.</div>`;
   }
   // My team: the #1 of each list, linking to the full book
   async function fillMyRecords(box) {
@@ -3589,6 +3731,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-14", [
+      ["Tale of the tape", "History → Tale of the tape", "Any two managers side by side across every season: win %, titles, average finish, best season, longest win streak, every head-to-head meeting and common opponents.", "#/history/h2h"],
       ["Injury toll", "Insights → Luck", "Points each team lost to its starters missing games, and its costliest injuries.", "#/insights/luck?at=injury"],
       ["One view at a time in Insights", "Insights", "Each Insights tab now has a switch at the top (like Pick 4's) instead of one long scroll.", "#/insights"],
       ["Trash talk", "Matchups, recaps, Trades", "Comment threads under every matchup, weekly recap and trade, posted as your team. Get an alert when someone posts on your matchup.", "#/matchups"],
@@ -4192,8 +4335,13 @@
     if (e.target.id === "draft-team") { state.draftTeam = e.target.value; renderKeepScroll(renderInsights); }
     if (e.target.id === "rec-member") { location.hash = href("history", e.target.value ? { member: e.target.value } : {}, "records"); return; }
     if (e.target.id === "badge-member") { state.badgeMember = e.target.value; renderKeepScroll(renderHistory); }
-    if (e.target.id === "h2h-a") { state.h2hA = e.target.value; renderKeepScroll(renderHistory); }
-    if (e.target.id === "h2h-b") { state.h2hB = e.target.value; renderKeepScroll(renderHistory); }
+    if (e.target.id === "h2h-a" || e.target.id === "h2h-b") {
+      const a = e.target.id === "h2h-a" ? e.target.value : state.h2hA, b = e.target.id === "h2h-b" ? e.target.value : state.h2hB;
+      state.h2hA = a; state.h2hB = a === b ? null : b;
+      history.replaceState(null, "", href("history", state.h2hB ? { a, b } : { a }, "h2h"));
+      state.params = new URLSearchParams(location.hash.split("?")[1] || "");
+      renderKeepScroll(renderHistory);
+    }
   });
 
   function renderKeepScroll(fn) {
@@ -4475,6 +4623,16 @@
   function shareSpec(kind, el) {
     const tn = id => (teamById[id] || { name: "?" }).name;
     const tl = id => (teamById[id] || {}).logo || "";
+    if (kind === "tape") {
+      const H = IDX.history, A = H.members.find(x => x.id === state.h2hA), B = H.members.find(x => x.id === state.h2hB);
+      const h = H.h2h[A.id + "|" + B.id] || [0, 0, 0];
+      const rows = tapeRows(H, A, B).filter(r => r[3] != null && r[0] !== "Best season").slice(0, 5).map(r => {
+        const w = tapeWinner(r), plain = v => String(v).replace(/<[^>]+>/g, "");
+        return { label: r[0], title: `${A.name} ${plain(r[1])}`, sub: `${B.name} ${plain(r[2])}`, value: w ? (w === 1 ? A : B).name : "Even", hi: w === 1 };
+      });
+      rows.unshift({ label: "Head to head", title: `${A.name} ${h[0]} – ${h[1]} ${B.name}`, sub: h[2] ? `${h[2]} tie${h[2] > 1 ? "s" : ""}` : "", value: h[0] === h[1] ? "Even" : (h[0] > h[1] ? A : B).name, hi: h[0] > h[1] });
+      return { file: `tale-of-the-tape`, kicker: "Tale of the tape", title: `${A.name} vs. ${B.name}`, rows };
+    }
     if (kind === "recap") {
       const w = Number(el.dataset.week), r = D.recaps[w];
       const rows = [{ label: "Top score", logo: tl(r.high.team), title: tn(r.high.team), value: fmt(r.high.pts), hi: true },
