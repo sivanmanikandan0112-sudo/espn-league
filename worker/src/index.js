@@ -817,10 +817,12 @@ async function handleGraph(req, env, url) {
 }
 
 // ---------------------------------------------------------------- Big-play leaderboard (season)
-// Season totals from the live big-play feed. The feed itself expires 3 weeks after it's written, so each finished week
+// Season totals from the live big-play feed. Weeks 1-8 of 2026 (before the feed existed) were rebuilt once from ESPN's
+// public NFL play-by-play with the feed's own rules, checked against each player's official stats, and stored the same
+// way (see README). The feed itself expires 3 weeks after it's written, so each finished week
 // is copied once (trimmed, without stat corrections) into `plays-week:<season>:<week>` and kept; the week in progress
 // is read straight from its feed. The aggregate is cached for 2 minutes.
-const trimPlays = events => (events || []).filter(e => e.kind !== "stat correction")
+const trimPlays = events => (events || []).filter(e => e.kind !== "stat correction" && e.label !== "stat correction")
   .map(e => ({ t: e.t, team: e.team, pid: e.pid, name: e.name, pos: e.pos, nfl: e.nfl, kind: e.kind, label: e.label, delta: e.delta, starter: e.starter, game: e.game }));
 async function handlePlays(req, env) {
   if (!env.PICKEM) return json(env, req, { error: "Storage isn't set up yet." }, 503);
@@ -844,6 +846,7 @@ async function handlePlays(req, env) {
     const teams = {}, players = {};
     const all = [];
     for (const { week, plays } of weeks) for (const e of plays) {
+      if (e.label === "stat correction") continue;
       all.push({ ...e, week });
       const T = teams[e.team] = teams[e.team] || { team: e.team, plays: 0, tds: 0, pts: 0, bench: 0, benchPts: 0 };
       if (e.starter) { T.plays++; T.pts += e.delta; if (/TD/.test(e.kind)) T.tds++; }

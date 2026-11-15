@@ -247,11 +247,14 @@ day has been seen on that device (`lhq:wn-seen`).
 
 ## Big plays: season
 
-Matchups → Big plays → Season (`?view=season`, worker `GET /plays`): every big play since the feed started (week 9 of
-2026), added up per fantasy team (starters' big plays, TDs, points those plays were worth, bench plays), the players
+Matchups → Big plays → Season (`?view=season`, worker `GET /plays`): every big play of the season, added up per fantasy team (starters' big plays, TDs, points those plays were worth, bench plays), the players
 with the most, the biggest single plays and the best ones wasted on the bench. The feed (`feed:<season>:<week>`)
 expires after 21 days, so each finished week is copied once, trimmed, into `plays-week:<season>:<week>` and kept; the
-week in progress is read live. Cached 2 minutes.
+week in progress is read live. Cached 2 minutes. Weeks 1-8 of 2026 came before the live feed, so they were rebuilt
+once from ESPN's public NFL play-by-play (scoreboard + game summary per week) with the feed's rules: TDs, 30+ yard
+catches and runs, 50+ yard passes, interceptions thrown, fumbles lost, 5+ point field goals, D/ST return TDs and
+2-point conversions, priced with the league's scoring. Each play was matched to a player in that week's league lineups
+and kept only if his official week stats have that kind of play (no more TDs/turnovers than his line shows).
 
 ## Feedback box
 
