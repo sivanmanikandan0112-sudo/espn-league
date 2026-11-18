@@ -1039,7 +1039,8 @@
       ${wk.final ? recapCard(w) : ""}
       ${feedPanel(w)}
       ${thisWeekStrip(w)}
-      <div class="games">${games}</div>`;
+      <div class="games">${games}</div>
+      ${rootForSection(w)}`;
     const active = main.querySelector(".week-strip .active");
     if (active) active.scrollIntoView({ block: "nearest", inline: "center" });
     if (focusTeam && open) {  // arrived from the Record book: bring that game into view
@@ -2292,21 +2293,22 @@
     ["schedule", "Schedule", ["schedule", "byes"]],
     ["lineups", "Lineups", ["efficiency", "autopilot"]],
     ["draft", "Draft", ["draft"]],
-    ["whatif", "What ifs", ["rules", "swap"]],
+    ["whatif", "What ifs", ["rules", "swap", "butterfly"]],
   ];
-  const INSIGHT_ALIAS = { seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", usage: "luck", injury: "luck", byes: "schedule", efficiency: "lineups", autopilot: "lineups", redraft: "draft", rules: "whatif", swap: "whatif" };
+  const INSIGHT_ALIAS = { seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", usage: "luck", injury: "luck", byes: "schedule", efficiency: "lineups", autopilot: "lineups", redraft: "draft", rules: "whatif", swap: "whatif", butterfly: "whatif" };
   function insightHas(k) {
     return ({
       form: () => D.teams.some(x => x.form), seeds: () => D.teams.some(x => x.odds && x.odds.seeds), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0, injury: () => D.teams.some(x => x.injuries), usage: () => !!(D.nfl && D.nfl.teams && Object.keys(D.nfl.teams).length), autopilot: () => D.teams.some(x => x.autopilot && x.autopilot.weeks),
       byes: () => D.teams.some(x => x.byeCrunch && x.byeCrunch.length), draft: () => !!D.draft,
       redraft: () => !!(D.draft && D.draft.redraft), rules: () => !!(D.rulesLab && D.rulesLab.weeks),
       swap: () => !!(D.scheduleSwap && D.scheduleSwap.weeks),
+      butterfly: () => D.weeks.some(w => w.final && w.week <= L.regularSeasonWeeks),
     }[k] || (() => true))();
   }
   function insightPartLabel(k) {
     if (k === "race") return D.teams.some(t => t.odds) ? "Playoff odds" : "Final results";
     return { seeds: "Seed odds", form: "Hot & cold", luck: "Luck", close: "Close games", upsets: "Upset tracker", projection: "Vs. projection", usage: "Vs. usage",
-      injury: "Injury toll", schedule: "Strength of schedule", byes: "Byes ahead", efficiency: "Efficiency", autopilot: "You vs. autopilot", rules: "Rules lab", swap: "Schedule swap" }[k] || k;
+      injury: "Injury toll", schedule: "Strength of schedule", byes: "Byes ahead", efficiency: "Efficiency", autopilot: "You vs. autopilot", rules: "Rules lab", swap: "Schedule swap", butterfly: "Butterfly effect" }[k] || k;
   }
   function insightTabs() {
     const hasOdds = D.teams.some(t => t.odds);
@@ -2662,6 +2664,12 @@
     },
 
     autopilot() { return autopilotSection(); },
+
+    butterfly() {
+      setTimeout(bfxHydrate, 0); // after the page is in place (not rAF: it pauses in background tabs)
+      return section("Butterfly effect", { short: "Take away any one move and replay the season without it.", full: "Pick any waiver claim, free-agent pickup, drop or trade, and the regular season is replayed as if it never happened. Players the move brought in come out of every lineup they started for that team, and the open spot goes to whoever on the bench ESPN projected highest that week. Players it sent away come back with the points they really scored elsewhere, and start if ESPN projected them above the weakest starter they could replace. A player dropped and then picked up by another league team leaves that team too. Projections only, never hindsight, so it's the lineup the manager would have set. Someone who wasn't on any league roster can't be scored, so a player dropped to free agency doesn't come back. Finished regular-season weeks; standings by record, then points for." },
+        '<div id="bfx" class="bfx"><div class="empty">Loading every move of the season…</div></div>');
+    },
 
     draft() {
       const dr = D.draft;
@@ -3250,6 +3258,184 @@
     ], rows);
   }
 
+  // ---------------------------------------------------------------- who to root for (Matchups, My team)
+  // From the playoff-odds simulation: each team's playoff chance given each result of this week's games
+  // (D.league.rootFor). For your team: the games elsewhere whose result moves your odds, biggest first, with how
+  // each is going live. When you're all but in, it switches to first-round-bye odds.
+  function rootFor(tid) {
+    const R = L.rootFor;
+    if (!R || !L.isCurrent || L.over || !teamById[tid]) return null;
+    const key = String(tid);
+    const sure = R.games.every(g => (g.odds[key] || []).every(o => o && o[0] != null && o[0] >= 99.5));
+    const k = sure ? 1 : 0; // 0 = playoff odds, 1 = bye odds
+    const wk = D.weeks.find(w => w.week === R.week);
+    const live = g => { const x = wk && wk.games.find(y => y.sides.length === 2 && y.sides.some(s => s.team === g.home) && y.sides.some(s => s.team === g.away)); return x ? Object.fromEntries(x.sides.map(s => [s.team, s.pts])) : null; };
+    let own = null;
+    const rows = [];
+    for (const g of R.games) {
+      const o = g.odds[key];
+      if (!o || o[0][k] == null || o[1][k] == null) continue;
+      if (g.home === tid || g.away === tid) {
+        const me = g.home === tid ? 0 : 1;
+        own = { win: o[me][k], lose: o[1 - me][k], opp: g.home === tid ? g.away : g.home, live: live(g) };
+        continue;
+      }
+      const swing = o[0][k] - o[1][k];
+      if (Math.abs(swing) < 1) continue;
+      const pick = swing > 0 ? g.home : g.away, other = swing > 0 ? g.away : g.home;
+      rows.push({ pick, other, swing: Math.abs(swing), ifWin: swing > 0 ? o[0][k] : o[1][k], ifLose: swing > 0 ? o[1][k] : o[0][k], live: live(g) });
+    }
+    rows.sort((a, b) => b.swing - a.swing);
+    const t = teamById[tid];
+    return { week: R.week, kind: sure ? "bye" : "playoff", now: t.odds ? (sure ? t.odds.byePct : t.odds.playoffPct) : null, own, rows };
+  }
+  function rootForHtml(tid) {
+    const r = rootFor(tid);
+    if (!r) return "";
+    const what = r.kind === "bye" ? "first-round bye" : "playoff";
+    const liveTag = (lv, a, b) => {
+      if (!lv || !(lv[a] > 0 || lv[b] > 0)) return "";
+      const d = lv[a] - lv[b];
+      return `<span class="rf-live ${d > 0 ? "good" : d < 0 ? "bad" : ""}">${fmt(lv[a])}–${fmt(lv[b])}${d > 0 ? " · going your way" : d < 0 ? " · not yet" : ""}</span>`;
+    };
+    const going = r.rows.filter(x => x.live && (x.live[x.pick] > 0 || x.live[x.other] > 0));
+    const sum = going.length ? ` <span class="rf-sum">${going.filter(x => x.live[x.pick] > x.live[x.other]).length} of ${going.length} going your way right now</span>` : "";
+    const own = r.own ? `<div class="rf-own"><b>Your game</b> vs. ${esc(tname(r.own.opp))}: win and your ${what} odds are <b>${pct(r.own.win)}</b>, lose and they're <b>${pct(r.own.lose)}</b>.${liveTag(r.own.live, tid, r.own.opp) ? " " + liveTag(r.own.live, tid, r.own.opp) : ""}</div>` : "";
+    const list = r.rows.length ? `<div class="rf-list">${r.rows.map(x => `<div class="rf-row">
+        <span class="rf-who">${logo(teamById[x.pick])}<span><span class="rf-k">Root for</span> <b>${esc(tname(x.pick))}</b> <span class="muted">over ${esc(tname(x.other))}</span>
+          <span class="team-mgr">If they win: ${pct(x.ifWin)} · if they lose: ${pct(x.ifLose)}</span>${liveTag(x.live, x.pick, x.other)}</span></span>
+        <span class="rf-swing">+${x.swing.toFixed(x.swing < 10 ? 1 : 0)}%<small>your odds</small></span></div>`).join("")}</div>`
+      : `<p class="muted">No other game this week moves your ${what} odds by a point or more.</p>`;
+    return section(`Who to root for <span class="muted">· week ${r.week}</span>`, { short: `The other games this week that change your ${what} odds, and by how much.`,
+      full: `From the same 10,000 simulated seasons as the playoff odds: for each of this week's games, your ${what} chance in the simulations where each team won. <b>Root for</b> the team whose win helps you; the number is how much that result adds to your odds (percentage points). Updates with every site refresh (every 5 minutes during games), so a game that's nearly over stops mattering.${r.kind === "bye" ? " You're all but certain to make the playoffs, so this shows first-round-bye odds instead." : ""}` },
+      `<div class="panel rf">${r.now != null ? `<p class="rf-now">Your ${what} odds now: <b>${pct(r.now)}</b>${sum}</p>` : ""}${own}${list}</div>`);
+  }
+  function rootForSection(w) {
+    if (!L.rootFor || L.rootFor.week !== w) return "";
+    const t = myTeam();
+    if (t) return rootForHtml(t.id);
+    return section(`Who to root for <span class="muted">· week ${w}</span>`, "", `<div class="panel">See which of this week's other games help your playoff chances: <a href="#/myteam">claim your team on My team ›</a></div>`);
+  }
+
+  // ---------------------------------------------------------------- transaction-log features (data/<season>-moves.js)
+  const MV = {};
+  function loadMoves(season) {
+    if (window.LEAGUE_MOVES && window.LEAGUE_MOVES[season]) return Promise.resolve(window.LEAGUE_MOVES[season]);
+    if (!MV[season]) {
+      MV[season] = new Promise((resolve, reject) => {
+        const sc = document.createElement("script");
+        sc.src = `data/${season}-moves.js?b=` + encodeURIComponent(IDX.updated || IDX.build || "");
+        sc.onload = () => (window.LEAGUE_MOVES && window.LEAGUE_MOVES[season] ? resolve(window.LEAGUE_MOVES[season]) : reject(new Error("empty")));
+        sc.onerror = () => reject(new Error("load failed"));
+        document.head.appendChild(sc);
+      }).catch(e => { delete MV[season]; throw e; });
+    }
+    return MV[season];
+  }
+
+  // Manager style (My team): how you run your team, from ESPN's log of every move, vs. the rest of the league
+  const MS_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  function styleHtml(S, all, n) {
+    const rk = k => S.ranks && S.ranks[k] ? `<span class="team-mgr">#${S.ranks[k]} of ${n}</span>` : "";
+    const tiles = [
+      ["Pickups", S.adds, rk("adds"), "Players added off waivers or free agency."],
+      S.lineup != null ? ["Lineup changes", S.lineup, rk("lineup"), "Times you saved a change to your lineup."] : null,
+      ["Gut calls", S.gut, S.gut ? `<span class="team-mgr">${S.gutWon} paid off</span>` : rk("gut"), `Starting a player ESPN projected at least 2 points below someone eligible on your bench. "Paid off" = he outscored that bench player.`],
+      S.quick != null ? ["Cut within a week", S.quick + "%", rk("quick"), "Share of your pickups you dropped within about a week."] : null,
+      ["Trades", S.trades, rk("trades"), "Trades completed."],
+    ].filter(Boolean);
+    const max = Math.max(1, ...S.days);
+    const days = S.acts >= 8 ? `<div class="ms-when"><div class="ms-h">When you make moves <span class="muted">(${S.acts} moves, Eastern time)</span></div>
+      <div class="ms-days">${S.days.map((v, i) => `<div class="ms-day" title="${MS_DAYS[i]}: ${v}"><span class="ms-bar"><i style="height:${Math.round(100 * v / max)}%"></i></span><small>${MS_DAYS[i]}</small></div>`).join("")}</div>
+      <p class="team-mgr">${[S.night != null ? `${S.night}% after midnight` : "", S.gameday != null ? `${S.gameday}% on Sundays` : "", S.early != null ? `${S.early}% on Tuesday or Wednesday` : ""].filter(Boolean).join(" · ")}</p></div>` : "";
+    const traits = S.traits.length ? `<ul class="ms-traits">${S.traits.map(([, noun, why]) => `<li><b>${esc(noun[0].toUpperCase() + noun.slice(1))}</b>: ${esc(why)}</li>`).join("")}</ul>`
+      : `<p class="muted">Nothing about how you manage stands far out from the rest of the league.</p>`;
+    const others = all.filter(x => x.t).sort((a, b) => a.t.standing - b.t.standing).map(x => `<div class="ms-other${isMine(x.t) ? " mine" : ""}">${logo(x.t)}<span><b>${esc(x.t.name)}</b><span class="team-mgr">${esc(x.s.type)}</span></span></div>`).join("");
+    return `<div class="panel mstyle"><div class="ms-type">${esc(S.type)}</div>${traits}
+      <div class="set-tiles ms-tiles">${tiles.map(([k, v, sub, tip]) => `<div class="set-tile" title="${esc(tip)}"><span class="set-tile-k">${k}</span><span class="set-tile-v">${esc(String(v))}</span>${sub}</div>`).join("")}</div>
+      ${days}<details class="ms-all"><summary>Everyone's style</summary><div class="ms-others">${others}</div></details></div>`;
+  }
+  function fillStyle(box, t) {
+    if (!box) return;
+    loadMoves(L.season).then(M => {
+      const S = M.style && M.style[t.id];
+      if (!S) { box.innerHTML = '<div class="empty">Not enough moves yet this season.</div>'; return; }
+      const all = Object.entries(M.style).map(([id, s]) => ({ t: teamById[id], s }));
+      box.innerHTML = styleHtml(S, all, all.length);
+    }).catch(() => { box.innerHTML = '<div class="empty">Couldn\'t load your moves. Try reloading.</div>'; });
+  }
+
+  // Butterfly effect (Insights -> What ifs): any single move taken out of the season, replayed
+  function bfxLabel(m, side) {
+    const list = a => a.join(" & ");
+    if (m.kind === "trade") {
+      const a = side === m.other ? m.gave : m.gets, b = side === m.other ? m.gets : m.gave;
+      return `traded ${list(b)} for ${list(a)}`;
+    }
+    const verb = m.kind === "waiver" ? "claimed" : "added";
+    return m.gets.length ? `${verb} ${list(m.gets)}${m.gave.length ? `, dropped ${list(m.gave)}` : ""}` : `dropped ${list(m.gave)}`;
+  }
+  function bfxDetail(B, m) {
+    const tm = id => teamById[id];
+    const who = m.kind === "trade" ? `${esc(tname(m.team))} and ${esc(tname(m.other))}` : esc(tname(m.team));
+    const what = m.kind === "trade" ? `hadn't made their week ${m.week} trade (${esc(tname(m.team))} ${esc(bfxLabel(m, m.team))})` : `hadn't ${esc(bfxLabel(m, m.team))} in week ${m.week}`;
+    const deltas = Object.entries(m.delta).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+    const flips = m.flips.map(([w, gid, a, apa, apb, b, bpa, bpb]) => {
+      const nowA = apb > bpb, wasA = apa > bpa;
+      return `<div class="bfx-flip"><a class="when" href="${href("matchups", { week: w, game: gid })}"><span>Wk ${w}</span><span class="go">Box score →</span></a>
+        <span><span><b>${esc(tname(nowA ? a : b))}</b> would have beaten <b>${esc(tname(nowA ? b : a))}</b></span>
+        <span class="team-mgr">${esc(tname(a))} ${fmt(apa)}${apb !== apa ? ` → ${fmt(apb)}` : ""} · ${esc(tname(b))} ${fmt(bpa)}${bpb !== bpa ? ` → ${fmt(bpb)}` : ""} · really ${esc(tname(wasA ? a : b))} won</span></span></div>`;
+    }).join("");
+    const rec = r => `${r[0]}–${r[1]}${r[2] ? "–" + r[2] : ""}`;
+    const order = Object.keys(B.rank).sort((a, b) => ((m.ranks[a] || [0, B.rank[a]])[1]) - ((m.ranks[b] || [0, B.rank[b]])[1]));
+    const rows = order.map(id => {
+      const r = m.ranks[id], nr = r ? r[1] : B.rank[id], mv = r ? r[0] - r[1] : 0;
+      return { id, t: tm(id), nr, old: B.rank[id], mv, rec: B.rec[id], newRec: m.rec[id] };
+    }).filter(x => x.t);
+    const tbl = table([
+      { label: "Team", cell: x => `<span class="bfx-team"><b class="bfx-rk">${x.nr}</b>${teamCell(x.t)}</span>` },
+      { label: "Record", num: 1, cell: x => x.newRec ? `${rec(x.newRec)} <span class="muted">(really ${rec(x.rec)})</span>` : rec(x.rec) },
+      { label: "Move", num: 1, cell: x => x.mv ? `<b class="${x.mv > 0 ? "pos" : "neg"}">${x.mv > 0 ? "▲" : "▼"} ${Math.abs(x.mv)}</b> <span class="muted">from ${x.old}</span>` : `<span class="muted">—</span>` },
+    ], rows);
+    return `<div class="bfx-card"><h3 class="bfx-h">If ${who} ${what}…</h3>
+      <div class="bfx-chips"><span class="bfx-chip"><b>${m.flips.length}</b> game${m.flips.length === 1 ? "" : "s"} flip</span>${deltas.map(([id, d]) => `<span class="bfx-chip">${esc(tname(Number(id)))} ${signedPts(d, true)} pts</span>`).join("")}<span class="bfx-chip"><b>${Object.keys(m.ranks).length}</b> team${Object.keys(m.ranks).length === 1 ? "" : "s"} move in the standings</span></div>
+      ${flips ? `<div class="bfx-flips">${flips}</div>` : `<p class="muted">No game would have gone the other way, but the points add up: ${deltas.map(([id, d]) => `${esc(tname(Number(id)))} ${signed(d)}`).join(", ")}.</p>`}
+      <h4 class="bfx-sub">Standings without it <span class="muted">· weeks ${B.weeks[0]}–${B.weeks[1]}, by record then points</span></h4>${tbl}</div>`;
+  }
+  function bfxHydrate() {
+    const box = document.getElementById("bfx");
+    if (!box) return;
+    loadMoves(L.season).then(M => {
+      const B = M.butterfly;
+      if (!B || !B.moves || !B.moves.length) { box.innerHTML = '<div class="empty">No moves have changed a lineup yet this season.</div>'; return; }
+      const mine = myTeam();
+      const asked = state.params.get("move");
+      let m = B.moves.find(x => x.id === asked);
+      if (!m && mine) m = B.moves.find(x => x.team === mine.id || x.other === mine.id);
+      m = m || B.moves[0];
+      const teamsOrder = D.teams.slice().sort((a, b) => (isMine(b) ? 1 : 0) - (isMine(a) ? 1 : 0) || a.standing - b.standing);
+      const opts = teamsOrder.map(t => {
+        const list = B.moves.filter(x => x.team === t.id || x.other === t.id).sort((a, b) => a.week - b.week);
+        return list.length ? `<optgroup label="${esc(t.name)}">${list.map(x => `<option value="${esc(x.id)}"${x.id === m.id ? " selected" : ""}>Wk ${x.week}: ${esc(bfxLabel(x, t.id))}${x.flips.length ? ` (${x.flips.length} flip${x.flips.length === 1 ? "" : "s"})` : ""}</option>`).join("")}</optgroup>` : "";
+      }).join("");
+      const top = B.moves.filter(x => x.flips.length).slice(0, 5);
+      box.innerHTML = `<label class="field bfx-pick">Take away <select id="bfx-move">${opts}</select></label>
+        <div id="bfx-detail">${bfxDetail(B, m)}</div>
+        ${top.length ? `<div class="bfx-top"><div class="ms-h">Biggest butterflies this season</div>${top.map(x => `<button type="button" class="bfx-topbtn" data-bfx="${esc(x.id)}"><b>${x.flips.length} flip${x.flips.length === 1 ? "" : "s"}</b><span>${esc(tname(x.team))} ${esc(bfxLabel(x, x.team))} <span class="muted">· wk ${x.week}</span></span></button>`).join("")}</div>` : ""}`;
+      const pick = id => {
+        const x = B.moves.find(y => y.id === id);
+        if (!x) return;
+        document.getElementById("bfx-detail").innerHTML = bfxDetail(B, x);
+        const sel = document.getElementById("bfx-move");
+        if (sel) sel.value = id;
+        const p = new URLSearchParams(state.params); p.set("move", id); state.params = p;
+        history.replaceState(null, "", "#/insights/whatif?" + p.toString());
+      };
+      box.querySelector("#bfx-move").addEventListener("change", e => pick(e.target.value));
+      box.querySelectorAll("[data-bfx]").forEach(b => b.addEventListener("click", () => { pick(b.dataset.bfx); document.getElementById("bfx-detail").scrollIntoView({ block: "start", behavior: "smooth" }); }));
+    }).catch(() => { box.innerHTML = '<div class="empty">Couldn\'t load the season\'s moves. Try reloading.</div>'; });
+  }
+
   function loadRecords() {
     if (window.LEAGUE_RECORDS && window.LEAGUE_RECORDS.all) return Promise.resolve(window.LEAGUE_RECORDS.all);
     return new Promise((resolve, reject) => {
@@ -3431,9 +3617,9 @@
   // The member id is an ESPN account, so it finds the right team in every season.
   const ME = { member: store.get("me", ""), pick: "", msg: "", err: false, busy: false, cust: false };
   // My team layout (per device): the order of the sections below the at-a-glance tiles, and which are hidden
-  const ME_PARTS = { glance: "At a glance", week: "This week's matchup", moved: "Why your power moved", news: "Player news", waivers: "Waiver targets", watch: "Your games to watch",
+  const ME_PARTS = { glance: "At a glance", week: "This week's matchup", root: "Who to root for", style: "Your manager style", moved: "Why your power moved", news: "Player news", waivers: "Waiver targets", watch: "Your games to watch",
     byes: "Byes ahead", badges: "Your badges", records: "Your record book", roster: "Roster", schedule: "Schedule" };
-  const ME_ORDER = ["week", "moved", "news", "waivers", "watch", "byes", "badges", "records", "roster", "schedule"];
+  const ME_ORDER = ["week", "root", "moved", "news", "waivers", "watch", "byes", "style", "badges", "records", "roster", "schedule"];
   function meLayout() {
     const saved = store.get("me-layout", null) || {};
     const order = (Array.isArray(saved.order) ? saved.order : []).filter(k => ME_ORDER.includes(k));
@@ -3600,6 +3786,8 @@
       moved: cur && t.moved ? section("Why your power moved", "", movedHtml(t)) : "",
       news: cur ? section("Player news", "The latest from ESPN on your players. New since your last visit is marked.", '<div class="me-news-box"><div class="empty">Loading…</div></div>') : "",
       waivers: waiverTargets(t),
+      root: cur && L.rootFor ? rootForHtml(t.id) : "",
+      style: section("Your manager style", { short: "How you actually run your team, from ESPN's log of every move.", full: "Built from ESPN's log of every move this season (pickups, drops, lineup changes, trades, with the time each was made), compared with the rest of the league. Your type comes from the two things that set you furthest apart from everyone else. Times are Eastern." }, '<div class="ms-box"><div class="empty">Loading…</div></div>'),
       badges: IDX.history.badges ? section(`Your badges <a class="wk-link" href="${href("history", {}, "badges")}">all badges ›</a>`, "Earned across every season you've played.", badgeTiles(ME.member)) : "",
       records: section(`Your record book <a class="wk-link" href="${href("history", { member: ME.member }, "records")}">full record book ›</a>`, "Your bests and worsts across every season you've played. Tap one for the box score.", `<div class="me-recs-box" data-rec-member="${esc(ME.member)}"><div class="empty">Loading…</div></div>`),
     };
@@ -3619,6 +3807,7 @@
       ${shown("glance") ? glance : ""}
       <div class="me-grid${right ? "" : " one"}"><div class="me-col">${left}</div><div class="me-col">${right}</div></div>`;
     fillMyRecords(main.querySelector(".me-recs-box"));
+    fillStyle(main.querySelector(".ms-box"), t);
     if (cur) fillNews(main.querySelector(".me-news-box"), t);
   }
 
@@ -3812,6 +4001,9 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-17", [
+      ["Who to root for", "Matchups · My team", "The other games this week that change your playoff (or bye) odds, how much each result is worth, and how they're going live.", "#/matchups"],
+      ["Your manager style", "My team", "How you actually run your team, from ESPN's log of every move: pickups, lineup changes, gut calls, when you make moves, boiled down to a type like \"Late-night waiver hawk\".", "#/myteam"],
+      ["Butterfly effect", "Insights → What ifs", "Take away any single pickup, drop or trade and replay the season without it: which games flip and where everyone would stand.", "#/insights/whatif?at=butterfly"],
       ["Getting started tour", "Opens on a first visit · Settings → Display", "Five short steps for anyone new: what the site is, claim your team, turn on alerts, where everything lives, and the league games. Replay it any time from Settings.", "#/settings"],
     ]],
     ["2026-11-15", [
@@ -3970,6 +4162,9 @@
       ["winprob", "Win probability", "Matchups", "#/matchups", "ESPN's live chance each team wins its matchup, shown while the week is in progress.", []],
       ["bigplays", "Big plays", "Matchups → Big plays", "#/matchups/plays", "Touchdowns, 5+ point field goals, turnovers, big defensive plays and 30+ yard gains (50+ for a pass) by league players, caught from ESPN every minute during games, with the fantasy points that play was worth. The Season view adds them up by team and player since the feed started.", ["Team leaderboard"]],
       ["monday", "Monday-night math", "Matchups", "#/matchups", "Once a matchup is down to players in games that haven't started, what each side needs and a win chance from those players' own game logs.", []],
+      ["rootfor", "Who to root for", "Matchups, My team", "#/matchups", "For each of this week's other games, your playoff chance in the simulated seasons where each team won (the same 10,000 seasons as the playoff odds). Root for the team whose win helps you; the number is how many percentage points it's worth. Bye odds instead once you're all but in.", []],
+      ["mstyle", "Manager style", "My team", "#/myteam", "How each manager runs a team, from ESPN's log of every move and lineup: pickups, lineup changes, gut calls (starting someone ESPN projected 2+ points below an eligible bench player), how fast pickups get cut, trades, and when moves happen (Eastern time). The type names the two habits that stand out most against the rest of the league.", []],
+      ["butterfly", "Butterfly effect", "Insights → What ifs", "#/insights/whatif?at=butterfly", "One move taken out and the regular season replayed: players it brought in leave the lineups they started in, replaced by the best-projected bench player; players it sent away come back with their real points elsewhere and start if projected above the weakest eligible starter. Projections only, no hindsight.", []],
       ["reactions", "Reactions", "Matchups, Big plays, Standings", "#/matchups", "Tap an emoji under a matchup, a big play or the weekly high and low score to react as your team (same name and PIN as the games). Tap again to take it back; hold one to see who reacted.", []],
     ]],
     ["Games", [

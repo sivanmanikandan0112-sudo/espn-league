@@ -18,6 +18,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import power  # noqa: E402
+import moves  # noqa: E402
 import nfldata  # noqa: E402
 import stats  # noqa: E402
 
@@ -380,6 +381,9 @@ def build_season(season, is_current, names):
                 if not over and w == current_week:
                     for r in lineup:
                         r["proj"] = round(week_proj.get(r["id"], 0.0), 1)
+                elif week_proj:  # kept during the build only (manager style, butterfly effect), not written out
+                    for r in lineup:
+                        r["_proj"] = round(week_proj.get(r["id"], 0.0), 1)
                 for e in entries:
                     st = week_stats(e, season, w)
                     if st:
@@ -452,6 +456,12 @@ def build_season(season, is_current, names):
         t["injuries"] = injuries.get(tid, {"lost": 0.0, "missed": 0, "players": []}) if injuries else None
         t["autopilot"] = auto.get(tid)
     add_draft(data, season, actual, slot_counts)
+    # manager style and butterfly effect, from the transaction log (own file, loaded when someone opens them)
+    try:
+        mv, acts = moves.normalize(tx_log(season, final_week if over else latest).values())
+        data["_moves"] = {"style": moves.manager_style(data, mv, acts, data["trades"]), "butterfly": moves.butterfly(data, mv, names_seen)}
+    except Exception as e:  # noqa: BLE001 - optional, never break the build
+        print("  moves: skipped (%s)" % e)
     data["rulesLab"] = stats.rules_lab(data, data["_stats"], slot_counts)
     if is_current and not over:
         data["gameLogs"] = stats.game_logs(data, data["_stats"])
@@ -463,7 +473,7 @@ def build_season(season, is_current, names):
         for g in w["games"]:
             for s in g["sides"]:
                 for r in s["lineup"]:
-                    r.pop("slotOrder", None)
+                    r.pop("slotOrder", None); r.pop("_proj", None)
     data["teams"] = sorted(teams.values(), key=lambda t: t["standing"])
     return data
 
@@ -783,7 +793,18 @@ def add_playoff_odds(data, main, teams, regular, current_week):
     pw = data["league"].get("powerWeeks")
     n_power_weeks = (pw[1] - pw[0] + 1) if pw else 0
     strength = stats.team_strengths(data, {tid: t.get("power", 0) for tid, t in teams.items()}, n_power_weeks, live)
-    odds = stats.playoff_odds(data, schedule, strength)
+    # "Who to root for": the first week whose results aren't all settled yet (a finished week stays "undecided" on
+    # ESPN until it closes on Wednesday, but its live win probabilities are already 0 / 100)
+    track = []
+    for w in sorted({g[0] for g in schedule}):
+        games = [g for g in schedule if g[0] == w]
+        if any(not (live.get(h) and live.get(a) and live[h][3] is not None and live[h][3] in (0, 1)) for _, h, a in games):
+            track = games
+            break
+    odds = stats.playoff_odds(data, schedule, strength, track)
+    tracked = odds.pop("_track", [])
+    if tracked:
+        data["league"]["rootFor"] = {"week": tracked[0]["week"], "games": tracked}
     for tid, o in odds.items():
         teams[tid]["odds"] = o
     return schedule, strength
@@ -828,14 +849,25 @@ def current_trades(season, teams, names_seen):
     return sorted(trades, key=lambda t: -t["date"])
 
 
+_TX = {}
+
+
+def tx_log(season, last_period):
+    """Every transaction ESPN has for a season (all scoring periods), fetched once per build."""
+    if (season, last_period) not in _TX:
+        tx = {}
+        for p in range(0, last_period + 1):
+            for t in fetch(season, params=[("view", "mTransactions2"), ("scoringPeriodId", p)]).get("transactions", []):
+                tx[t["id"]] = t
+        _TX[(season, last_period)] = tx
+    return _TX[(season, last_period)]
+
+
 def past_trades(season, weeks, final_week, names_seen):
     """Past seasons have no activity feed. Rebuild trades from week-to-week roster swaps (team A's player
     shows up on team B the next week and vice versa), kept only when the transaction log has an accepted,
     un-vetoed trade by one of those teams around that week. Exact records are used where the log has them."""
-    tx = {}
-    for p in range(0, final_week + 1):
-        for t in fetch(season, params=[("view", "mTransactions2"), ("scoringPeriodId", p)]).get("transactions", []):
-            tx[t["id"]] = t
+    tx = tx_log(season, final_week)
     vetoed = {t.get("relatedTransactionId") for t in tx.values() if t["type"] == "TRADE_VETO"}
     accepts = [t for t in tx.values() if t["type"] == "TRADE_ACCEPT" and t.get("relatedTransactionId") not in vetoed]
 
@@ -1154,6 +1186,9 @@ def main():
         stats_blob = data.pop("_stats", {})
         graph = data.pop("_graph", None)
         practice = data.pop("_practice", None)
+        mv = data.pop("_moves", None)
+        if mv:
+            write_js(os.path.join(DATA_DIR, "%d-moves.js" % season), "LEAGUE_MOVES", season, mv)
         if practice:
             with open(os.path.join(DATA_DIR, "practice.json"), "w") as f:
                 json.dump(practice, f, separators=(",", ":"))

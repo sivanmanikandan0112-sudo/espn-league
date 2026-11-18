@@ -139,7 +139,7 @@ PLAYOFF_SEED = 7
 STRENGTH_SHRINK = 0.5
 
 
-def playoff_odds(season, schedule, team_strength):
+def playoff_odds(season, schedule, team_strength, track=None):
     """Monte Carlo the rest of the regular season and the playoff bracket.
 
     schedule: [(week, home, away)] for every regular-season game not yet final.
@@ -169,6 +169,9 @@ def playoff_odds(season, schedule, team_strength):
             return h[2] / (h[2] + a[2])
         return None
 
+    track = [g for g in (track or []) if g in set(schedule)]
+    cond = {g: {"n": [0, 0], "po": [defaultdict(int), defaultdict(int)], "bye": [defaultdict(int), defaultdict(int)]} for g in track}
+
     def play(a, b):
         sa, sb = rng.gauss(team_strength[a]["mean"], team_strength[a]["sd"]), rng.gauss(team_strength[b]["mean"], team_strength[b]["sd"])
         return a if sa >= sb else b
@@ -176,6 +179,7 @@ def playoff_odds(season, schedule, team_strength):
     for _ in range(PLAYOFF_SIMS):
         wins = {tid: t["wins"] + t["ties"] / 2 for tid, t in teams.items()}
         pf = {tid: t["pf"] for tid, t in teams.items()}
+        result = {}
         for week, home, away in schedule:
             sh, sa = draw(home, week), draw(away, week)
             pf[home] += sh; pf[away] += sa
@@ -185,6 +189,7 @@ def playoff_odds(season, schedule, team_strength):
             else:
                 winner = home if sh > sa else away
             wins[winner] += 1
+            result[(week, home, away)] = 0 if winner == home else 1
         order = sorted(teams, key=lambda tid: (-wins[tid], -pf[tid]))
         for i, tid in enumerate(order):
             tally[tid]["wins"] += wins[tid]
@@ -195,6 +200,13 @@ def playoff_odds(season, schedule, team_strength):
             tally[tid]["playoffs"] += 1
             if i < byes:
                 tally[tid]["bye"] += 1
+        for g, c in cond.items():
+            side = result[g]
+            c["n"][side] += 1
+            for i, tid in enumerate(field):
+                c["po"][side][tid] += 1
+                if i < byes:
+                    c["bye"][side][tid] += 1
         # bracket, reseeded each round: best remaining seed plays the worst
         seed_of = {tid: i for i, tid in enumerate(field)}
         alive, waiting = field[byes:], field[:byes]
@@ -207,12 +219,19 @@ def playoff_odds(season, schedule, team_strength):
         tally[alive[0]]["title"] += 1
 
     n = float(PLAYOFF_SIMS)
-    return {tid: {"playoffPct": round(100 * v["playoffs"] / n, 1), "byePct": round(100 * v["bye"] / n, 1),
+    # a result that almost never happens in the sims (a game that's all but decided) gets no conditional odds
+    track_out = [{"week": g[0], "home": g[1], "away": g[2], "pHome": round(100 * c["n"][0] / n, 1),
+                  "odds": {tid: [[round(100 * c[k][side][tid] / c["n"][side], 1) if c["n"][side] >= 200 else None for k in ("po", "bye")] for side in (0, 1)]
+                           for tid in teams}}
+                 for g, c in cond.items()]
+    out = {tid: {"playoffPct": round(100 * v["playoffs"] / n, 1), "byePct": round(100 * v["bye"] / n, 1),
                   "titlePct": round(100 * v["title"] / n, 1), "projWins": round(v["wins"] / n, 1),
                   "avgSeed": round(v["seed"] / n, 1), "gamesLeft": games_left[tid],
                   # chance of finishing at each seed (index 0 = the 1 seed), for the seed odds grid
                   "seeds": [round(100 * c / n, 1) for c in v["seeds"]]}
             for tid, v in tally.items()}
+    out["_track"] = track_out
+    return out
 
 
 def team_strengths(season, power_by_team, power_weeks, live_week_proj):

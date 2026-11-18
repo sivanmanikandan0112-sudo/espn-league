@@ -321,6 +321,30 @@ waiver wire challenge, Bullseye or Rank 'em entries, finishes trivia or updates 
 picked. One KV value per season, `pulse:<season>`, the last 40 events; the same person doing the same thing within
 30 minutes moves back to the top instead of adding a line (`pulse()` in `worker/src/index.js`).
 
+## Who to root for
+
+Matchups (below this week's games) and My team. The playoff-odds simulation (`stats.playoff_odds`, 10,000 seasons)
+also records, for each game of the first week that isn't settled yet, every team's playoff and bye chance in the
+simulations where each side won (`league.rootFor`). The site shows your own game's stakes and the other games whose
+result moves your odds by a point or more, with their live scores. Once your playoff odds are 99.5%+ either way it
+switches to first-round-bye odds. Refreshes with every site build.
+
+## Manager style and Butterfly effect
+
+Both come from ESPN's transaction log (`mTransactions2`, every scoring period; `moves.py`) and are written to
+`data/<season>-moves.js`, loaded only when someone opens them.
+
+- **Manager style** (My team): pickups, lineup changes, gut calls (a starter ESPN projected 2+ points below an
+  eligible bench player), share of pickups cut within about a week, trades, and when moves happen (Eastern time).
+  The type pairs the two habits furthest from the league average (z-score of 1+ and top or bottom 3). Older seasons'
+  logs are missing most lineup moves, so that measure is skipped when most teams have none.
+- **Butterfly effect** (Insights → What ifs): any waiver claim, free-agent pickup, drop or trade, taken out of the
+  regular season. Players it brought in come out of the lineups they started in (best-projected eligible bench
+  player takes the slot); players it sent away come back with the points they really scored elsewhere and start if
+  projected above the weakest eligible starter; a dropped player picked up by another league team leaves that team.
+  Projections only (kept on past weeks' rows during the build as `_proj`, not written out). Standings by record,
+  then points for.
+
 ## Getting-started tour
 
 A first-time visitor on a device (nothing saved from the site yet) gets a five-step card: what League HQ is, claim
