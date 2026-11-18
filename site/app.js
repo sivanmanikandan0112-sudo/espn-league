@@ -63,6 +63,9 @@
     get(k, d) { try { const v = localStorage.getItem("lhq:" + k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } },
     set(k, v) { try { localStorage.setItem("lhq:" + k, JSON.stringify(v)); } catch (_) { /* ignore */ } },
   };
+  // A brand-new visitor on this device (nothing saved yet): the getting-started tour opens for them. Read here, before
+  // the first page render records a visit.
+  const NEW_VISITOR = store.get("tour", null) == null && store.get("last-visit", null) == null && !store.get("me", "") && !store.get("pk-member", "");
   // Compact mode (per device): tighter tables, cards and spacing, one-line explanations everywhere
   function setCompact(on) {
     document.documentElement.classList.toggle("compact", on);
@@ -3808,6 +3811,9 @@
   // Every feature added to the site, grouped by the day it went live (newest first). Add new features at the top.
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
+    ["2026-11-17", [
+      ["Getting started tour", "Opens on a first visit · Settings → Display", "Five short steps for anyone new: what the site is, claim your team, turn on alerts, where everything lives, and the league games. Replay it any time from Settings.", "#/settings"],
+    ]],
     ["2026-11-15", [
       ["Big plays by position", "Matchups → Big plays → Season", "The player leaderboard is now split by position (QB, RB, WR, TE, K, D/ST), top 10 each, since quarterbacks filled the whole list.", "#/matchups/plays?view=season"],
     ]],
@@ -4173,7 +4179,8 @@
 
     const compactOn = document.documentElement.classList.contains("compact");
     const display = `<section class="panel set-display"><label class="set-switch"><input type="checkbox" data-compact${compactOn ? " checked" : ""}>
-      <span><b>Compact mode</b><span class="team-mgr">Tighter tables, cards and spacing so more fits on screen, with one-line explanations (tap ⓘ for the rest). Saved on this device.</span></span></label></section>`;
+      <span><b>Compact mode</b><span class="team-mgr">Tighter tables, cards and spacing so more fits on screen, with one-line explanations (tap ⓘ for the rest). Saved on this device.</span></span></label>
+      <div class="set-tour"><span><b>Getting started tour</b><span class="team-mgr">Claim your team, turn on alerts, and a quick map of the site.</span></span><button type="button" class="linkbtn" data-tour-start>Take the tour ›</button></div></section>`;
     main.innerHTML = `<div class="section-head"><div><h1>League settings</h1><p class="sub">${L.season} season · straight from ESPN · updated ${esc(ago(D.updated))}</p></div></div>
       <h2 class="set-h">Display</h2>${display}
       <h2 class="set-h" id="alerts">Alerts</h2><section class="panel set-alerts" id="alerts-panel"></section>
@@ -4181,6 +4188,7 @@
       <h2 class="set-h">Roster & season</h2><div class="rec-grid set-grid">${roster}${schedule}${moves}${draft}</div>
       <h2 class="set-h">Scoring</h2><div class="rec-grid set-grid">${groups.join("")}${other}${dst}</div>`;
     initAlerts();
+    if (state.params.get("at") === "alerts") requestAnimationFrame(() => document.getElementById("alerts").scrollIntoView({ block: "start" }));
   }
 
 
@@ -4994,6 +5002,105 @@
   window.addEventListener("offline", () => renderBanner());
   window.addEventListener("online", () => { renderBanner(); poll(); liveTick(); });
 
+  // ---------------------------------------------------------------- getting-started tour
+  // Five short steps for someone new: what the site is, claim your team, alerts, where everything lives, and the
+  // league games. It opens on a first visit and can be replayed from Settings. A step that sends you somewhere
+  // (claiming a team, alerts) shrinks the tour to a small pill at the bottom; tap it to carry on. Saved per device:
+  // "tour" = { step, min } while it's open, { done: true } once finished or skipped.
+  const TOUR = { el: null, pill: null, push: null };
+  const tourState = () => store.get("tour", null) || {};
+  async function tourPushOn() {
+    try {
+      const reg = "serviceWorker" in navigator && await navigator.serviceWorker.getRegistration();
+      return !!(reg && reg.pushManager && await reg.pushManager.getSubscription());
+    } catch (_) { return false; }
+  }
+  const TOUR_TABS = [["Standings", "#/", "The table, power rankings, League pulse (what everyone's been up to) and what changed since your last visit."],
+    ["My team", "#/myteam", "Built around your team: this week's matchup, lineup problems, player news, waiver targets and your record book."],
+    ["Matchups", "#/matchups", "Live scores every minute on game day, box scores, every big play, a watch guide and the playoff bracket."],
+    ["Games", "#/games", "Weekly pick'em, Pick 4, trivia and puzzles about this league, with season leaderboards."],
+    ["Insights", "#/insights", "Playoff odds, luck, lineups, schedule and what-ifs. Each tab has a switch at the top for its views."],
+    ["Trades", "#/trades", "Every trade with grades, the trade block, and side-by-side player comparisons."],
+    ["History", "#/history", "Every past season, the record book, player history and Tale of the tape for any two managers."]];
+  function tourSteps() {
+    const me = ME.member, pushOn = TOUR.push;
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent), canPush = "PushManager" in window && "serviceWorker" in navigator;
+    const done = txt => `<p class="tour-done"><span aria-hidden="true">✓</span><span>${txt}</span></p>`;
+    return [
+      { t: `Welcome to ${esc(IDX.name)}`, b: `<p>This is the league's own site. It's rebuilt from ESPN every few minutes on game days, so scores, standings and playoff odds stay current, and it adds things ESPN doesn't have: luck, power rankings, league history, trash talk and games just for this league.</p><p>Four quick steps get you set up. It takes about a minute.</p>`, next: "Start" },
+      { t: "Claim your team", b: me ? done(`You're set up as <b>${esc(memberName(me))}</b>. Your team is highlighted everywhere, and My team is built around it.`)
+          : `<p>Pick your name and choose a 4-digit PIN. The site then highlights your team everywhere and builds My team around it.</p><p class="team-mgr">The same name and PIN work for pick'em, the trade block, trash talk and reactions. Never set one? The PIN you choose now becomes yours.</p>`,
+        go: me ? null : ["Claim my team", "#/myteam"] },
+      { t: "Turn on alerts", b: pushOn ? done("Alerts are on for this device. Pick which ones you want any time in Settings → Alerts.")
+          : `<p>Get a notification for lead changes, close finishes and final results in your matchup, big plays, starters ruled out before kickoff, practice reports, waiver results and trades. You choose which ones.</p>`
+            + (!canPush && ios ? `<p class="team-mgr">On iPhone, first add the site to your Home Screen (Share → Add to Home Screen), then open it from there. Apple only allows alerts that way.</p>`
+              : !canPush ? `<p class="team-mgr">This browser can't show alerts. Try Chrome, Edge, Firefox or Safari.</p>` : ""),
+        go: pushOn || !canPush ? null : ["Set up alerts", "#/settings?at=alerts"] },
+      { t: "Where everything lives", b: `<div class="tour-tabs">${TOUR_TABS.map(([n, h, d]) => `<a href="${h}" data-tour-min><b>${n}</b><span>${d}</span></a>`).join("")}</div><p class="team-mgr">Tap any ⓘ for how a number works, or see the Glossary at the bottom of every page.</p>` },
+      { t: "Join in", b: `<p>Make a pick in this week's <a href="#/games" data-tour-min>pick'em</a>, react to big plays with one tap, and post trash talk on any matchup or trade. It all shows up in League pulse for everyone.</p><p>New features land often: the ✦ <b>What's new</b> button in the header has the list.</p>`, next: "Done" },
+    ];
+  }
+  function tourClose(finished) {
+    store.set("tour", { done: true, finished: !!finished });
+    if (TOUR.el) { TOUR.el.remove(); TOUR.el = null; }
+    if (TOUR.pill) { TOUR.pill.remove(); TOUR.pill = null; }
+    document.removeEventListener("keydown", tourKey);
+  }
+  function tourKey(e) { if (e.key === "Escape") tourMin(); }
+  function tourMin() { const st = tourState(); if (st.done) return; store.set("tour", { ...st, min: true }); tourRender(); }
+  function tourOpen(step) {
+    store.set("tour", { step: step == null ? (tourState().step || 0) : step, min: false });
+    tourRender();
+  }
+  async function tourRender() {
+    const st = tourState();
+    if (st.done) return;
+    TOUR.push = await tourPushOn();
+    const steps = tourSteps(), i = Math.max(0, Math.min(steps.length - 1, st.step || 0)), S = steps[i];
+    if (st.min) {
+      if (TOUR.el) { TOUR.el.remove(); TOUR.el = null; document.removeEventListener("keydown", tourKey); }
+      if (!TOUR.pill) { TOUR.pill = document.createElement("div"); TOUR.pill.className = "tour-pill"; document.body.appendChild(TOUR.pill); }
+      TOUR.pill.innerHTML = `<button type="button" class="tour-pill-go" data-tour="open">Getting started · step ${i + 1} of ${steps.length} <b>Continue ›</b></button><button type="button" class="tour-pill-x" data-tour="skip" aria-label="End the tour">✕</button>`;
+      return;
+    }
+    if (TOUR.pill) { TOUR.pill.remove(); TOUR.pill = null; }
+    if (!TOUR.el) {
+      TOUR.el = document.createElement("div");
+      TOUR.el.className = "share-modal tour-modal";
+      document.body.appendChild(TOUR.el);
+      document.addEventListener("keydown", tourKey);
+    }
+    const last = i === steps.length - 1;
+    TOUR.el.innerHTML = `<div class="share-sheet tour-sheet" role="dialog" aria-modal="true" aria-labelledby="tour-h">
+      <div class="tour-top"><span class="tour-n">Getting started · ${i + 1} of ${steps.length}</span><button type="button" class="linkbtn" data-tour="skip">${i === 0 ? "Not now" : "Skip tour"}</button></div>
+      <div class="tour-dots" aria-hidden="true">${steps.map((_, k) => `<i class="${k === i ? "on" : k < i ? "past" : ""}"></i>`).join("")}</div>
+      <h2 id="tour-h">${S.t}</h2><div class="tour-body">${S.b}</div>
+      <div class="tour-actions">${i > 0 ? `<button type="button" class="linkbtn" data-tour="back">‹ Back</button>` : "<span></span>"}
+        <span class="tour-right">${S.go ? `<a class="cta" href="${S.go[1]}" data-tour-min>${S.go[0]}</a><button type="button" class="linkbtn" data-tour="next">Skip this step</button>`
+          : `<button type="button" class="cta" data-tour="${last ? "finish" : "next"}">${S.next || "Next"}</button>`}</span></div></div>`;
+    const focus = TOUR.el.querySelector(".tour-actions .cta");
+    if (focus) focus.focus({ preventScroll: true });
+  }
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-tour],[data-tour-min],[data-tour-start]");
+    if (b && b.dataset.tourStart != null) { e.preventDefault(); return tourOpen(0); }
+    if (b && b.dataset.tourMin != null) { if (!tourState().done) store.set("tour", { ...tourState(), min: true }); setTimeout(tourRender, 0); return; } // the link itself navigates
+    if (!b) { if (TOUR.el && e.target === TOUR.el) tourMin(); return; } // tap outside the card: tuck it away
+    const st = tourState(), act = b.dataset.tour;
+    if (act === "skip") return tourClose(false);
+    if (act === "finish") return tourClose(true);
+    if (act === "open") return tourOpen();
+    if (act === "next" || act === "back") { store.set("tour", { step: (st.step || 0) + (act === "next" ? 1 : -1), min: false }); tourRender(); }
+  });
+  // after claiming a team or turning on alerts, the pill's step shows as done when it's reopened; keep it current
+  window.addEventListener("hashchange", () => { if (TOUR.pill || TOUR.el) setTimeout(tourRender, 50); });
+  function tourBoot() {
+    const st = tourState();
+    if (st.done) return;
+    if (st.step != null) return tourRender(); // a tour in progress (e.g. after a reload)
+    if (NEW_VISITOR) setTimeout(() => tourOpen(0), 600);
+  }
+
   // Opening the site with no page picked (the home-screen app always starts this way): on days with NFL games it
   // starts on Matchups, so checking scores takes no tapping; other days it starts on Standings. Links to a page,
   // reloads and pull-to-refresh keep whatever page is in the address.
@@ -5007,5 +5114,5 @@
     } catch (_) { /* no data: just open Standings */ }
   }
 
-  startPage().then(route).then(startLive);
+  startPage().then(route).then(startLive).then(tourBoot);
 })();

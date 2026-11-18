@@ -321,6 +321,14 @@ waiver wire challenge, Bullseye or Rank 'em entries, finishes trivia or updates 
 picked. One KV value per season, `pulse:<season>`, the last 40 events; the same person doing the same thing within
 30 minutes moves back to the top instead of adding a line (`pulse()` in `worker/src/index.js`).
 
+## Getting-started tour
+
+A first-time visitor on a device (nothing saved from the site yet) gets a five-step card: what League HQ is, claim
+your team (name + PIN), turn on alerts, where everything lives, and the league games. The steps that send you
+somewhere (My team, Settings → Alerts) shrink the tour to a small "Continue" pill at the bottom, and those steps show
+as done once you've claimed a team or turned alerts on. Skipping or finishing ends it for good on that device;
+Settings → Display → **Take the tour** replays it. Saved in `localStorage` as `lhq:tour`.
+
 ## Compact mode
 
 A per-device display setting (`lhq:compact`, the `compact` class on `<html>`): the switch in
