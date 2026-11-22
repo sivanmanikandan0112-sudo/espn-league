@@ -354,7 +354,8 @@ ids, so the build matches them by date and team names from Real's day pages (`re
 failure just leaves that link out. Big plays (Matchups → Big plays and the recent-plays panel) link to **that exact play on Real** when Real lists it
 among the game's top plays (about 5 per game, mostly touchdowns and long field goals; `add_real_plays` reads each game
 page while it's on and for 5 hours after, within 10 seconds per build), matched by player, yards and kind, with a
-passing TD matched to its one catch. Other plays link to the game on Real and ESPN Gamecast. Real's links are web links; whether they open the Real app or its website
+passing TD matched to its one catch. Other plays link to the game on Real and ESPN Gamecast. The player card's Real button opens **that player's own performance in that game** on Real ("Cam Ward Stats vs
+Cowboys"), read from the same game pages (league-rostered players only); before his game starts it opens the game. Real's links are web links; whether they open the Real app or its website
 depends on the phone.
 
 ## Getting-started tour

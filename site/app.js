@@ -4822,13 +4822,16 @@
         : at == null ? "Kickoff time not set" : now < at ? "Kickoff " + new Date(at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })
         : now < at + 3.5 * 3600e3 ? '<b class="sg-live">Live</b>' : "Final";
       const vs = `${esc(g.away)} @ ${esc(g.home)}`;
-      return `<div class="stat-game"><span class="stat-game-t">${vs} · ${state}</span>${followLinks(g)}</div>`;
+      // his own performance in this game on Real (the build finds it once the game is on), else the game
+      const mine = g.realPlayers && g.realPlayers[normName(p.name)];
+      return `<div class="stat-game"><span class="stat-game-t">${vs} · ${state}</span>${followLinks(g, mine)}</div>`;
     } catch (_) { return ""; }
   }
   // the two buttons (player card, Watch guide): Real when the build found the game there, ESPN Gamecast always
-  function followLinks(g) {
+  function followLinks(g, playerUrl) {
     if (!g || !g.id) return "";
-    return `<span class="stat-game-l">${g.real ? `<a class="sg-btn sg-real" href="${esc(g.real)}" target="_blank" rel="noopener">Open in Real ↗</a>` : ""}<a class="sg-btn" href="https://www.espn.com/nfl/game/_/gameId/${encodeURIComponent(g.id)}" target="_blank" rel="noopener">ESPN Gamecast ↗</a></span>`;
+    const real = playerUrl || g.real;
+    return `<span class="stat-game-l">${real ? `<a class="sg-btn sg-real" href="${esc(real)}" target="_blank" rel="noopener">${playerUrl ? "His game on Real" : "Open in Real"} ↗</a>` : ""}<a class="sg-btn" href="https://www.espn.com/nfl/game/_/gameId/${encodeURIComponent(g.id)}" target="_blank" rel="noopener">ESPN Gamecast ↗</a></span>`;
   }
 
   async function openPlayerStats(pid, week) {

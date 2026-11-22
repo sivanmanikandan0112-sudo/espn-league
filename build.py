@@ -128,7 +128,7 @@ REAL_PLAY_WORDS = re.compile(r"\d+-yd|\bTD\b|Fumble|Interception|Safety|Field go
 REAL_LINK = re.compile(r'<a href="(https://www\.realapp\.com/[A-Za-z0-9]{6,16})">([^<,@]+?) @ ([^<,]+?), ')
 
 
-def add_real_links(games, season):
+def add_real_links(games, season, roster_names=()):
     """Each NFL game's page on the Real sports app (www.realapp.com), for the player card's "follow the game" links.
     Real uses its own ids, so games are matched by date and team names from Real's day pages (realapp.com/nfl/<date>).
     Strictly best effort and kept off the critical path: links carry over from the previous build, so Real is only
@@ -159,23 +159,36 @@ def add_real_links(games, season):
                     g["real"] = url
     except Exception as e:  # noqa: BLE001 - optional links, never break the build
         print("  real links: skipped (%s)" % e)
-    add_real_plays(games, prev_games)
+    add_real_plays(games, prev_games, roster_names)
     return games
 
 
-def add_real_plays(games, prev_games):
+def real_name(n):
+    """Player names as both the build and the site compare them (same rule as normName in app.js)."""
+    n = re.sub(r"['’.]", "", str(n or "").lower())
+    n = re.sub(r"\b(jr|sr|ii|iii|iv|v)\b", "", n)
+    return re.sub(r"[^a-z]+", " ", n).strip()
+
+
+def add_real_plays(games, prev_games, roster_names=()):
     """Real's game pages link their top plays one by one ("Carnell Tate 59-yd TD catch"), so a big play on the site
-    can open that exact play. Games are read while on or recently over (kickoff to 5 hours after), within 10
-    seconds per build in all; otherwise the previous build's list carries over. Best effort, like add_real_links."""
+    can open that exact play, and every player's own performance in that game ("Cam Ward Stats vs Cowboys"), so the
+    player card can open it (kept for league-rostered players only). Games are read while on or recently over
+    (kickoff to 5 hours after), plus once for a finished game never read, within 10 seconds per build in all;
+    otherwise the previous build's lists carry over. Best effort, like add_real_links."""
     started, now = time.time(), time.time()
+    wanted = {real_name(n) for n in roster_names}
     for g in games:
         try:
-            if (prev_games.get(g["id"]) or {}).get("realPlays"):
-                g["realPlays"] = prev_games[g["id"]]["realPlays"]
+            old = prev_games.get(g["id"]) or {}
+            for k in ("realPlays", "realPlayers"):
+                if old.get(k):
+                    g[k] = old[k]
             if not g.get("real") or not g.get("date") or g.get("tbd"):
                 continue
             at = dt.datetime.fromisoformat(g["date"]).timestamp()
-            if not (at <= now <= at + 5 * 3600) or time.time() - started > 10:
+            unread = now > at + 5 * 3600 and not old.get("realPlayers")
+            if not (at <= now <= at + 5 * 3600 or unread) or time.time() - started > 10:
                 continue
             req = urllib.request.Request(g["real"], headers={"User-Agent": "Mozilla/5.0 (league site)"})
             with urllib.request.urlopen(req, timeout=4) as r:
@@ -184,6 +197,12 @@ def add_real_plays(games, prev_games):
                      if REAL_PLAY_WORDS.search(t) and "box score" not in t]
             if plays:
                 g["realPlays"] = plays[:40]
+            players = {}
+            for u, t in REAL_ANCHOR.findall(page):
+                k = real_name(html.unescape(t))
+                if k in wanted and k not in players:
+                    players[k] = u
+            g["realPlayers"] = players or {"_none": ""}  # marks the game as read, so it isn't fetched again
         except Exception as e:  # noqa: BLE001 - optional links, never break the build
             print("  real plays: skipped %s (%s)" % (g.get("id"), e))
 
@@ -488,7 +507,8 @@ def build_season(season, is_current, names):
         "weeks": weeks,
         "trades": trades,
         "settings": league_settings(settings, teams),
-        "nflGames": add_real_links(nfl_games(season, current_week), season) if is_current and not over else [],
+        "nflGames": add_real_links(nfl_games(season, current_week), season, {r["name"] for t in teams.values() for r in t["roster"]})
+                    if is_current and not over else [],
         # future matchups already on ESPN's schedule (regular season, plus playoff games once they're set)
         "upcoming": [{"week": m["matchupPeriodId"], "teams": [m.get("home", {}).get("teamId"), m.get("away", {}).get("teamId")]}
                      for m in main.get("schedule", []) if not over and m["matchupPeriodId"] > current_week],
