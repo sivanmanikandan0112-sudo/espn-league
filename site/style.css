@@ -1606,3 +1606,15 @@ body.has-ticker .tour-pill { bottom: calc(50px + env(safe-area-inset-bottom)); }
 .cond { font-size: 12px; color: var(--ink-2); }
 .cond b { display: inline-block; padding: 0 6px; margin-right: 2px; border-radius: 4px; background: #c98a1b; color: #fff; font-size: 10.5px; letter-spacing: .02em; }
 .wg-cond { margin-top: 6px; }
+
+/* Playoff picture (Standings, My team) */
+.cl-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 800; letter-spacing: .04em; vertical-align: 2px; }
+.cl-tag.in { background: var(--accent); color: var(--accent-ink); }
+.cl-tag.out { background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line); }
+.cl-head { margin: 0 0 10px; line-height: 1.6; font-size: 14px; }
+.cl-row { padding: 10px 0; border-top: 1px solid var(--line); }
+.cl-row:first-of-type { border-top: 0; }
+.cl-team { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.cl-line { margin: 2px 0 0 0; font-size: 13.5px; line-height: 1.5; padding-left: 10px; border-left: 3px solid var(--line); }
+.cl-line.in { border-left-color: var(--accent); }
+.cl-line.out { border-left-color: #d9534f; }

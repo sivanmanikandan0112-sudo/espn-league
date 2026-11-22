@@ -345,6 +345,17 @@ Both come from ESPN's transaction log (`mTransactions2`, every scoring period; `
   Projections only (kept on past weeks' rows during the build as `_proj`, not written out). Standings by record,
   then points for.
 
+## Playoff picture (clinch and elimination)
+
+Standings (IN / BYE / OUT tags and a Playoff picture section) and My team. `add_clinch` in build.py runs after the
+playoff odds; `stats.clinch_scenarios` works it out exactly from the remaining schedule, with points tiebreakers
+treated as unknown (against a team for clinching, for it for elimination): clinched = no outcome lets enough other
+teams reach its win total when it loses out (a Hall's-condition check over the games among them), eliminated = no
+outcome keeps enough teams from passing it when it wins out. Every combination of this week's undecided games is
+checked, and the smallest sets of results that settle each team's spot are written as plain-language scenarios. A
+game already decided in all but name (live win probability 0 or 100) counts as played. Checked against brute force
+on thousands of random small leagues.
+
 ## Red zone, Left the game and Game conditions
 
 - **Red zone alerts** (worker, `redZoneAlerts`): on the once-a-minute alert check, ESPN's NFL scoreboard (already

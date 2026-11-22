@@ -1011,7 +1011,38 @@ def add_playoff_odds(data, main, teams, regular, current_week):
         data["league"]["rootFor"] = {"week": tracked[0]["week"], "games": tracked}
     for tid, o in odds.items():
         teams[tid]["odds"] = o
+    try:
+        add_clinch(data, teams, schedule, live)
+    except Exception as e:  # noqa: BLE001 - never break the build over it
+        print("  clinch scenarios: skipped (%s)" % e)
     return schedule, strength
+
+
+def add_clinch(data, teams, schedule, live):
+    """Clinch and elimination (playoffs and a first-round bye), exact, with points tiebreakers treated as unknown,
+    plus the smallest sets of this week's results that settle each one (league.clinch, Standings and My team).
+    A game already decided in all but name (live win probability 0 or 100) counts as played; "this week" is the
+    first week with a game still undecided."""
+    wins = {tid: t["wins"] + t.get("ties", 0) / 2 for tid, t in teams.items()}
+    settled = lambda h, a: bool(live.get(h) and live[h][3] is not None and live[h][3] in (0, 1))  # noqa: E731
+    focus, week_games, later = None, [], []
+    for w in sorted({g[0] for g in schedule}):
+        gs = [(h, a) for wk, h, a in schedule if wk == w]
+        if focus is None:
+            for h, a in gs:
+                if settled(h, a):
+                    wins[h if live[h][3] == 1 else a] += 1
+            open_games = [(h, a) for h, a in gs if not settled(h, a)]
+            if open_games:
+                focus, week_games = w, open_games
+            continue
+        later += gs
+    lg = data["league"]
+    byes = max(0, 2 ** max(1, lg["playoffRounds"]) - lg["playoffTeams"])
+    levels = (("po", lg["playoffTeams"]),) + ((("bye", byes),) if byes else ())
+    res = stats.clinch_scenarios(wins, week_games, later, levels)
+    lg["clinch"] = {"week": focus, "games": [list(g) for g in week_games], "byes": byes,
+                    "teams": {str(t): v for t, v in res.items()}}
 
 
 def add_draft(data, season, actual, slot_counts):

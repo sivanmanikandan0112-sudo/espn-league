@@ -334,6 +334,57 @@
     return `<div class="mv">${expl(head, head + " Each line is how many expected lineup points (power value) that change added or cost. The rank can also move because other teams changed.", "moved")}${lines.length ? lines.join("") : '<p class="muted mv-none">Nothing has changed yet.</p>'}</div>`;
   }
 
+  // ---------------------------------------------------------------- clinch & elimination (league.clinch, from the build)
+  // Exact, with points tiebreakers treated as unknown: IN / BYE / OUT tags in Standings, the week's scenarios in plain
+  // words (the Playoff picture section, and yours on My team).
+  const clinchOf = tid => (L.clinch && L.isCurrent && !L.over && (L.clinch.teams || {})[String(tid)]) || null;
+  function clinchTag(t) {
+    const c = clinchOf(t.id);
+    if (!c) return "";
+    const n = c.now || {};
+    if (n.bye === "in") return ' <span class="cl-tag in" title="Clinched a first-round bye">BYE</span>';
+    if (n.po === "in") return ' <span class="cl-tag in" title="Clinched a playoff spot">IN</span>';
+    if (n.po === "out") return ' <span class="cl-tag out" title="Eliminated from the playoffs">OUT</span>';
+    return "";
+  }
+  // one way of getting there: "you win and Strib Club beats Drake ft. Drake"
+  function clinchWay(way, tid, you) {
+    const games = L.clinch.games;
+    const bits = way.map(([i, side]) => {
+      const [a, b] = games[i], w = side === 0 ? a : b, l = side === 0 ? b : a;
+      if (w === tid) return [0, you ? "you win" : "they win"];
+      if (l === tid) return [0, you ? "you lose" : "they lose"];
+      return [1, `${esc(tname(w))} beats ${esc(tname(l))}`];
+    }).sort((x, y) => x[0] - y[0]).map(x => x[1]);
+    return bits.join(" and ");
+  }
+  function clinchLines(tid, you) {
+    const c = clinchOf(tid);
+    if (!c || !c.week) return [];
+    const who = you ? "You" : esc(tname(tid));
+    const verb = (lvl, goal) => goal === "in" ? `${you ? "clinch" : "clinches"} ${lvl === "bye" ? "a first-round bye" : "a playoff spot"}`
+      : lvl === "po" ? `${you ? "are" : "is"} eliminated` : `${you ? "lose your" : "loses their"} shot at a bye`;
+    return c.week.map(x => ({ goal: x.goal, level: x.level,
+      html: `${who} ${verb(x.level, x.goal)} if ${x.ways.map(w => clinchWay(w, tid, you)).join(", <b>or</b> if ")}.` }));
+  }
+  function clinchSection() {
+    const C = L.clinch;
+    if (!C || !L.isCurrent || L.over || !C.teams) return "";
+    const order = D.teams.slice().sort((a, b) => a.standing - b.standing);
+    const settled = (lvl, goal) => order.filter(t => ((clinchOf(t.id) || {}).now || {})[lvl] === goal);
+    const list = ts => ts.map(t => esc(t.name)).join(", ");
+    const head = [
+      settled("bye", "in").length ? `<b>Clinched a bye:</b> ${list(settled("bye", "in"))}` : "",
+      settled("po", "in").filter(t => clinchOf(t.id).now.bye !== "in").length ? `<b>Clinched a playoff spot:</b> ${list(settled("po", "in").filter(t => clinchOf(t.id).now.bye !== "in"))}` : "",
+      settled("po", "out").length ? `<b>Eliminated:</b> ${list(settled("po", "out"))}` : "",
+    ].filter(Boolean);
+    const rows = order.map(t => ({ t, lines: clinchLines(t.id, false) })).filter(r => r.lines.length);
+    if (!head.length && !rows.length) return "";
+    return section(`Playoff picture <span class="muted">· week ${C.week}</span>`, { short: "Who's clinched, who's out, and what this week's results can settle.",
+      full: `Worked out exactly from the remaining schedule: a team has clinched only if no combination of results can push it out of the top ${L.playoffTeams || 6}, and it's eliminated only if none can get it in. Ties in the standings are broken by total points, which can't be known ahead of time, so they're treated as going against a team for clinching and in its favor for elimination; a team can still get in (or out) on points beyond what's shown. The scenarios list the fewest results this week that settle it, whatever happens after.${C.byes ? ` The top ${C.byes} get a first-round bye.` : ""}` },
+      `<div class="panel cl-pic">${head.length ? `<p class="cl-head">${head.join("<br>")}</p>` : ""}${rows.map(r => `<div class="cl-row"><div class="cl-team">${logo(r.t)}<b>${esc(r.t.name)}</b>${clinchTag(r.t)}</div>${r.lines.map(l => `<p class="cl-line ${l.goal}">${l.html}</p>`).join("")}</div>`).join("")}</div>`);
+  }
+
   function teamCard(t, i, maxPos) {
     const open = state.open.has(t.id);
     const segs = SEGS().map(p => {
@@ -350,7 +401,7 @@
       <button class="team-head" aria-expanded="${open}" data-toggle="${t.id}">
         <span class="rank">${pad(rankFor(t, i))}${state.sort === "power" ? movedArrow(t) : ""}</span>
         ${logo(t)}
-        <span style="min-width:0"><div class="team-name">${isMine(t) ? '<span class="me-tag">You</span>' : ""}${esc(t.name)}</div><div class="team-mgr">${esc(t.manager)}</div></span>
+        <span style="min-width:0"><div class="team-name">${isMine(t) ? '<span class="me-tag">You</span>' : ""}${esc(t.name)}${clinchTag(t)}</div><div class="team-mgr">${esc(t.manager)}</div></span>
         <span class="stats">
           <span class="stat"><div class="stat-k">Record</div><div class="stat-v">${record(t)}</div></span>
           <span class="stat"><div class="stat-k">Points for</div><div class="stat-v">${fmt(t.pf)}</div></span>
@@ -703,6 +754,7 @@
         </div>
         <div class="legend"><span>Team / ${esc(S[state.sort][0])}</span>${SEGS().map(p => `<span><i class="dot ${p}"></i>${p}</span>`).join("")}<span class="right">Bar numbers = position rank</span></div>
         <div class="teams" id="teams">${shown.length ? shown.map(([t, i]) => teamCard(t, i, maxPos)).join("") : '<div class="empty">No team, manager or player matches that.</div>'}</div>
+        ${clinchSection()}
         ${storyline()}
         <div class="pulse-phone">${pulseSection()}</div>
       </section>
@@ -3768,6 +3820,10 @@
               by.get(k).ps.push(p.name);
             });
             return by.size ? `<div class="me-fix prac"><span><b>Game conditions:</b> ${[...by.values()].map(x => `${esc(x.g.away)} @ ${esc(x.g.home)} ${x.hit.map(f => f[1].toLowerCase()).join(", ")} (${esc(condText(x.g))}): ${x.ps.map(esc).join(", ")}`).join("; ")}.</span></div>` : "";
+          })()}${(() => {
+            const c = clinchOf(t.id), lines = clinchLines(t.id, true), n = (c || {}).now || {};
+            const status = n.bye === "in" ? "You've clinched a first-round bye." : n.po === "in" ? "You've clinched a playoff spot." : n.po === "out" ? "You've been eliminated from the playoffs." : "";
+            return status || lines.length ? `<div class="me-fix prac"><span><b>Playoff picture:</b> ${[status].concat(lines.map(l => l.html)).filter(Boolean).join(" ")} <a class="wk-link" href="${href("standings")}">All scenarios ›</a></span></div>` : "";
           })()}`);
       }
     }
@@ -4047,6 +4103,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-23", [
+      ["Playoff picture", "Standings, My team", "Who's clinched a playoff spot or a bye (IN / BYE tags), who's eliminated (OUT), and exactly which of this week's results would settle it, in plain words.", "#/"],
       ["Red zone alerts", "Settings → Alerts → Live games", "A notification when one of your starters' NFL teams gets inside the 20, once per drive, with the down and distance.", "#/settings?at=alerts"],
       ["Left the game", "Player card, box scores, Settings → Alerts", "When a starter is hurt during his game (questionable to return, ruled out, being evaluated), an alert, a HURT tag in box scores and the news on his player card; another alert if he comes back.", "#/settings?at=alerts"],
       ["Game conditions", "Watch guide, player card, lineup check", "Weather at kickoff for outdoor games (temperature, wind, rain, snow), flagged when it's bad enough to matter for kickers, passing or everyone.", "#/matchups/watch"],
@@ -4216,6 +4273,7 @@
       ["winprob", "Win probability", "Matchups", "#/matchups", "ESPN's live chance each team wins its matchup, shown while the week is in progress.", []],
       ["bigplays", "Big plays", "Matchups → Big plays", "#/matchups/plays", "Touchdowns, 5+ point field goals, turnovers, big defensive plays and 30+ yard gains (50+ for a pass) by league players, caught from ESPN every minute during games, with the fantasy points that play was worth. The Season view adds them up by team and player since the feed started.", ["Team leaderboard"]],
       ["monday", "Monday-night math", "Matchups", "#/matchups", "Once a matchup is down to players in games that haven't started, what each side needs and a win chance from those players' own game logs.", []],
+      ["clinch", "Clinched / eliminated", "Standings, My team", "#/", "Exact, from the remaining schedule: clinched only if no combination of results can push a team out of the playoff spots (or bye spots), eliminated only if none can get it in. Points tiebreakers are treated as unknown (against a team for clinching, for it for elimination). The week's scenarios are the fewest results that settle it, whatever happens after.", ["Playoff picture"]],
       ["conditions", "Game conditions", "Watch guide, player card, lineup check", "#/matchups/watch", "Forecast for the first 3 hours of each outdoor game (Open-Meteo): temperature, wind and gusts, chance and amount of rain or snow. Flags: Windy (15+ mph or gusts 25+; hurts kickers and passing), Rain (likely, 0.1+ inch), Snow (0.2+ inch), Frigid (25°F or colder), Hot (88°F+). Domes and roofed stadiums show Indoors.", []],
       ["rootfor", "Who to root for", "Matchups, My team", "#/matchups", "For each of this week's other games, your playoff chance in the simulated seasons where each team won (the same 10,000 seasons as the playoff odds). Root for the team whose win helps you; the number is how many percentage points it's worth. Bye odds instead once you're all but in.", []],
       ["mstyle", "Manager style", "My team", "#/myteam", "How each manager runs a team, from ESPN's log of every move and lineup: pickups, lineup changes, gut calls (starting someone ESPN projected 2+ points below an eligible bench player), how fast pickups get cut, trades, and when moves happen (Eastern time). The type names the two habits that stand out most against the rest of the league.", []],

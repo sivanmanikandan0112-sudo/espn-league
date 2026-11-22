@@ -1,5 +1,6 @@
 """Season analytics built from weekly box scores: all-play/luck, lineup efficiency,
 weekly recaps, and playoff odds."""
+import itertools
 import random
 import statistics
 from collections import defaultdict
@@ -978,3 +979,150 @@ def this_week_history(seasons_data):
         keep = [r for r in rs if pct(r) <= 0.33][:3] or rs[:1]
         out[str(wk)] += keep
     return dict(out)
+
+
+# ---------------------------------------------------------------- clinch & elimination scenarios
+
+def _top_k_status(wins, games, team, k):
+    """Exact, with points tiebreakers treated as unknown: ("in" if `team` finishes in the top k whatever happens,
+    "out" if it can't, else None). wins: team -> wins so far; games: remaining (a, b) pairs, each won by one side.
+    Clinched = no outcome lets k other teams reach `team`'s win total when it loses out. Eliminated = no outcome
+    keeps k other teams from finishing strictly above its total when it wins out."""
+    others = [t for t in wins if t != team]
+    mine = [g for g in games if team in g]
+    rest = [g for g in games if team not in g]
+    # -- clinched? `team` loses every game it has left
+    floor = wins[team]
+    bonus = defaultdict(int)  # wins the others get from beating `team`
+    for a, b in mine:
+        bonus[b if a == team else a] += 1
+    left = defaultdict(int)
+    for a, b in rest:
+        left[a] += 1; left[b] += 1
+    cands = [t for t in others if wins[t] + bonus[t] + left[t] >= floor]
+    clinched = True
+    if len(cands) >= k:
+        for S in itertools.combinations(cands, k):
+            Sset = set(S)
+            need = {t: max(0, floor - wins[t] - bonus[t]) for t in S}
+            inner = []
+            for a, b in rest:
+                if a in Sset and b in Sset:
+                    inner.append((a, b))
+                elif a in Sset:
+                    need[a] = max(0, need[a] - 1)
+                elif b in Sset:
+                    need[b] = max(0, need[b] - 1)
+            if _hall_ok(S, need, inner):
+                clinched = False
+                break
+    else:
+        clinched = True
+    if clinched:
+        return "in"
+    # -- eliminated? `team` wins every game it has left
+    cap = wins[team] + len(mine)
+    forced = [t for t in others if wins[t] > cap]
+    if len(forced) >= k:
+        return "out"
+    free = [t for t in others if t not in forced]
+    for extra in itertools.combinations(free, min(k - 1 - len(forced), len(free))):
+        A = set(forced) | set(extra)
+        B = [t for t in free if t not in A]
+        room = {t: cap - wins[t] for t in B}
+        inner = [(a, b) for a, b in rest if a in room and b in room]
+        if _orient_ok(B, room, inner):
+            return None
+    return "out"
+
+
+def _hall_ok(S, need, inner):
+    """Can the games among S hand out wins so each team t gets at least need[t]? (Hall's condition.)"""
+    S = [t for t in S if need[t] > 0]
+    for r in range(1, len(S) + 1):
+        for X in itertools.combinations(S, r):
+            Xs = set(X)
+            if sum(need[t] for t in X) > sum(1 for a, b in inner if a in Xs or b in Xs):
+                return False
+    return True
+
+
+def _orient_ok(B, room, inner):
+    """Can every game among B be won by someone without any team going over room[t] more wins?"""
+    involved = sorted({t for g in inner for t in g})
+    for r in range(1, len(involved) + 1):
+        for Y in itertools.combinations(involved, r):
+            Ys = set(Y)
+            if sum(1 for a, b in inner if a in Ys and b in Ys) > sum(room[t] for t in Y):
+                return False
+    return True
+
+
+def clinch_scenarios(wins, week_games, later_games, levels=(("po", 6), ("bye", 2))):
+    """For each team: where it stands now (clinched / eliminated, for the playoffs and a bye) and what this week can
+    settle: the smallest sets of this week's results that clinch it or knock it out, whatever happens after.
+    week_games: this week's undecided (a, b) games; later_games: every regular-season game after this week."""
+    now = {}
+    every = list(week_games) + list(later_games)
+    for t in wins:
+        now[t] = {lvl: _top_k_status(wins, every, t, k) for lvl, k in levels}
+    n = len(week_games)
+    if not n or n > 8:
+        return {t: {"now": now[t], "week": []} for t in wins}
+    # every outcome of this week's games: 0 = first team wins, 1 = second
+    results = {}
+    memo = {}
+    for bits in itertools.product((0, 1), repeat=n):
+        w = dict(wins)
+        for (a, b), x in zip(week_games, bits):
+            w[a if x == 0 else b] += 1
+        key = tuple(sorted(w.items()))
+        for t in wins:
+            for lvl, k in levels:
+                mk = (key, t, k)
+                if mk not in memo:
+                    memo[mk] = _top_k_status(w, later_games, t, k)
+                results[(bits, t, lvl)] = memo[mk]
+    out = {}
+    for t in wins:
+        week = []
+        for lvl, _ in levels:
+            for goal in ("in", "out"):
+                if now[t][lvl] is not None:
+                    continue
+                if lvl == "bye" and goal == "out" and now[t]["po"] == "out":
+                    continue
+                ok = {bits for bits in itertools.product((0, 1), repeat=n) if results[(bits, t, lvl)] == goal}
+                if not ok:
+                    continue
+                week.append({"level": lvl, "goal": goal, "ways": _min_terms(n, ok), "share": round(len(ok) / 2 ** n, 3)})
+        out[t] = {"now": now[t], "week": week}
+    return out
+
+
+def _min_terms(n, ok):
+    """The fewest, shortest conditions (game -> which side wins, others "any") that cover exactly the outcomes in ok."""
+    terms = []
+    for pat in itertools.product((0, 1, None), repeat=n):
+        fills = [i for i, x in enumerate(pat) if x is None]
+        covered = set()
+        good = True
+        for combo in itertools.product((0, 1), repeat=len(fills)):
+            bits = list(pat)
+            for i, x in zip(fills, combo):
+                bits[i] = x
+            bits = tuple(bits)
+            if bits not in ok:
+                good = False
+                break
+            covered.add(bits)
+        if good:
+            terms.append((pat, covered))
+    # keep the most general ones, then cover greedily (biggest first, fewest conditions on a tie)
+    terms = [(p, c) for p, c in terms if not any(c < c2 for _, c2 in terms)]
+    left, pick = set(ok), []
+    while left:
+        p, c = max(terms, key=lambda x: (len(x[1] & left), sum(v is None for v in x[0])))
+        pick.append([[i, v] for i, v in enumerate(p) if v is not None])
+        left -= c
+    return pick
