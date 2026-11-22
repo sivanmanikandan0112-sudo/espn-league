@@ -8,6 +8,7 @@ The cookies stay on this machine / in GitHub secrets: the site only ever sees th
 """
 import argparse
 import datetime as dt
+import html
 import json
 import re
 import os
@@ -122,6 +123,8 @@ REAL_NICK = {"ATL": "Falcons", "BUF": "Bills", "CHI": "Bears", "CIN": "Bengals",
              "NYG": "Giants", "NYJ": "Jets", "PHI": "Eagles", "ARI": "Cardinals", "PIT": "Steelers", "LAC": "Chargers",
              "SF": "49ers", "SEA": "Seahawks", "TB": "Buccaneers", "WSH": "Commanders", "CAR": "Panthers",
              "JAX": "Jaguars", "BAL": "Ravens", "HOU": "Texans"}
+REAL_ANCHOR = re.compile(r'<a href="(https://www\.realapp\.com/[A-Za-z0-9]{6,16})">([^<]{3,100}?)</a>')
+REAL_PLAY_WORDS = re.compile(r"\d+-yd|\bTD\b|Fumble|Interception|Safety|Field goal|\bFG\b|return|blocked", re.I)
 REAL_LINK = re.compile(r'<a href="(https://www\.realapp\.com/[A-Za-z0-9]{6,16})">([^<,@]+?) @ ([^<,]+?), ')
 
 
@@ -131,9 +134,11 @@ def add_real_links(games, season):
     Strictly best effort and kept off the critical path: links carry over from the previous build, so Real is only
     asked about games not linked yet (at most 4 day pages, 5 seconds each, games within a week of today), and any
     failure just leaves the links out. ESPN's Gamecast link needs nothing (the game id is already here)."""
+    prev_games = {}
     try:
         prev = live_site_file("%d.js" % season) or {}
-        old = {g["id"]: g["real"] for g in prev.get("nflGames", []) if g.get("real")}
+        prev_games = {g["id"]: g for g in prev.get("nflGames", [])}
+        old = {gid: g["real"] for gid, g in prev_games.items() if g.get("real")}
         today = dt.datetime.now(ET_ZONE).date()
         need = defaultdict(list)
         for g in games:
@@ -146,15 +151,41 @@ def add_real_links(games, season):
         for day, gs in sorted(need.items())[:4]:
             req = urllib.request.Request("https://www.realapp.com/nfl/" + day, headers={"User-Agent": "Mozilla/5.0 (league site)"})
             with urllib.request.urlopen(req, timeout=5) as r:
-                html = r.read(400000).decode("utf-8", "replace")
-            found = {(a.strip(), h.strip()): url for url, a, h in REAL_LINK.findall(html)}
+                page = r.read(400000).decode("utf-8", "replace")
+            found = {(a.strip(), h.strip()): url for url, a, h in REAL_LINK.findall(page)}
             for g in gs:
                 url = found.get((REAL_NICK.get(g["away"]), REAL_NICK.get(g["home"])))
                 if url:
                     g["real"] = url
     except Exception as e:  # noqa: BLE001 - optional links, never break the build
         print("  real links: skipped (%s)" % e)
+    add_real_plays(games, prev_games)
     return games
+
+
+def add_real_plays(games, prev_games):
+    """Real's game pages link their top plays one by one ("Carnell Tate 59-yd TD catch"), so a big play on the site
+    can open that exact play. Games are read while on or recently over (kickoff to 5 hours after), within 10
+    seconds per build in all; otherwise the previous build's list carries over. Best effort, like add_real_links."""
+    started, now = time.time(), time.time()
+    for g in games:
+        try:
+            if (prev_games.get(g["id"]) or {}).get("realPlays"):
+                g["realPlays"] = prev_games[g["id"]]["realPlays"]
+            if not g.get("real") or not g.get("date") or g.get("tbd"):
+                continue
+            at = dt.datetime.fromisoformat(g["date"]).timestamp()
+            if not (at <= now <= at + 5 * 3600) or time.time() - started > 10:
+                continue
+            req = urllib.request.Request(g["real"], headers={"User-Agent": "Mozilla/5.0 (league site)"})
+            with urllib.request.urlopen(req, timeout=4) as r:
+                page = r.read(400000).decode("utf-8", "replace")
+            plays = [[html.unescape(t).strip(), u] for u, t in REAL_ANCHOR.findall(page)
+                     if REAL_PLAY_WORDS.search(t) and "box score" not in t]
+            if plays:
+                g["realPlays"] = plays[:40]
+        except Exception as e:  # noqa: BLE001 - optional links, never break the build
+            print("  real plays: skipped %s (%s)" % (g.get("id"), e))
 
 
 def stat_line(player, season, source, period=0, split=0):

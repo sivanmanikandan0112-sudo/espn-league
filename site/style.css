@@ -1592,3 +1592,7 @@ body.has-ticker .tour-pill { bottom: calc(50px + env(safe-area-inset-bottom)); }
 .sg-real { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .sg-live { color: var(--accent); }
 .wg-links { margin: 8px 0 2px; }
+.play-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.play-ext { padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); text-decoration: none; font-size: 11.5px; font-weight: 700; }
+.play-ext:hover { border-color: var(--accent); color: var(--accent); }
+.play-ext.real { background: var(--ink); color: var(--bg); border-color: var(--ink); }

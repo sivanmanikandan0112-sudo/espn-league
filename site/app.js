@@ -771,6 +771,29 @@
   // highlight clip on ESPN for the play, when the worker found one (clips expire after about 2 days)
   const watchLink = e => e.vid && /^https:\/\/www\.espn\.com\//.test(e.vid.u) && !(e.vid.x && Date.now() > e.vid.x)
     ? ` <a class="play-vid" href="${esc(e.vid.u)}" target="_blank" rel="noopener" aria-label="Watch the highlight on ESPN">▶ Watch</a>` : "";
+  // Links for a big play: that exact play on Real when Real lists it among the game's top plays (matched by player,
+  // yards and kind; a passing TD by its catch, only when there's exactly one), otherwise the game on Real, plus ESPN
+  // Gamecast. Current week only (the games are this week's).
+  const normName = n => String(n || "").toLowerCase().replace(/['’.]/g, "").replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "").replace(/[^a-z]+/g, " ").trim();
+  function realPlayFor(e, g) {
+    const yd = (/^(\d+)-yd/.exec(e.label || "") || [])[1];
+    if (!yd || !g || !g.realPlays) return null;
+    const cands = g.realPlays.map(([t, u]) => { const m = /^(.*?)\s+(\d+)-yd\s+(.*)$/.exec(t); return m ? { who: normName(m[1]), yd: m[2], what: m[3].toLowerCase(), u } : null; })
+      .filter(c => c && c.yd === yd);
+    if (e.kind === "passing TD") { const c = cands.filter(x => /\btd catch\b/.test(x.what)); return c.length === 1 ? c[0].u : null; }
+    const mine = cands.filter(c => c.who === normName(e.name));
+    return mine.length ? mine[0].u : null;
+  }
+  function playLinks(e) {
+    try {
+      if (!L.isCurrent || L.over || !e.nfl) return "";
+      const g = (D.nflGames || []).find(x => x.home === e.nfl || x.away === e.nfl);
+      if (!g || !g.id) return "";
+      const rp = realPlayFor(e, g);
+      return `<span class="play-links">${rp ? `<a class="play-ext real" href="${esc(rp)}" target="_blank" rel="noopener">This play on Real ↗</a>`
+        : g.real ? `<a class="play-ext" href="${esc(g.real)}" target="_blank" rel="noopener">Game on Real ↗</a>` : ""}<a class="play-ext" href="https://www.espn.com/nfl/game/_/gameId/${encodeURIComponent(g.id)}" target="_blank" rel="noopener">Gamecast ↗</a></span>`;
+    } catch (_) { return ""; }
+  }
   function playLine(e) {
     const t = teamById[e.team] || { name: "Team " + e.team }, o = teamById[e.opp] || { name: "opponent" };
     const lead = e.score[0] - e.score[1];
@@ -778,7 +801,7 @@
     const when = new Date(e.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     return `<div class="play${e.starter ? "" : " bench"}"><span class="play-t">${when}</span>
       <span class="play-what"><b>${esc(e.name)}</b> <span class="muted">${esc(e.pos)}${e.nfl ? " · " + esc(e.nfl) : ""}</span> · ${esc(e.label)}${e.starter ? "" : ' <span class="muted">(bench)</span>'}${watchLink(e)}
-      <span class="team-mgr">${esc(t.name)} ${status}</span>${rxRow(L.currentWeek, `p:${e.pid}-${e.t}`)}</span>
+      <span class="team-mgr">${esc(t.name)} ${status}</span>${playLinks(e)}${rxRow(L.currentWeek, `p:${e.pid}-${e.t}`)}</span>
       <span class="play-d ${e.delta >= 0 ? "pos" : "neg"}">${e.delta >= 0 ? "+" : ""}${e.delta.toFixed(2)}</span></div>`;
   }
   function feedPanel(week) {
@@ -4012,7 +4035,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-22", [
-      ["Follow the game", "Any player card (tap a player in a box score), Matchups → Watch guide", "This week's players show their real NFL game, live or upcoming, with links to open it in the Real app or ESPN Gamecast. Every game in the Watch guide has the same links.", "#/matchups/watch"],
+      ["Follow the game", "Any player card (tap a player in a box score), Matchups → Watch guide", "This week's players show their real NFL game, live or upcoming, with links to open it in the Real app or ESPN Gamecast. Every game in the Watch guide has the same links, and each big play links to that exact play on Real when Real lists it among the game's top plays (otherwise to the game).", "#/matchups/watch"],
     ]],
     ["2026-11-17", [
       ["Who to root for", "Matchups · My team", "The other games this week that change your playoff (or bye) odds, how much each result is worth, and how they're going live.", "#/matchups"],

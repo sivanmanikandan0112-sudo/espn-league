@@ -351,7 +351,10 @@ Tapping a player this week shows his NFL game (kickoff time, live clock or final
 ticker already checks each minute) with **Open in Real** and **ESPN Gamecast** links (every game in Matchups → Watch guide has them too). Real's game pages use its own
 ids, so the build matches them by date and team names from Real's day pages (`realapp.com/nfl/<date>`,
 `add_real_links` in build.py): links carry over between builds, so Real is only asked about new games, and any
-failure just leaves that link out. Real's links are web links; whether they open the Real app or its website
+failure just leaves that link out. Big plays (Matchups → Big plays and the recent-plays panel) link to **that exact play on Real** when Real lists it
+among the game's top plays (about 5 per game, mostly touchdowns and long field goals; `add_real_plays` reads each game
+page while it's on and for 5 hours after, within 10 seconds per build), matched by player, yards and kind, with a
+passing TD matched to its one catch. Other plays link to the game on Real and ESPN Gamecast. Real's links are web links; whether they open the Real app or its website
 depends on the phone.
 
 ## Getting-started tour
