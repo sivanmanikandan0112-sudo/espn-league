@@ -15,6 +15,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 from zoneinfo import ZoneInfo
@@ -221,6 +222,98 @@ def add_real_plays(games, prev_games, roster_names=()):
             g["realReadAt"] = int(now)
         except Exception as e:  # noqa: BLE001 - optional links, never break the build
             print("  real plays: skipped %s (%s)" % (g.get("id"), e))
+
+
+# Outdoor home stadiums: (lat, lon, city ESPN lists). Domes and roofed stadiums are left out: no weather there.
+OUTDOOR = {"BUF": (42.774, -78.787, "Orchard Park"), "MIA": (25.958, -80.239, "Miami Gardens"), "NE": (42.091, -71.264, "Foxborough"),
+           "NYJ": (40.814, -74.074, "East Rutherford"), "NYG": (40.814, -74.074, "East Rutherford"), "BAL": (39.278, -76.623, "Baltimore"),
+           "CIN": (39.095, -84.516, "Cincinnati"), "CLE": (41.506, -81.700, "Cleveland"), "PIT": (40.447, -80.016, "Pittsburgh"),
+           "JAX": (30.324, -81.637, "Jacksonville"), "TEN": (36.166, -86.771, "Nashville"), "DEN": (39.744, -105.020, "Denver"),
+           "KC": (39.049, -94.484, "Kansas City"), "CHI": (41.862, -87.617, "Chicago"), "GB": (44.501, -88.062, "Green Bay"),
+           "PHI": (39.901, -75.168, "Philadelphia"), "WSH": (38.908, -76.864, "Landover"), "CAR": (35.226, -80.853, "Charlotte"),
+           "TB": (27.976, -82.503, "Tampa"), "SF": (37.403, -121.970, "Santa Clara"), "SEA": (47.595, -122.332, "Seattle")}
+ROOFED = ("Mercedes-Benz Stadium", "AT&T Stadium", "Ford Field", "NRG Stadium", "Lucas Oil Stadium", "Allegiant Stadium",
+          "SoFi Stadium", "U.S. Bank Stadium", "Caesars Superdome", "State Farm Stadium")
+
+
+def add_game_conditions(games, season):
+    """Weather at kickoff for each outdoor NFL game this week (Watch guide, player card, lineup check): temperature,
+    wind and gusts, rain and snow over the game's first 3 hours, from Open-Meteo (free, no key). The stadium comes
+    from ESPN's scoreboard: domes and roofed stadiums get "roof", and a game away from the home team's usual city (a
+    neutral site) is placed by looking its city up. Stadiums and forecasts carry over between builds; forecasts
+    refresh about hourly (every 30 minutes on game day) until kickoff. Best effort: any failure leaves the
+    conditions out, or as the previous build had them."""
+    try:
+        prev = {g["id"]: g for g in (live_site_file("%d.js" % season) or {}).get("nflGames", [])}
+        now = time.time()
+        for g in games:
+            for k in ("venue", "roof", "wx", "wxAt", "loc"):
+                if (prev.get(g["id"]) or {}).get(k) is not None:
+                    g[k] = prev[g["id"]][k]
+        # stadiums: ESPN's scoreboard for each day with a game not placed yet (one request per day, once a week)
+        need = [g for g in games if "venue" not in g and g.get("date")]
+        venues = {}
+        for day in sorted({dt.datetime.fromisoformat(g["date"]).astimezone(ET_ZONE).strftime("%Y%m%d") for g in need})[:5]:
+            url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=" + day
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "espn-league-site"}), timeout=6) as r:
+                board = json.load(r)
+            venues.update({str(e["id"]): ((e.get("competitions") or [{}])[0].get("venue") or {}) for e in board.get("events", [])})
+        if need:
+            for g in need:
+                v = venues.get(str(g["id"]))
+                if not v:
+                    continue
+                g["venue"] = v.get("fullName") or ""
+                g["roof"] = bool(v.get("indoor")) or any(x in g["venue"] for x in ROOFED)
+                city = (v.get("address") or {}).get("city") or ""
+                if g["roof"]:
+                    continue
+                home = OUTDOOR.get(g["home"])
+                g["loc"] = list(home[:2]) if home and city == home[2] else (_geocode(city) if city else None)
+        # forecasts: outdoor games from 6 hours ago to 7 days out, older than an hour (30 minutes on game day)
+        todo = []
+        for g in games:
+            if g.get("roof") or not g.get("loc") or not g.get("date") or g.get("tbd"):
+                continue
+            at = dt.datetime.fromisoformat(g["date"]).timestamp()
+            fresh = 1800 if at - now < 12 * 3600 else 3600
+            if -4 * 3600 < at - now < 7 * 86400 and now - (g.get("wxAt") or 0) > fresh:
+                todo.append(g)
+        if todo:
+            q = "latitude=%s&longitude=%s" % (",".join(str(g["loc"][0]) for g in todo), ",".join(str(g["loc"][1]) for g in todo))
+            url = ("https://api.open-meteo.com/v1/forecast?%s&hourly=temperature_2m,precipitation_probability,rain,snowfall,"
+                   "wind_speed_10m,wind_gusts_10m&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch"
+                   "&timezone=GMT&past_days=1&forecast_days=8" % q)
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "espn-league-site"}), timeout=8) as r:
+                res = json.load(r)
+            res = res if isinstance(res, list) else [res]
+            for g, w in zip(todo, res):
+                h = w.get("hourly") or {}
+                times = h.get("time") or []
+                k0 = dt.datetime.fromisoformat(g["date"]).astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:00")
+                if k0 not in times:
+                    continue
+                i = times.index(k0)
+                span = range(i, min(i + 3, len(times)))
+                pick = lambda key, f: f((h.get(key) or [None] * len(times))[j] or 0 for j in span)  # noqa: E731
+                g["wx"] = {"t": round((h.get("temperature_2m") or [0])[i] or 0), "wind": round(pick("wind_speed_10m", max)),
+                           "gust": round(pick("wind_gusts_10m", max)), "pp": round(pick("precipitation_probability", max)),
+                           "rain": round(pick("rain", sum), 2), "snow": round(pick("snowfall", sum), 2)}
+                g["wxAt"] = int(now)
+    except Exception as e:  # noqa: BLE001 - optional, never break the build
+        print("  game conditions: skipped (%s)" % e)
+    return games
+
+
+def _geocode(city):
+    """A city's coordinates from Open-Meteo's free geocoder (for neutral-site games), or None."""
+    try:
+        url = "https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + urllib.parse.quote(city)
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "espn-league-site"}), timeout=5) as r:
+            res = (json.load(r).get("results") or [None])[0]
+        return [round(res["latitude"], 3), round(res["longitude"], 3)] if res else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def stat_line(player, season, source, period=0, split=0):
@@ -523,7 +616,7 @@ def build_season(season, is_current, names):
         "weeks": weeks,
         "trades": trades,
         "settings": league_settings(settings, teams),
-        "nflGames": add_real_links(nfl_games(season, current_week), season, {r["name"] for t in teams.values() for r in t["roster"]})
+        "nflGames": add_game_conditions(add_real_links(nfl_games(season, current_week), season, {r["name"] for t in teams.values() for r in t["roster"]}), season)
                     if is_current and not over else [],
         # future matchups already on ESPN's schedule (regular season, plus playoff games once they're set)
         "upcoming": [{"week": m["matchupPeriodId"], "teams": [m.get("home", {}).get("teamId"), m.get("away", {}).get("teamId")]}

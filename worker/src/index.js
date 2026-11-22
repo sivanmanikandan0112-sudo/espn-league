@@ -1476,8 +1476,9 @@ export default {
       try {
         const lv = await liveWeek(env);
         if (env.PICKEM) {
-          const f = await env.PICKEM.get(`feed:${lv.season}:${lv.week}`, "json");
+          const [f, hurt] = await Promise.all([env.PICKEM.get(`feed:${lv.season}:${lv.week}`, "json"), env.PICKEM.get(`ingame:${lv.season}:${lv.week}`, "json")]);
           lv.feed = f ? f.events.slice(0, 80) : [];
+          lv.ingame = hurt || {}; // starters who left (or returned to) their game, from ESPN's in-game news
         }
         const body = JSON.stringify(lv);
         res = new Response(body, { headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${CACHE_SECONDS}` } });
@@ -1606,7 +1607,8 @@ async function maybeRebuild(env, now) {
 // minute (several alerts in the same minute are combined). KV is only written when something was sent or changed.
 const ALERT_CRON = "0-59 * * * *";
 const ALERT_KINDS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true,
-  waivers: true, trades: true, tradesAll: false, picks: false, talk: true, practice: true };
+  waivers: true, trades: true, tradesAll: false, picks: false, talk: true, practice: true,
+  redzone: true, redzoneAgainst: false, hurt: true, hurtAgainst: false };
 const SUBS_KEY = "push:subs";
 const SUBS_MAX = 36; // each alert is one request; this keeps a busy minute inside the worker's per-run limit
 const LEAD_GAP_MS = 10 * 60e3;   // at most one lead-change alert per matchup every 10 minutes
@@ -1733,10 +1735,14 @@ async function teamInfo(env, yr) {
   });
 }
 
+// ESPN's NFL scoreboard, fetched at most once a minute (game states, plus each live game's down, distance and
+// whether the offense is in the red zone).
+const nflBoard = () => cached("nfl-board", 50, async () => (await fetch(`${NFL_SITE}/scoreboard`)).json());
+
 // NFL team abbreviation -> { state: "pre" | "in" | "post", at: kickoff ms } for this week's games.
 async function nflStatus() {
   return cached("nfl-status", 50, async () => {
-    const d = await (await fetch(`${NFL_SITE}/scoreboard`)).json();
+    const d = await nflBoard();
     const out = {};
     for (const e of d.events || []) {
       const c = (e.competitions || [])[0] || {};
@@ -1829,7 +1835,89 @@ async function matchupAlerts(env, box, info, yr, week, now) {
       box.add("playsAll", t => t !== e.team && t !== e.opp, make(`Big play: ${nm(e.team)}`));
     }
   }
+  // red zone trips by your starters' NFL teams, and starters who leave (or come back to) their game
+  try { if (redZoneAlerts(box, lv, await nflBoard(), S, nm)) changed = true; } catch (e) { console.log("red zone check failed", String(e)); }
+  try { await hurtAlerts(env, box, lv, nfl, yr, week, nm, now); } catch (e) { console.log("in-game injury check failed", String(e)); }
   if (changed) await env.PICKEM.put(key, JSON.stringify(S), { expirationTtl: 21 * 86400 });
+}
+
+// Red zone: a live NFL game's offense is inside the opponent's 20 and league starters are on that offense. One alert
+// per drive (the drive is told apart by the team and where it started), so KV only changes when one goes out.
+const RZ_POS = new Set(["QB", "RB", "WR", "TE", "K"]);
+function redZoneAlerts(box, lv, board, S, nm) {
+  let changed = false;
+  S.rz = S.rz || {};
+  for (const e of (board && board.events) || []) {
+    const c = (e.competitions || [])[0] || {}, sit = c.situation;
+    if (!sit || !sit.isRedZone || (((c.status || e.status || {}).type) || {}).state !== "in") continue;
+    const off = (c.competitors || []).find(x => String(x.team.id) === String(sit.possession));
+    if (!off) continue;
+    const abbr = off.team.abbreviation, start = (((sit.lastPlay || {}).drive) || {}).start || {};
+    const sig = `${abbr}|${start.text || start.yardLine || ""}`;
+    if (S.rz[e.id] === sig) continue;
+    S.rz[e.id] = sig; changed = true;
+    const where = sit.downDistanceText || sit.possessionText || "inside the 20";
+    const club = off.team.shortDisplayName || off.team.name || abbr;
+    for (const g of lv.games) {
+      for (const s of g.sides) {
+        const on = s.lineup.filter(p => !["BE", "IR"].includes(p.slot) && p.team === abbr && RZ_POS.has(p.pos));
+        if (!on.length) continue;
+        const opp = g.sides.find(x => x !== s), names = on.map(p => p.name).join(", ");
+        box.add("redzone", t => t === s.team, () => ({ title: `Red zone: ${club}`, tag: `rz-${e.id}`, url: "#/matchups", body: `${where}. Your ${names}.` }));
+        if (opp) box.add("redzoneAgainst", t => t === opp.team, () => ({ title: `Red zone against you: ${club}`, tag: `rz-${e.id}`, url: "#/matchups", body: `${where}. ${nm(s.team)}'s ${names}.` }));
+      }
+    }
+  }
+  return changed;
+}
+
+// Left the game: ESPN's fantasy news posts in-game injury updates ("X is questionable to return…", "X has returned to
+// the game"). Checked every other minute for starters whose game is on; only news from during his game counts. The
+// latest status per player is kept in ingame:<season>:<week> (the site shows it on the player card) and alerts go out
+// when it changes, for news under 20 minutes old.
+const HURT_RE = /(questionable|doubtful|not expected|unlikely) to return|(won'?t|will not|didn'?t|did not) return|\bruled out\b|out for the (rest|remainder)|being evaluated|evaluated for (a |an )?(concussion|injury)|medical tent|carted|exited (sunday's|monday's|thursday's|saturday's|the) game|left (sunday's|monday's|thursday's|saturday's|the) game/i;
+const BACK_RE = /\b(has )?returned to (sunday's|monday's|thursday's|saturday's|the) game|cleared to return|back in the game|re-?entered/i;
+async function hurtAlerts(env, box, lv, nfl, yr, week, nm, now) {
+  if (new Date(now).getUTCMinutes() % 2) return;
+  const on = new Map();
+  for (const g of lv.games) {
+    for (const s of g.sides) {
+      for (const p of s.lineup) {
+        if (["BE", "IR"].includes(p.slot) || p.pos === "D/ST" || (nfl[p.team] || {}).state !== "in") continue;
+        on.set(String(p.id), { p, team: s.team, opp: (g.sides.find(x => x !== s) || {}).team });
+      }
+    }
+  }
+  if (!on.size) return;
+  const key = `ingame:${yr}:${week}`;
+  const H = (await env.PICKEM.get(key, "json")) || {};
+  let changed = false;
+  const ids = [...on.keys()];
+  for (let i = 0; i < ids.length; i += 80) {
+    let feed = [];
+    try {
+      const r = await fetch(`https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?limit=80&` + ids.slice(i, i + 80).map(x => "playerId=" + x).join("&"));
+      feed = (await r.json()).feed || [];
+    } catch (_) { continue; }
+    feed.sort((x, y) => Date.parse(x.published) - Date.parse(y.published));
+    for (const a of feed) {
+      const pid = String(a.playerId || ""), st = on.get(pid);
+      if (!st) continue;
+      const t = Date.parse(a.published), kick = (nfl[st.p.team] || {}).at || 0;
+      if (!(t >= kick && t <= now + 60e3)) continue;
+      const h = String(a.headline || "");
+      const kind = BACK_RE.test(h) ? "back" : HURT_RE.test(h) ? "hurt" : null;
+      if (!kind) continue;
+      const prev = H[pid];
+      if (prev && prev.t >= t) continue;
+      H[pid] = { s: kind, t, h: h.slice(0, 240) }; changed = true;
+      if ((prev && prev.s === kind) || now - t > 20 * 60e3) continue;
+      const title = kind === "hurt" ? `${st.p.name} may be out` : `${st.p.name} is back in`;
+      box.add("hurt", tm => tm === st.team, () => ({ title, tag: `hurt-${pid}`, url: "#/matchups", body: h }));
+      if (st.opp != null) box.add("hurtAgainst", tm => tm === st.opp, () => ({ title: `${nm(st.team)}: ${title}`, tag: `hurt-${pid}`, url: "#/matchups", body: h }));
+    }
+  }
+  if (changed) await env.PICKEM.put(key, JSON.stringify(H), { expirationTtl: 21 * 86400 });
 }
 
 // The day of the week (in New York) a kickoff falls on, e.g. "Sun".

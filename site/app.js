@@ -730,7 +730,7 @@
     const t = teamById[side.team];
     const start = side.lineup.filter(p => p.slot !== "BE" && p.slot !== "IR");
     const bench = side.lineup.filter(p => p.slot === "BE" || p.slot === "IR");
-    const line = (p, b) => `<div class="box-line${b ? " bench" : ""}${hl && String(p.id) === hl ? " hl" : ""}" role="button" tabindex="0" data-stat="${p.id}" data-stat-week="${week}" title="See ${esc(p.name)}'s stat line"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700;text-align:center">${esc(p.slot)}</span><span class="pn" title="${esc(p.name)} · ${esc(p.pos)} ${esc(p.team)}">${esc(p.name)}</span><span class="pp">${fmt(p.pts)}</span></div>`;
+    const line = (p, b) => `<div class="box-line${b ? " bench" : ""}${hl && String(p.id) === hl ? " hl" : ""}" role="button" tabindex="0" data-stat="${p.id}" data-stat-week="${week}" title="See ${esc(p.name)}'s stat line"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700;text-align:center">${esc(p.slot)}</span><span class="pn" title="${esc(p.name)} · ${esc(p.pos)} ${esc(p.team)}">${esc(p.name)}${hurtTag(p.id, week)}</span><span class="pp">${fmt(p.pts)}</span></div>`;
     return `<div class="box-col"><h4>${esc(t.name)}</h4>${start.map(p => line(p, false)).join("")}${bench.length ? '<div class="box-sep">BENCH</div>' + bench.map(p => line(p, true)).join("") : ""}</div>`;
   }
 
@@ -3625,7 +3625,7 @@
       }).join("");
       return `<article class="wg-game ${g.state}${mineHere ? " mine" : ""}">
         <div class="wg-top"><span class="wg-teams">${esc(g.away)} <span class="muted">at</span> ${esc(g.home)}</span><span class="wg-when${g.state === "live" ? " live" : ""}">${esc(kickText(g))}</span></div>
-        <div class="wg-links">${followLinks(g)}</div>
+        ${condHtml(g) ? `<div class="wg-cond">${condHtml(g)}</div>` : ""}<div class="wg-links">${followLinks(g)}</div>
         <div class="wg-meter"><span class="wg-score" title="Importance this week (100 = biggest game)">${g.score}</span><span class="wg-bar" aria-hidden="true"><i style="width:${g.score}%"></i></span>
           <span class="team-mgr">${g.starters} league starter${g.starters === 1 ? "" : "s"} · ${g.proj.toFixed(0)} projected pts${mineHere ? " · <b>you have players here</b>" : ""}</span></div>
         ${rows ? `<div class="wg-rows">${rows}</div>` : ""}</article>`;
@@ -3756,6 +3756,18 @@
             // this week's injury report for starters who haven't played yet (nflverse, updated each morning)
             const watch = (mine.lineup || []).filter(p => !["BE", "IR"].includes(p.slot) && !(p.pts > 0) && practiceWorry(p.id));
             return watch.length ? `<div class="me-fix prac"><span><b>Practice report:</b> ${watch.map(p => `${esc(p.name)} (${practiceText(p.id, true)})`).join("; ")}.</span></div>` : "";
+          })()}${(() => {
+            // weather that matters for starters who haven't played yet (wind and cold: kickers and passing; rain, snow: all)
+            const by = new Map();
+            (mine.lineup || []).filter(p => !["BE", "IR"].includes(p.slot) && !(p.pts > 0)).forEach(p => {
+              const g = nflGameOf(p.team);
+              if (!g || (g.date && Date.now() > Date.parse(g.date))) return;
+              const hit = condFlags(g).filter(f => !f[2] || f[2].includes(p.pos));
+              if (!hit.length) return;
+              const k = g.id; if (!by.has(k)) by.set(k, { g, hit, ps: [] });
+              by.get(k).ps.push(p.name);
+            });
+            return by.size ? `<div class="me-fix prac"><span><b>Game conditions:</b> ${[...by.values()].map(x => `${esc(x.g.away)} @ ${esc(x.g.home)} ${x.hit.map(f => f[1].toLowerCase()).join(", ")} (${esc(condText(x.g))}): ${x.ps.map(esc).join(", ")}`).join("; ")}.</span></div>` : "";
           })()}`);
       }
     }
@@ -4034,6 +4046,11 @@
   // Every feature added to the site, grouped by the day it went live (newest first). Add new features at the top.
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
+    ["2026-11-23", [
+      ["Red zone alerts", "Settings → Alerts → Live games", "A notification when one of your starters' NFL teams gets inside the 20, once per drive, with the down and distance.", "#/settings?at=alerts"],
+      ["Left the game", "Player card, box scores, Settings → Alerts", "When a starter is hurt during his game (questionable to return, ruled out, being evaluated), an alert, a HURT tag in box scores and the news on his player card; another alert if he comes back.", "#/settings?at=alerts"],
+      ["Game conditions", "Watch guide, player card, lineup check", "Weather at kickoff for outdoor games (temperature, wind, rain, snow), flagged when it's bad enough to matter for kickers, passing or everyone.", "#/matchups/watch"],
+    ]],
     ["2026-11-22", [
       ["Follow the game", "Any player card (tap a player in a box score), Matchups → Watch guide", "This week's players show their real NFL game, live or upcoming, with links to open it in the Real app or ESPN Gamecast. Every game in the Watch guide has the same links, and each big play links to that exact play on Real when Real lists it among the game's top plays (otherwise to the game).", "#/matchups/watch"],
     ]],
@@ -4199,6 +4216,7 @@
       ["winprob", "Win probability", "Matchups", "#/matchups", "ESPN's live chance each team wins its matchup, shown while the week is in progress.", []],
       ["bigplays", "Big plays", "Matchups → Big plays", "#/matchups/plays", "Touchdowns, 5+ point field goals, turnovers, big defensive plays and 30+ yard gains (50+ for a pass) by league players, caught from ESPN every minute during games, with the fantasy points that play was worth. The Season view adds them up by team and player since the feed started.", ["Team leaderboard"]],
       ["monday", "Monday-night math", "Matchups", "#/matchups", "Once a matchup is down to players in games that haven't started, what each side needs and a win chance from those players' own game logs.", []],
+      ["conditions", "Game conditions", "Watch guide, player card, lineup check", "#/matchups/watch", "Forecast for the first 3 hours of each outdoor game (Open-Meteo): temperature, wind and gusts, chance and amount of rain or snow. Flags: Windy (15+ mph or gusts 25+; hurts kickers and passing), Rain (likely, 0.1+ inch), Snow (0.2+ inch), Frigid (25°F or colder), Hot (88°F+). Domes and roofed stadiums show Indoors.", []],
       ["rootfor", "Who to root for", "Matchups, My team", "#/matchups", "For each of this week's other games, your playoff chance in the simulated seasons where each team won (the same 10,000 seasons as the playoff odds). Root for the team whose win helps you; the number is how many percentage points it's worth. Bye odds instead once you're all but in.", []],
       ["mstyle", "Manager style", "My team", "#/myteam", "How each manager runs a team, from ESPN's log of every move and lineup: pickups, lineup changes, gut calls (starting someone ESPN projected 2+ points below an eligible bench player), how fast pickups get cut, trades, and when moves happen (Eastern time). The type names the two habits that stand out most against the rest of the league.", []],
       ["butterfly", "Butterfly effect", "Insights → What ifs", "#/insights/whatif?at=butterfly", "One move taken out and the regular season replayed: players it brought in leave the lineups they started in, replaced by the best-projected bench player; players it sent away come back with their real points elsewhere and start if projected above the weakest eligible starter. Projections only, no hindsight.", []],
@@ -4432,6 +4450,10 @@
       ["wire", "Down to the wire", "When your matchup comes down to the last few players, with who's left on each side."],
       ["final", "Final result", "Win or loss, the final score and your new record."],
       ["talk", "Trash talk on your matchup", "When someone posts a comment on your matchup this week."]]],
+    ["Live games", [["redzone", "Red zone", "When one of your starters' NFL teams gets inside the 20, once per drive, with the down and distance."],
+      ["redzoneAgainst", "Red zone against you", "The same for your opponent's starters."],
+      ["hurt", "Left the game", "When one of your starters is hurt during his game (questionable to return, ruled out, being evaluated) and when he comes back."],
+      ["hurtAgainst", "Opponent left the game", "The same for your opponent's starters."]]],
     ["Big plays", [["plays", "Your starters' big plays", "Touchdowns, 40+ yard plays, 50+ yard field goals and defensive scores."],
       ["playsAgainst", "Big plays against you", "The same plays by your opponent's starters."],
       ["playsAll", "Every big play in the league", "All of them, for every team. Busy on Sundays."]]],
@@ -4441,7 +4463,7 @@
       ["trades", "Trades involving your team", "When one goes through."], ["tradesAll", "Any league trade", "Every trade in the league."]]],
     ["Site games", [["picks", "Picks reminder", "3 hours before Pick'em locks and before Sunday's games, if you haven't made your picks."]]],
   ];
-  const ALERT_DEFAULTS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true, waivers: true, trades: true, tradesAll: false, picks: false, talk: true, practice: true };
+  const ALERT_DEFAULTS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true, waivers: true, trades: true, tradesAll: false, picks: false, talk: true, practice: true , redzone: true, redzoneAgainst: false, hurt: true, hurtAgainst: false };
   const AL = { key: undefined, sub: null, busy: false, msg: "", err: false };
   const alertCfg = () => {
     const c = store.get("alerts", {}) || {};
@@ -4474,7 +4496,7 @@
   function alertsHtml() {
     const el = document.getElementById("alerts-panel");
     if (!el) return;
-    const intro = `<p class="team-mgr al-intro">Notifications on this device for your matchup, big plays, your lineup and moves. They follow the team you've claimed on My team.</p>`;
+    const intro = `<p class="team-mgr al-intro">Notifications on this device for your matchup, live games (red zone, starters leaving the game), big plays, your lineup and moves. They follow the team you've claimed on My team.</p>`;
     const status = AL.msg ? `<p class="al-msg${AL.err ? " err" : ""}" role="status">${esc(AL.msg)}</p>` : "";
     let body;
     if (!alertsSupported()) {
@@ -4807,6 +4829,40 @@
     return parts.join(" · ");
   }
 
+  // Game conditions: each outdoor game's weather at kickoff (from the build, Open-Meteo), as a short text plus the flags
+  // that matter for fantasy. Wind and cold hurt kickers and passing; rain and snow, everyone.
+  const nflGameOf = team => (D.nflGames || []).find(x => x.home === team || x.away === team);
+  function condFlags(g) {
+    const w = g && !g.roof && g.wx;
+    if (!w) return [];
+    const f = [];
+    if (w.snow >= 0.2) f.push(["snow", "Snow", null]);
+    if (w.wind >= 15 || w.gust >= 25) f.push(["wind", "Windy", ["K", "QB", "WR", "TE"]]);
+    if (w.rain >= 0.1 && w.pp >= 50) f.push(["rain", "Rain", null]);
+    if (w.t <= 25) f.push(["cold", "Frigid", ["K", "QB", "WR", "TE"]]);
+    if (w.t >= 88) f.push(["hot", "Hot", null]);
+    return f;
+  }
+  function condText(g) {
+    if (!g) return "";
+    if (g.roof) return "Indoors";
+    const w = g.wx;
+    if (!w) return "";
+    const out = [`${w.t}°F`, `wind ${w.wind} mph${w.gust >= w.wind + 8 ? `, gusts ${w.gust}` : ""}`];
+    if (w.snow >= 0.05) out.push(`snow ${w.snow}"`); else if (w.pp >= 30) out.push(`rain ${w.pp}%`);
+    return out.join(" · ");
+  }
+  const condHtml = g => { const t = condText(g); if (!t) return ""; const f = condFlags(g);
+    return `<span class="cond${f.length ? " bad" : ""}" title="Forecast at kickoff (first 3 hours)">${f.map(x => `<b>${x[1]}</b> `).join("")}${esc(t)}</span>`; };
+
+  // Left the game: the latest in-game injury news for a player this week (from the live worker), or null
+  function inGameNews(pid, week) {
+    const I = window.LIVE_INGAME;
+    if (!I || I.week !== week || !L.isCurrent) return null;
+    return (I.players || {})[String(pid)] || null;
+  }
+  const hurtTag = (pid, week) => { const h = inGameNews(pid, week); return h && h.s === "hurt" ? ' <span class="hurt-tag" title="' + esc(h.h) + '">HURT</span>' : ""; };
+
   // "Follow the game": the player's real NFL game this week, on the Real app (link found by the build, when Real lists
   // the game) and on ESPN Gamecast (always). Only for the current week; never breaks the card.
   function gameLinks(p, week) {
@@ -4824,7 +4880,8 @@
       const vs = `${esc(g.away)} @ ${esc(g.home)}`;
       // his own performance in this game on Real (the build finds it once the game is on), else the game
       const mine = g.realPlayers && g.realPlayers[normName(p.name)];
-      return `<div class="stat-game"><span class="stat-game-t">${vs} · ${state}</span>${followLinks(g, mine)}</div>`;
+      const cond = condHtml(g);
+      return `<div class="stat-game"><span class="stat-game-t">${vs} · ${state}${cond ? `<br>${cond}` : ""}</span>${followLinks(g, mine)}</div>`;
     } catch (_) { return ""; }
   }
   // the two buttons (player card, Watch guide): Real when the build found the game there, ESPN Gamecast always
@@ -4845,7 +4902,7 @@
       <div class="stat-head"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span><div style="min-width:0"><div class="stat-name">${esc(p.name)}</div>
       <div class="team-mgr">${esc(p.team)} · Week ${week}${L.season !== IDX.current ? ", " + L.season : ""} · ${esc((teamById[team] || {}).name || "")}${p.slot === "BE" || p.slot === "IR" ? " (bench)" : ""}</div></div>
       <div class="stat-pts">${fmt(p.pts)}<small>fantasy pts</small></div></div>
-      ${gameLinks(p, week)}<div class="stat-body"><div class="empty">Loading stats…</div></div>${usagePanel(p.id)}
+      ${gameLinks(p, week)}${(() => { const h = inGameNews(p.id, week); return h ? `<div class="stat-hurt ${h.s}"><b>${h.s === "hurt" ? "Left the game" : "Back in the game"}</b> · ${esc(h.h)} <span class="muted">${new Date(h.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>` : ""; })()}<div class="stat-body"><div class="empty">Loading stats…</div></div>${usagePanel(p.id)}
       <div class="stat-actions"><a class="cta stat-cmp" href="${href("trades", { a: p.id }, "compare")}">Compare with…</a>
         <a class="linkbtn" href="${href("history", { player: p.id }, "players")}">League history ›</a></div>
       <button type="button" class="linkbtn share-close">Close</button></div>`;
@@ -5123,6 +5180,7 @@
       lv.games.forEach(g => g.sides.forEach(sd => sd.lineup.forEach(p => { if (p.proj == null && proj[p.id] != null) p.proj = proj[p.id]; })));
       wk.games = lv.games;
       window.LIVE_FEED = { week: lv.week, events: lv.feed || [] };
+      window.LIVE_INGAME = { week: lv.week, players: lv.ingame || {} }; // starters who left / returned to their game
       if (window.LEAGUE_STATS && window.LEAGUE_STATS[IDX.current]) Object.assign(window.LEAGUE_STATS[IDX.current], lv.stats);
       liveAsOf = lv.updated;
       updateLiveChip();

@@ -345,6 +345,22 @@ Both come from ESPN's transaction log (`mTransactions2`, every scoring period; `
   Projections only (kept on past weeks' rows during the build as `_proj`, not written out). Standings by record,
   then points for.
 
+## Red zone, Left the game and Game conditions
+
+- **Red zone alerts** (worker, `redZoneAlerts`): on the once-a-minute alert check, ESPN's NFL scoreboard (already
+  fetched for game states) says which offense is inside the 20; starters on that offense get one alert per drive
+  (team + where the drive started), with the down and distance. Kinds `redzone` (yours, on) and `redzoneAgainst`.
+- **Left the game** (worker, `hurtAlerts`): every other minute, ESPN's fantasy news for starters whose game is on;
+  headlines like "questionable to return", "ruled out", "being evaluated" mark him hurt, "has returned to the game"
+  marks him back. Only news from during his game counts; alerts go out when his status changes (news under 20
+  minutes old). The latest status per player is kept in KV `ingame:<season>:<week>` and served in `/live` as
+  `ingame`, which the site shows as a HURT tag in box scores and a line on the player card. Kinds `hurt` (on) and
+  `hurtAgainst`.
+- **Game conditions** (build, `add_game_conditions`): stadium from ESPN's scoreboard (domes and roofs = Indoors; a
+  neutral site is placed by its city), forecast for the first 3 hours from Open-Meteo, refreshed about hourly (every
+  30 minutes on game day) until the game ends. Shown on Watch guide cards, the player card, and as a lineup-check
+  line for starters affected (wind and cold: K, QB, WR, TE; rain and snow: everyone).
+
 ## Follow the game (player card)
 
 Tapping a player this week shows his NFL game (kickoff time, live clock or final, from ESPN's scoreboard that the
