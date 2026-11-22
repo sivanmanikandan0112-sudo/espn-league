@@ -382,7 +382,8 @@ failure just leaves that link out. Big plays (Matchups → Big plays and the rec
 among the game's top plays (about 5 per game, mostly touchdowns and long field goals; `add_real_plays` reads games that are on
 first, then each once more after it ends, within 10 seconds per build, and keeps every play link it has ever found since Real
 reshuffles its top 5), matched by player, yards and kind, with a
-passing TD matched to its one catch. Other plays link to the game on Real and ESPN Gamecast. The player card's Real button opens **that player's own performance in that game** on Real ("Cam Ward Stats vs
+passing TD matched to its one catch. Other plays link to that player's own game page on Real (Real's app lists his plays there; its full
+play-by-play feed is behind bot protection, so the site doesn't read it), or to the game, plus ESPN Gamecast. The player card's Real button opens **that player's own performance in that game** on Real ("Cam Ward Stats vs
 Cowboys"), read from the same game pages (league-rostered players only); before his game starts it opens the game. Real's links are web links; whether they open the Real app or its website
 depends on the phone.
 

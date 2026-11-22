@@ -841,8 +841,11 @@
       if (!L.isCurrent || L.over || !e.nfl) return "";
       const g = (D.nflGames || []).find(x => x.home === e.nfl || x.away === e.nfl);
       if (!g || !g.id) return "";
-      const rp = realPlayFor(e, g);
+      // that exact play when it's in Real's top plays; otherwise the player's own game page on Real (where Real's
+      // app lists his plays), otherwise the game
+      const rp = realPlayFor(e, g), pp = !rp && g.realPlayers ? g.realPlayers[normName(e.name)] : null;
       return `<span class="play-links">${rp ? `<a class="play-ext real" href="${esc(rp)}" target="_blank" rel="noopener">This play on Real ↗</a>`
+        : pp ? `<a class="play-ext real" href="${esc(pp)}" target="_blank" rel="noopener">His game on Real ↗</a>`
         : g.real ? `<a class="play-ext" href="${esc(g.real)}" target="_blank" rel="noopener">Game on Real ↗</a>` : ""}<a class="play-ext" href="https://www.espn.com/nfl/game/_/gameId/${encodeURIComponent(g.id)}" target="_blank" rel="noopener">Gamecast ↗</a></span>`;
     } catch (_) { return ""; }
   }
