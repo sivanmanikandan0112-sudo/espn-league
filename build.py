@@ -173,36 +173,52 @@ def real_name(n):
 def add_real_plays(games, prev_games, roster_names=()):
     """Real's game pages link their top plays one by one ("Carnell Tate 59-yd TD catch"), so a big play on the site
     can open that exact play, and every player's own performance in that game ("Cam Ward Stats vs Cowboys"), so the
-    player card can open it (kept for league-rostered players only). Games are read while on or recently over
-    (kickoff to 5 hours after), plus once for a finished game never read, within 10 seconds per build in all;
-    otherwise the previous build's lists carry over. Best effort, like add_real_links."""
-    started, now = time.time(), time.time()
+    player card can open it (kept for league-rostered players only).
+
+    Real shows only about 5 top plays per game and reshuffles them as the game goes, so every link ever found is
+    kept (merged with the previous build's), not replaced. Within 10 seconds per build in all, games are read in
+    this order: probably still on (kicked off under 3.5 hours ago), most recent kickoff first; then once more after
+    it's likely over (3.5 to 5 hours after kickoff); then once for a finished game never read. Best effort, like
+    add_real_links: any failure keeps what the previous build had."""
+    started = now = time.time()
     wanted = {real_name(n) for n in roster_names}
+    todo = []
     for g in games:
+        old = prev_games.get(g["id"]) or {}
+        for k in ("realPlays", "realPlayers", "realReadAt"):
+            if old.get(k):
+                g[k] = old[k]
+        if not g.get("real") or not g.get("date") or g.get("tbd"):
+            continue
         try:
-            old = prev_games.get(g["id"]) or {}
-            for k in ("realPlays", "realPlayers"):
-                if old.get(k):
-                    g[k] = old[k]
-            if not g.get("real") or not g.get("date") or g.get("tbd"):
-                continue
             at = dt.datetime.fromisoformat(g["date"]).timestamp()
-            unread = now > at + 5 * 3600 and not old.get("realPlayers")
-            if not (at <= now <= at + 5 * 3600 or unread) or time.time() - started > 10:
-                continue
+        except ValueError:
+            continue
+        read = old.get("realReadAt") or 0
+        if at <= now < at + 3.5 * 3600:
+            todo.append((0, -at, g))                      # on now
+        elif at + 3.5 * 3600 <= now <= at + 5 * 3600 and read < at + 3.5 * 3600:
+            todo.append((1, -at, g))                      # just over: one last read
+        elif now > at + 5 * 3600 and not old.get("realPlayers"):
+            todo.append((2, -at, g))                      # finished, never read
+    for _, _, g in sorted(todo, key=lambda x: x[:2]):
+        if time.time() - started > 10:
+            break
+        try:
             req = urllib.request.Request(g["real"], headers={"User-Agent": "Mozilla/5.0 (league site)"})
             with urllib.request.urlopen(req, timeout=4) as r:
                 page = r.read(400000).decode("utf-8", "replace")
-            plays = [[html.unescape(t).strip(), u] for u, t in REAL_ANCHOR.findall(page)
-                     if REAL_PLAY_WORDS.search(t) and "box score" not in t]
-            if plays:
-                g["realPlays"] = plays[:40]
-            players = {}
-            for u, t in REAL_ANCHOR.findall(page):
-                k = real_name(html.unescape(t))
-                if k in wanted and k not in players:
-                    players[k] = u
+            anchors = [(u, html.unescape(t).strip()) for u, t in REAL_ANCHOR.findall(page)]
+            plays = [[t, u] for u, t in anchors if REAL_PLAY_WORDS.search(t) and "box score" not in t]
+            seen = {u for _, u in plays}
+            g["realPlays"] = (plays + [p for p in (g.get("realPlays") or []) if p[1] not in seen])[:60]
+            players = {k: v for k, v in (g.get("realPlayers") or {}).items() if k != "_none"}
+            for u, t in anchors:
+                k = real_name(t)
+                if k in wanted:
+                    players.setdefault(k, u)
             g["realPlayers"] = players or {"_none": ""}  # marks the game as read, so it isn't fetched again
+            g["realReadAt"] = int(now)
         except Exception as e:  # noqa: BLE001 - optional links, never break the build
             print("  real plays: skipped %s (%s)" % (g.get("id"), e))
 

@@ -352,8 +352,9 @@ ticker already checks each minute) with **Open in Real** and **ESPN Gamecast** l
 ids, so the build matches them by date and team names from Real's day pages (`realapp.com/nfl/<date>`,
 `add_real_links` in build.py): links carry over between builds, so Real is only asked about new games, and any
 failure just leaves that link out. Big plays (Matchups → Big plays and the recent-plays panel) link to **that exact play on Real** when Real lists it
-among the game's top plays (about 5 per game, mostly touchdowns and long field goals; `add_real_plays` reads each game
-page while it's on and for 5 hours after, within 10 seconds per build), matched by player, yards and kind, with a
+among the game's top plays (about 5 per game, mostly touchdowns and long field goals; `add_real_plays` reads games that are on
+first, then each once more after it ends, within 10 seconds per build, and keeps every play link it has ever found since Real
+reshuffles its top 5), matched by player, yards and kind, with a
 passing TD matched to its one catch. Other plays link to the game on Real and ESPN Gamecast. The player card's Real button opens **that player's own performance in that game** on Real ("Cam Ward Stats vs
 Cowboys"), read from the same game pages (league-rostered players only); before his game starts it opens the game. Real's links are web links; whether they open the Real app or its website
 depends on the phone.
