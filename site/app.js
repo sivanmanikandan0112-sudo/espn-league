@@ -3592,6 +3592,7 @@
       }).join("");
       return `<article class="wg-game ${g.state}${mineHere ? " mine" : ""}">
         <div class="wg-top"><span class="wg-teams">${esc(g.away)} <span class="muted">at</span> ${esc(g.home)}</span><span class="wg-when${g.state === "live" ? " live" : ""}">${esc(kickText(g))}</span></div>
+        <div class="wg-links">${followLinks(g)}</div>
         <div class="wg-meter"><span class="wg-score" title="Importance this week (100 = biggest game)">${g.score}</span><span class="wg-bar" aria-hidden="true"><i style="width:${g.score}%"></i></span>
           <span class="team-mgr">${g.starters} league starter${g.starters === 1 ? "" : "s"} · ${g.proj.toFixed(0)} projected pts${mineHere ? " · <b>you have players here</b>" : ""}</span></div>
         ${rows ? `<div class="wg-rows">${rows}</div>` : ""}</article>`;
@@ -4001,7 +4002,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-22", [
-      ["Follow the game", "Any player card (tap a player in a box score)", "This week's players show their real NFL game, live or upcoming, with links to open it in the Real app or ESPN Gamecast.", "#/matchups"],
+      ["Follow the game", "Any player card (tap a player in a box score), Matchups → Watch guide", "This week's players show their real NFL game, live or upcoming, with links to open it in the Real app or ESPN Gamecast. Every game in the Watch guide has the same links.", "#/matchups/watch"],
     ]],
     ["2026-11-17", [
       ["Who to root for", "Matchups · My team", "The other games this week that change your playoff (or bye) odds, how much each result is worth, and how they're going live.", "#/matchups"],
@@ -4788,10 +4789,13 @@
         : at == null ? "Kickoff time not set" : now < at ? "Kickoff " + new Date(at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })
         : now < at + 3.5 * 3600e3 ? '<b class="sg-live">Live</b>' : "Final";
       const vs = `${esc(g.away)} @ ${esc(g.home)}`;
-      return `<div class="stat-game"><span class="stat-game-t">${vs} · ${state}</span><span class="stat-game-l">
-        ${g.real ? `<a class="sg-btn sg-real" href="${esc(g.real)}" target="_blank" rel="noopener">Open in Real ↗</a>` : ""}
-        <a class="sg-btn" href="https://www.espn.com/nfl/game/_/gameId/${encodeURIComponent(g.id)}" target="_blank" rel="noopener">ESPN Gamecast ↗</a></span></div>`;
+      return `<div class="stat-game"><span class="stat-game-t">${vs} · ${state}</span>${followLinks(g)}</div>`;
     } catch (_) { return ""; }
+  }
+  // the two buttons (player card, Watch guide): Real when the build found the game there, ESPN Gamecast always
+  function followLinks(g) {
+    if (!g || !g.id) return "";
+    return `<span class="stat-game-l">${g.real ? `<a class="sg-btn sg-real" href="${esc(g.real)}" target="_blank" rel="noopener">Open in Real ↗</a>` : ""}<a class="sg-btn" href="https://www.espn.com/nfl/game/_/gameId/${encodeURIComponent(g.id)}" target="_blank" rel="noopener">ESPN Gamecast ↗</a></span>`;
   }
 
   async function openPlayerStats(pid, week) {

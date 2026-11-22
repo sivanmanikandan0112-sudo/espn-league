@@ -1591,3 +1591,4 @@ body.has-ticker .tour-pill { bottom: calc(50px + env(safe-area-inset-bottom)); }
 .sg-btn:hover { border-color: var(--accent); color: var(--accent); }
 .sg-real { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .sg-live { color: var(--accent); }
+.wg-links { margin: 8px 0 2px; }
