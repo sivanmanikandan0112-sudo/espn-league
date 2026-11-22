@@ -3566,12 +3566,17 @@
     const max = Math.max(1, ...games.map(g => g.stake));
     games.forEach(g => {
       g.score = Math.round(100 * g.stake / max);
-      g.state = !g.at || now < g.at ? "upcoming" : now < g.at + 4.25 * 3600e3 ? "live" : "final";
+      // ESPN's scoreboard (checked each minute during games) says when a game is really over; without a fresh
+      // check, a guess from the kickoff time
+      const k = NFL_STATUS.games && now - NFL_STATUS.at < 5 * 60e3 ? NFL_STATUS.games[String(g.id)] : null;
+      g.state = k ? (k[0] === "in" ? "live" : k[0] === "post" ? "final" : "upcoming")
+        : !g.at || now < g.at ? "upcoming" : now < g.at + 3.5 * 3600e3 ? "live" : "final";
+      g.detail = k && k[0] === "in" ? k[1] : "";
       g.rows.sort((x, y) => y.close - x.close);
     });
     return { week: wk.week, games };
   }
-  const kickText = g => g.state === "live" ? "Live now" : g.state === "final" ? "Final" : g.tbd ? "Time TBD"
+  const kickText = g => g.state === "live" ? (g.detail ? "Live · " + g.detail : "Live now") : g.state === "final" ? "Final" : g.tbd ? "Time TBD"
     : new Date(g.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
   const closeText = c => c >= 0.8 ? "Toss-up" : c >= 0.5 ? "Close" : "Leaning";
   const lastName = n => /D\/ST$/.test(n) ? n.replace(" D/ST", " D") : n.split(" ").slice(1).join(" ") || n;
@@ -3580,6 +3585,11 @@
   function renderWatch() {
     const head = `<div class="section-head"><div><h1>Watch guide</h1>${expl("The real NFL games that matter most to the league this week.",
       "Each game is rated by the league starters playing in it, weighted by their projections and by how close their fantasy matchups are: a player in a toss-up counts almost three times as much as one in a lopsided matchup. 100 = the week's biggest game. Numbers next to players are ESPN's projections (points once their game is over).")}</div></div>${subnav("matchups", MATCHUP_TABS, "watch")}`;
+    // opened between the minute checks: get the real game states now, then redraw once
+    if (!(NFL_STATUS.games && Date.now() - NFL_STATUS.at < 5 * 60e3) && !NFL_STATUS.busy) {
+      NFL_STATUS.busy = true;
+      checkNflStatus().then(() => { NFL_STATUS.busy = false; if (NFL_STATUS.games && state.tab === "matchups" && state.sub === "watch") renderKeepScroll(renderWatch); });
+    }
     const M = watchModel();
     if (!M) { main.innerHTML = head + `<div class="empty">The watch guide covers the current week while the season is in progress.${state.season !== IDX.current ? ` <a href="#/matchups/watch">Go to this week's guide</a>` : ""}</div>`; return; }
     const me = myTeam();
