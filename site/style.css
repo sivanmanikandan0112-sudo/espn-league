@@ -1583,3 +1583,11 @@ body.has-ticker .tour-pill { bottom: calc(50px + env(safe-area-inset-bottom)); }
 .bfx-team { display: inline-flex; align-items: center; gap: 10px; }
 .bfx-rk { min-width: 18px; text-align: right; }
 .rf-who .team-mgr, .rf-live { display: block; }
+
+/* Follow the game (player card) */
+.stat-game { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); font-size: 13px; }
+.stat-game-l { display: flex; flex-wrap: wrap; gap: 8px; }
+.sg-btn { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-weight: 700; font-size: 12.5px; background: var(--surface); }
+.sg-btn:hover { border-color: var(--accent); color: var(--accent); }
+.sg-real { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.sg-live { color: var(--accent); }

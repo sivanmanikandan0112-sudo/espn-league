@@ -4000,6 +4000,9 @@
   // Every feature added to the site, grouped by the day it went live (newest first). Add new features at the top.
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
+    ["2026-11-22", [
+      ["Follow the game", "Any player card (tap a player in a box score)", "This week's players show their real NFL game, live or upcoming, with links to open it in the Real app or ESPN Gamecast.", "#/matchups"],
+    ]],
     ["2026-11-17", [
       ["Who to root for", "Matchups · My team", "The other games this week that change your playoff (or bye) odds, how much each result is worth, and how they're going live.", "#/matchups"],
       ["Your manager style", "My team", "How you actually run your team, from ESPN's log of every move: pickups, lineup changes, gut calls, when you make moves, boiled down to a type like \"Late-night waiver hawk\".", "#/myteam"],
@@ -4770,6 +4773,27 @@
     return parts.join(" · ");
   }
 
+  // "Follow the game": the player's real NFL game this week, on the Real app (link found by the build, when Real lists
+  // the game) and on ESPN Gamecast (always). Only for the current week; never breaks the card.
+  function gameLinks(p, week) {
+    try {
+      if (!L.isCurrent || L.over || week !== L.currentWeek || !p.team) return "";
+      const g = (D.nflGames || []).find(x => x.home === p.team || x.away === p.team);
+      if (!g || !g.id) return "";
+      const at = g.date && !g.tbd ? Date.parse(g.date) : null, now = Date.now();
+      // ESPN's scoreboard (checked each minute during games) when it's fresh; otherwise a guess from the kickoff time
+      const known = typeof NFL_STATUS !== "undefined" && NFL_STATUS.games && now - NFL_STATUS.at < 5 * 60e3 ? NFL_STATUS.games[String(g.id)] : null;
+      const state = known && known[0] === "in" ? `<b class="sg-live">Live</b>${known[1] ? " · " + esc(known[1]) : ""}`
+        : known && known[0] === "post" ? "Final"
+        : at == null ? "Kickoff time not set" : now < at ? "Kickoff " + new Date(at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })
+        : now < at + 3.5 * 3600e3 ? '<b class="sg-live">Live</b>' : "Final";
+      const vs = `${esc(g.away)} @ ${esc(g.home)}`;
+      return `<div class="stat-game"><span class="stat-game-t">${vs} · ${state}</span><span class="stat-game-l">
+        ${g.real ? `<a class="sg-btn sg-real" href="${esc(g.real)}" target="_blank" rel="noopener">Open in Real ↗</a>` : ""}
+        <a class="sg-btn" href="https://www.espn.com/nfl/game/_/gameId/${encodeURIComponent(g.id)}" target="_blank" rel="noopener">ESPN Gamecast ↗</a></span></div>`;
+    } catch (_) { return ""; }
+  }
+
   async function openPlayerStats(pid, week) {
     const wk = D.weeks.find(x => x.week === week);
     let p = null, team = null;
@@ -4781,7 +4805,7 @@
       <div class="stat-head"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span><div style="min-width:0"><div class="stat-name">${esc(p.name)}</div>
       <div class="team-mgr">${esc(p.team)} · Week ${week}${L.season !== IDX.current ? ", " + L.season : ""} · ${esc((teamById[team] || {}).name || "")}${p.slot === "BE" || p.slot === "IR" ? " (bench)" : ""}</div></div>
       <div class="stat-pts">${fmt(p.pts)}<small>fantasy pts</small></div></div>
-      <div class="stat-body"><div class="empty">Loading stats…</div></div>${usagePanel(p.id)}
+      ${gameLinks(p, week)}<div class="stat-body"><div class="empty">Loading stats…</div></div>${usagePanel(p.id)}
       <div class="stat-actions"><a class="cta stat-cmp" href="${href("trades", { a: p.id }, "compare")}">Compare with…</a>
         <a class="linkbtn" href="${href("history", { player: p.id }, "players")}">League history ›</a></div>
       <button type="button" class="linkbtn share-close">Close</button></div>`;
@@ -5082,6 +5106,8 @@
       const d = await (await fetch("https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard", { cache: "no-store" })).json();
       NFL_STATUS.live = (d.events || []).some(e => ((e.status || {}).type || {}).state === "in");
       NFL_STATUS.at = Date.now();
+      // each game's state too (same request), for the player card's "Follow the game" line
+      NFL_STATUS.games = Object.fromEntries((d.events || []).map(e => [String(e.id), [((e.status || {}).type || {}).state, ((e.status || {}).type || {}).shortDetail || ""]]));
     } catch (_) { /* unknown: fall back to the kickoff-time window */ }
   }
   function renderTicker() {

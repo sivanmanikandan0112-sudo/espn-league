@@ -345,6 +345,15 @@ Both come from ESPN's transaction log (`mTransactions2`, every scoring period; `
   Projections only (kept on past weeks' rows during the build as `_proj`, not written out). Standings by record,
   then points for.
 
+## Follow the game (player card)
+
+Tapping a player this week shows his NFL game (kickoff time, live clock or final, from ESPN's scoreboard that the
+ticker already checks each minute) with **Open in Real** and **ESPN Gamecast** links. Real's game pages use its own
+ids, so the build matches them by date and team names from Real's day pages (`realapp.com/nfl/<date>`,
+`add_real_links` in build.py): links carry over between builds, so Real is only asked about new games, and any
+failure just leaves that link out. Real's links are web links; whether they open the Real app or its website
+depends on the phone.
+
 ## Getting-started tour
 
 A first-time visitor on a device (nothing saved from the site yet) gets a five-step card: what League HQ is, claim

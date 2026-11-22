@@ -9,12 +9,14 @@ The cookies stay on this machine / in GitHub secrets: the site only ever sees th
 import argparse
 import datetime as dt
 import json
+import re
 import os
 import sys
 import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import power  # noqa: E402
@@ -37,6 +39,7 @@ PRO = {0: "FA", 1: "ATL", 2: "BUF", 3: "CHI", 4: "CIN", 5: "CLE", 6: "DAL", 7: "
        9: "GB", 10: "TEN", 11: "IND", 12: "KC", 13: "LV", 14: "LAR", 15: "MIA", 16: "MIN",
        17: "NE", 18: "NO", 19: "NYG", 20: "NYJ", 21: "PHI", 22: "ARI", 23: "PIT", 24: "LAC",
        25: "SF", 26: "SEA", 27: "TB", 28: "WSH", 29: "CAR", 30: "JAX", 33: "BAL", 34: "HOU"}
+ET_ZONE = ZoneInfo("America/New_York")
 POWER_POSITIONS = ["QB", "RB", "WR", "TE"]
 TRADE_MESSAGE = 244  # activity-feed message type for "player traded"
 
@@ -111,6 +114,47 @@ def nfl_games(season, week):
             seen[g["id"]] = {"id": g["id"], "date": _iso(g.get("date")), "tbd": bool(g.get("startTimeTBD")),
                              "home": PRO.get(g["homeProTeamId"], ""), "away": PRO.get(g["awayProTeamId"], "")}
     return sorted(seen.values(), key=lambda g: (g["date"] or "", g["home"]))
+
+
+REAL_NICK = {"ATL": "Falcons", "BUF": "Bills", "CHI": "Bears", "CIN": "Bengals", "CLE": "Browns", "DAL": "Cowboys",
+             "DEN": "Broncos", "DET": "Lions", "GB": "Packers", "TEN": "Titans", "IND": "Colts", "KC": "Chiefs",
+             "LV": "Raiders", "LAR": "Rams", "MIA": "Dolphins", "MIN": "Vikings", "NE": "Patriots", "NO": "Saints",
+             "NYG": "Giants", "NYJ": "Jets", "PHI": "Eagles", "ARI": "Cardinals", "PIT": "Steelers", "LAC": "Chargers",
+             "SF": "49ers", "SEA": "Seahawks", "TB": "Buccaneers", "WSH": "Commanders", "CAR": "Panthers",
+             "JAX": "Jaguars", "BAL": "Ravens", "HOU": "Texans"}
+REAL_LINK = re.compile(r'<a href="(https://www\.realapp\.com/[A-Za-z0-9]{6,16})">([^<,@]+?) @ ([^<,]+?), ')
+
+
+def add_real_links(games, season):
+    """Each NFL game's page on the Real sports app (www.realapp.com), for the player card's "follow the game" links.
+    Real uses its own ids, so games are matched by date and team names from Real's day pages (realapp.com/nfl/<date>).
+    Strictly best effort and kept off the critical path: links carry over from the previous build, so Real is only
+    asked about games not linked yet (at most 4 day pages, 5 seconds each, games within a week of today), and any
+    failure just leaves the links out. ESPN's Gamecast link needs nothing (the game id is already here)."""
+    try:
+        prev = live_site_file("%d.js" % season) or {}
+        old = {g["id"]: g["real"] for g in prev.get("nflGames", []) if g.get("real")}
+        today = dt.datetime.now(ET_ZONE).date()
+        need = defaultdict(list)
+        for g in games:
+            if old.get(g["id"]):
+                g["real"] = old[g["id"]]
+            elif g.get("date") and not g.get("tbd"):
+                day = dt.datetime.fromisoformat(g["date"]).astimezone(ET_ZONE).date()
+                if abs((day - today).days) <= 7:
+                    need[day.isoformat()].append(g)
+        for day, gs in sorted(need.items())[:4]:
+            req = urllib.request.Request("https://www.realapp.com/nfl/" + day, headers={"User-Agent": "Mozilla/5.0 (league site)"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                html = r.read(400000).decode("utf-8", "replace")
+            found = {(a.strip(), h.strip()): url for url, a, h in REAL_LINK.findall(html)}
+            for g in gs:
+                url = found.get((REAL_NICK.get(g["away"]), REAL_NICK.get(g["home"])))
+                if url:
+                    g["real"] = url
+    except Exception as e:  # noqa: BLE001 - optional links, never break the build
+        print("  real links: skipped (%s)" % e)
+    return games
 
 
 def stat_line(player, season, source, period=0, split=0):
@@ -413,7 +457,7 @@ def build_season(season, is_current, names):
         "weeks": weeks,
         "trades": trades,
         "settings": league_settings(settings, teams),
-        "nflGames": nfl_games(season, current_week) if is_current and not over else [],
+        "nflGames": add_real_links(nfl_games(season, current_week), season) if is_current and not over else [],
         # future matchups already on ESPN's schedule (regular season, plus playoff games once they're set)
         "upcoming": [{"week": m["matchupPeriodId"], "teams": [m.get("home", {}).get("teamId"), m.get("away", {}).get("teamId")]}
                      for m in main.get("schedule", []) if not over and m["matchupPeriodId"] > current_week],
