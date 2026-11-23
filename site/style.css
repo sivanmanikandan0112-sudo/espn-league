@@ -1618,3 +1618,8 @@ body.has-ticker .tour-pill { bottom: calc(50px + env(safe-area-inset-bottom)); }
 .cl-line { margin: 2px 0 0 0; font-size: 13.5px; line-height: 1.5; padding-left: 10px; border-left: 3px solid var(--line); }
 .cl-line.in { border-left-color: var(--accent); }
 .cl-line.out { border-left-color: #d9534f; }
+
+/* Tiebreaker race (Standings) */
+.tr-cut + .tr-cut { margin-top: 22px; }
+.tr-h { font-size: 15px; font-weight: 600; margin: 0 0 8px; line-height: 1.4; }
+.tr-pair { margin: 8px 0 0; font-size: 13.5px; line-height: 1.5; padding-left: 10px; border-left: 3px solid var(--line); }

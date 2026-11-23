@@ -1007,6 +1007,9 @@ def add_playoff_odds(data, main, teams, regular, current_week):
             break
     odds = stats.playoff_odds(data, schedule, strength, track)
     tracked = odds.pop("_track", [])
+    ties = odds.pop("_ties", None)
+    if ties:
+        data["league"]["tieRace"] = {k: {"cut": v["cut"], "pct": v["pct"], "pairs": v["pairs"]} for k, v in ties.items()}
     if tracked:
         data["league"]["rootFor"] = {"week": tracked[0]["week"], "games": tracked}
     for tid, o in odds.items():

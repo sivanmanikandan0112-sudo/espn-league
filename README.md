@@ -356,6 +356,17 @@ checked, and the smallest sets of results that settle each team's spot are writt
 game already decided in all but name (live win probability 0 or 100) counts as played. Checked against brute force
 on thousands of random small leagues.
 
+## Tiebreaker race
+
+Standings (a Tiebreaker race section after the Playoff picture) and a line in My team's Playoff picture. The league
+breaks standings ties on total points, so `stats.playoff_odds` also tracks, in each of its 10,000 simulated finishes,
+whether teams level on wins sit on both sides of a cut (the bye line and the playoff line). Per team, in
+`odds.ties[cut]`: % of finishes in such a tie and % of those where it ends up on the right side (null under 50
+cases), plus `odds.projPF` (average final points for). League-wide, `league.tieRace[cut]`: % of finishes decided on
+points and the pairs (one in, one out) that meet there most often, with how often each wins. The site adds this
+week's points so far to ESPN's points for and states the gap now, the gap at projections, and what the trailing team
+would need beyond its projections.
+
 ## Red zone, Left the game and Game conditions
 
 - **Red zone alerts** (worker, `redZoneAlerts`): on the once-a-minute alert check, ESPN's NFL scoreboard (already

@@ -381,8 +381,70 @@
     const rows = order.map(t => ({ t, lines: clinchLines(t.id, false) })).filter(r => r.lines.length);
     if (!head.length && !rows.length) return "";
     return section(`Playoff picture <span class="muted">· week ${C.week}</span>`, { short: "Who's clinched, who's out, and what this week's results can settle.",
-      full: `Worked out exactly from the remaining schedule: a team has clinched only if no combination of results can push it out of the top ${L.playoffTeams || 6}, and it's eliminated only if none can get it in. Ties in the standings are broken by total points, which can't be known ahead of time, so they're treated as going against a team for clinching and in its favor for elimination; a team can still get in (or out) on points beyond what's shown. The scenarios list the fewest results this week that settle it, whatever happens after.${C.byes ? ` The top ${C.byes} get a first-round bye.` : ""}` },
+      full: `Worked out exactly from the remaining schedule: a team has clinched only if no combination of results can push it out of the top ${L.playoffTeams || 6}, and it's eliminated only if none can get it in. Ties in the standings are broken by total points, which can't be known ahead of time, so they're treated as going against a team for clinching and in its favor for elimination; a team can still get in (or out) on points beyond what's shown (the Tiebreaker race below has the odds on that). The scenarios list the fewest results this week that settle it, whatever happens after.${C.byes ? ` The top ${C.byes} get a first-round bye.` : ""}` },
       `<div class="panel cl-pic">${head.length ? `<p class="cl-head">${head.join("<br>")}</p>` : ""}${rows.map(r => `<div class="cl-row"><div class="cl-team">${logo(r.t)}<b>${esc(r.t.name)}</b>${clinchTag(r.t)}</div>${r.lines.map(l => `<p class="cl-line ${l.goal}">${l.html}</p>`).join("")}</div>`).join("")}</div>`);
+  }
+
+  // ---------------------------------------------------------------- tiebreaker race (league.tieRace + team.odds.ties/projPF, build)
+  // Ties in the standings go to total points. From the same simulations as the playoff odds: how often each cut ends with
+  // teams level on wins across it, who's usually in that tie, who wins it, and the points gap now and at projections.
+  const TIE_CUTS = { po: ["playoff line", "the last playoff spot"], bye: ["bye line", "the last first-round bye"] };
+  const tieRace = () => (L.tieRace && L.isCurrent && !L.over) ? L.tieRace : null;
+  const pts1 = n => Math.abs(n).toFixed(1);
+  // points for including this week's points so far (ESPN's total only counts finished weeks)
+  const trWeek = () => (D.weeks || []).find(w => w.week === L.currentWeek && !w.final && w.week <= L.regularSeasonWeeks && w.games.some(g => g.sides.some(s => s.pts > 0)));
+  function pfNow(t) {
+    const w = trWeek(), s = w && w.games.flatMap(g => g.sides).find(x => x.team === t.id);
+    return t.pf + (s ? s.pts || 0 : 0);
+  }
+  function tiePairLine(pair) {
+    const [a, b, p, aw] = pair, A = teamById[a], B = teamById[b];
+    if (!A || !B || !A.odds || !B.odds) return "";
+    const [W, O] = aw >= 50 ? [A, B] : [B, A], wp = Math.max(aw, 100 - aw);
+    const [P, Q] = A.odds.projPF >= B.odds.projPF ? [A, B] : [B, A];
+    const now = pfNow(P) - pfNow(Q), fin = P.odds.projPF - Q.odds.projPF;
+    const after = Math.max(0, (Q.odds.gamesLeft || 0) - (trWeek() ? 1 : 0));
+    const nm = t => `<b>${esc(t.name)}</b>`;
+    const lead = Math.abs(now) < 0.05 ? "They're even on points right now" : now > 0 ? `${nm(P)} leads by ${pts1(now)} points now` : `${nm(Q)} leads by ${pts1(now)} points now`;
+    const gap = fin < 5 ? `${lead}, and they're within ${pts1(fin)} of each other at projections, so it's open.`
+      : `${lead}${now > 0.05 ? " and projects" : `, but ${nm(P)} projects`} to finish ${pts1(fin)} ahead, so ${nm(Q)} would need to beat their projections by about ${pts1(fin)} points${after > 1 ? ` (${pts1(fin / after)} a week over the last ${after}${trWeek() ? " after this one" : ""})` : ""} to ${now < -0.05 ? "stay ahead" : "catch up"}.`;
+    return `<p class="tr-pair">${nm(W)} vs. ${nm(O)}: level on wins across the line in ${pct(p)} of finishes. ${nm(W)} wins that on points ${pct(wp)} of the time. ${gap}</p>`;
+  }
+  function tieRaceSection() {
+    const R = tieRace();
+    if (!R) return "";
+    const parts = ["po", "bye"].filter(k => R[k] && R[k].pct >= 3).map(k => {
+      const rows = D.teams.filter(t => t.odds && t.odds.ties && t.odds.ties[k] && t.odds.ties[k][0] >= 2)
+        .sort((a, b) => b.odds.ties[k][0] - a.odds.ties[k][0]);
+      if (!rows.length) return "";
+      const pairs = (R[k].pairs || []).filter(x => x[2] >= 3).slice(0, 3);
+      return `<div class="tr-cut"><h3 class="tr-h">${k === "po" ? "Last playoff spot" : "Last bye"} <span class="muted">(#${R[k].cut})</span>: decided on points in <b>${pct(R[k].pct)}</b> of finishes</h3>
+        ${table([
+          { label: "Team", cell: teamCell },
+          { label: "Record", num: 1, cell: t => record(t) },
+          { label: "Points for", num: 1, cell: t => fmt(pfNow(t)) },
+          { label: "Projected", num: 1, cell: t => t.odds.projPF.toFixed(1) },
+          { label: "In a tie", num: 1, cell: t => pct(t.odds.ties[k][0]) },
+          { label: "Wins it", num: 1, cell: t => t.odds.ties[k][1] == null ? '<span class="muted">—</span>' : pct(t.odds.ties[k][1]) },
+        ], rows)}
+        ${pairs.map(tiePairLine).join("")}</div>`;
+    }).filter(Boolean);
+    if (!parts.length) return "";
+    return section("Tiebreaker race", { short: "When teams finish level on wins, total points decide it. How often that happens at the playoff and bye lines, and who's ahead.",
+      full: `From the same 10,000 simulated finishes as the playoff odds. "In a tie" is how often a team ends level on wins with someone on the other side of the line, so the spot goes to whoever scored more; "Wins it" is how often it ends up on the right side when that happens (— when it's too rare to say). Points for includes this week's points so far; Projected adds the average of the simulated rest of the regular season (this week from ESPN's live projection). The pairs are the teams that meet in that tie most often.` },
+      parts.join(""));
+  }
+  // My team: one line when points are likely to matter for your spot
+  function tieRaceMine(t) {
+    if (!tieRace() || !t.odds || !t.odds.ties) return "";
+    const out = ["po", "bye"].map(k => {
+      const x = t.odds.ties[k];
+      if (!x || x[0] < 5) return "";
+      const rival = ((tieRace()[k] || {}).pairs || []).filter(p => p[0] === t.id || p[1] === t.id).sort((a, b) => b[2] - a[2])[0];
+      const rv = rival ? teamById[rival[0] === t.id ? rival[1] : rival[0]] : null;
+      return `You finish level on wins at the ${TIE_CUTS[k][0]} in ${pct(x[0])} of finishes${rv ? `, most often with ${esc(rv.name)}` : ""}${x[1] != null ? `, and win it on points ${pct(x[1])} of the time` : ""}.`;
+    }).filter(Boolean);
+    return out.join(" ");
   }
 
   function teamCard(t, i, maxPos) {
@@ -755,6 +817,7 @@
         <div class="legend"><span>Team / ${esc(S[state.sort][0])}</span>${SEGS().map(p => `<span><i class="dot ${p}"></i>${p}</span>`).join("")}<span class="right">Bar numbers = position rank</span></div>
         <div class="teams" id="teams">${shown.length ? shown.map(([t, i]) => teamCard(t, i, maxPos)).join("") : '<div class="empty">No team, manager or player matches that.</div>'}</div>
         ${clinchSection()}
+        ${tieRaceSection()}
         ${storyline()}
         <div class="pulse-phone">${pulseSection()}</div>
       </section>
@@ -3826,7 +3889,8 @@
           })()}${(() => {
             const c = clinchOf(t.id), lines = clinchLines(t.id, true), n = (c || {}).now || {};
             const status = n.bye === "in" ? "You've clinched a first-round bye." : n.po === "in" ? "You've clinched a playoff spot." : n.po === "out" ? "You've been eliminated from the playoffs." : "";
-            return status || lines.length ? `<div class="me-fix prac"><span><b>Playoff picture:</b> ${[status].concat(lines.map(l => l.html)).filter(Boolean).join(" ")} <a class="wk-link" href="${href("standings")}">All scenarios ›</a></span></div>` : "";
+            const tie = tieRaceMine(t);
+            return status || lines.length || tie ? `<div class="me-fix prac"><span><b>Playoff picture:</b> ${[status].concat(lines.map(l => l.html), [tie]).filter(Boolean).join(" ")} <a class="wk-link" href="${href("standings")}">All scenarios ›</a></span></div>` : "";
           })()}`);
       }
     }
@@ -4105,6 +4169,9 @@
   // Every feature added to the site, grouped by the day it went live (newest first). Add new features at the top.
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
+    ["2026-11-24", [
+      ["Tiebreaker race", "Standings, My team", "Ties in the standings go to total points. How often the playoff and bye lines come down to points, who's usually in that tie, who wins it, and the points gap now and at projections.", "#/"],
+    ]],
     ["2026-11-23", [
       ["Playoff picture", "Standings, My team", "Who's clinched a playoff spot or a bye (IN / BYE tags), who's eliminated (OUT), and exactly which of this week's results would settle it, in plain words.", "#/"],
       ["Red zone alerts", "Settings → Alerts → Live games", "A notification when one of your starters' NFL teams gets inside the 20, once per drive, with the down and distance.", "#/settings?at=alerts"],
@@ -4276,6 +4343,7 @@
       ["winprob", "Win probability", "Matchups", "#/matchups", "ESPN's live chance each team wins its matchup, shown while the week is in progress.", []],
       ["bigplays", "Big plays", "Matchups → Big plays", "#/matchups/plays", "Touchdowns, 5+ point field goals, turnovers, big defensive plays and 30+ yard gains (50+ for a pass) by league players, caught from ESPN every minute during games, with the fantasy points that play was worth. The Season view adds them up by team and player since the feed started.", ["Team leaderboard"]],
       ["monday", "Monday-night math", "Matchups", "#/matchups", "Once a matchup is down to players in games that haven't started, what each side needs and a win chance from those players' own game logs.", []],
+      ["tierace", "Tiebreaker race", "Standings, My team", "#/", "Teams level on wins are separated by total points. From the playoff-odds simulations: how often a team ends level on wins with someone across the playoff (or bye) line (In a tie), how often it comes out ahead when that happens (Wins it), its projected final points, and the pairs that meet in that tie most often, with the gap now and at projections.", ["Tiebreaker race"]],
       ["clinch", "Clinched / eliminated", "Standings, My team", "#/", "Exact, from the remaining schedule: clinched only if no combination of results can push a team out of the playoff spots (or bye spots), eliminated only if none can get it in. Points tiebreakers are treated as unknown (against a team for clinching, for it for elimination). The week's scenarios are the fewest results that settle it, whatever happens after.", ["Playoff picture"]],
       ["conditions", "Game conditions", "Watch guide, player card, lineup check", "#/matchups/watch", "Forecast for the first 3 hours of each outdoor game (Open-Meteo): temperature, wind and gusts, chance and amount of rain or snow. Flags: Windy (15+ mph or gusts 25+; hurts kickers and passing), Rain (likely, 0.1+ inch), Snow (0.2+ inch), Frigid (25°F or colder), Hot (88°F+). Domes and roofed stadiums show Indoors.", []],
       ["rootfor", "Who to root for", "Matchups, My team", "#/matchups", "For each of this week's other games, your playoff chance in the simulated seasons where each team won (the same 10,000 seasons as the playoff odds). Root for the team whose win helps you; the number is how many percentage points it's worth. Bye odds instead once you're all but in.", []],

@@ -154,7 +154,15 @@ def playoff_odds(season, schedule, team_strength, track=None):
     rounds = max(1, lg["playoffRounds"])
     byes = max(0, 2 ** rounds - playoff_teams)
     rng = random.Random(PLAYOFF_SEED)
-    tally = {tid: {"playoffs": 0, "bye": 0, "title": 0, "wins": 0.0, "seed": 0.0, "seeds": [0] * len(teams)} for tid in teams}
+    tally = {tid: {"playoffs": 0, "bye": 0, "title": 0, "wins": 0.0, "seed": 0.0, "pf": 0.0, "seeds": [0] * len(teams)} for tid in teams}
+    # Tiebreaker race: how often each cut (bye, playoffs) ends with teams level on wins on both sides of it, so total
+    # points decide it. Per team: times in such a tie and times on the right side; per pair (one in, one out): how often
+    # and who won.
+    cuts = [(k, c) for k, c in (("bye", byes), ("po", playoff_teams)) if 0 < c < len(teams)]
+    tie_n = {k: defaultdict(int) for k, _ in cuts}
+    tie_in = {k: defaultdict(int) for k, _ in cuts}
+    tie_pair = {k: defaultdict(lambda: [0, 0]) for k, _ in cuts}
+    tie_any = defaultdict(int)
     games_left = defaultdict(int)
     for _, h, a in schedule:
         games_left[h] += 1; games_left[a] += 1
@@ -192,7 +200,23 @@ def playoff_odds(season, schedule, team_strength, track=None):
             wins[winner] += 1
             result[(week, home, away)] = 0 if winner == home else 1
         order = sorted(teams, key=lambda tid: (-wins[tid], -pf[tid]))
+        for k, c in cuts:
+            line = wins[order[c - 1]]
+            if wins[order[c]] == line:
+                tie_any[k] += 1
+                group = [t for t in order if wins[t] == line]
+                inside = set(order[:c])
+                for t in group:
+                    tie_n[k][t] += 1
+                    if t in inside:
+                        tie_in[k][t] += 1
+                for a in group:
+                    for b in group:
+                        if a < b and (a in inside) != (b in inside):
+                            tie_pair[k][(a, b)][0] += 1
+                            tie_pair[k][(a, b)][1] += a in inside
         for i, tid in enumerate(order):
+            tally[tid]["pf"] += pf[tid]
             tally[tid]["wins"] += wins[tid]
             tally[tid]["seed"] += i + 1
             tally[tid]["seeds"][i] += 1
@@ -229,9 +253,18 @@ def playoff_odds(season, schedule, team_strength, track=None):
                   "titlePct": round(100 * v["title"] / n, 1), "projWins": round(v["wins"] / n, 1),
                   "avgSeed": round(v["seed"] / n, 1), "gamesLeft": games_left[tid],
                   # chance of finishing at each seed (index 0 = the 1 seed), for the seed odds grid
-                  "seeds": [round(100 * c / n, 1) for c in v["seeds"]]}
+                  "seeds": [round(100 * c / n, 1) for c in v["seeds"]],
+                  # average final points for (the tiebreaker), and how often this team is in a points tie at each cut
+                  "projPF": round(v["pf"] / n, 1),
+                  "ties": {k: [round(100 * tie_n[k][tid] / n, 1), round(100 * tie_in[k][tid] / tie_n[k][tid], 1) if tie_n[k][tid] >= 50 else None]
+                           for k, _ in cuts if tie_n[k][tid]}}
             for tid, v in tally.items()}
     out["_track"] = track_out
+    # the pairs that most often meet in a points tie at each cut (at least 2% of finishes): [a, b, % of finishes, % a wins]
+    out["_ties"] = {k: {"cut": c, "pct": round(100 * tie_any[k] / n, 1),
+                        "pairs": sorted(([a, b, round(100 * m / n, 1), round(100 * w / m, 1)]
+                                         for (a, b), (m, w) in tie_pair[k].items() if m >= 0.02 * n), key=lambda x: -x[2])[:6]}
+                    for k, c in cuts}
     return out
 
 
