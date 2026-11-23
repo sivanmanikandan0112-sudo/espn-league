@@ -1675,3 +1675,57 @@ body.has-ticker .tour-pill { bottom: calc(50px + env(safe-area-inset-bottom)); }
   .yb-cover { padding-top: 30vh; }
   .yb-fact, .yb-award, tr, li { break-inside: avoid; }
 }
+
+/* Scenario builder (Insights → Playoff race) */
+.scn-note { margin: 0 0 10px; font-size: 13.5px; color: var(--ink-2); }
+.scn-me { margin: 0 0 12px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); border-left: 4px solid var(--line); background: var(--surface); font-size: 15px; line-height: 1.5; }
+.scn-me.bye, .scn-me.po { border-left-color: var(--accent); }
+.scn-me.out { border-left-color: #d9534f; }
+.scn-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.scn-act { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 7px 13px; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+.scn-act:disabled { opacity: .5; cursor: default; }
+.scn-act.share { background: var(--accent); border-color: var(--accent); color: #fff; }
+.scn-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 18px; align-items: start; }
+.scn-res { position: sticky; top: 12px; }
+.scn-week + .scn-week { margin-top: 14px; }
+.scn-wh { margin: 0 0 8px; font-size: 15px; }
+.scn-g { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
+.scn-b { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink-2); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.scn-b .logo { width: 24px; height: 24px; flex: none; }
+.scn-b .scn-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scn-b .scn-p { flex: none; font-size: 12px; color: var(--ink-2); }
+.scn-b.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--ink); font-weight: 700; }
+.scn-b:disabled { cursor: default; }
+.scn-g.locked .scn-b:not(.on) { opacity: .45; }
+.scn-live { grid-column: 1 / -1; margin: 0 0 2px; font-size: 12px; color: var(--ink-2); }
+.scn-table { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.scn-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 52px 52px 38px; gap: 8px; align-items: center; padding: 7px 10px; border-top: 1px solid var(--line); font-size: 13.5px; }
+.scn-row.head { border-top: 0; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); }
+.scn-row > span:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+.scn-row.cut-bye { border-bottom: 2px dashed var(--ink-2); }
+.scn-row.cut-po { border-bottom: 2px solid var(--ink); }
+.scn-row.mine { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.scn-row.out .scn-seed, .scn-row.out .tname { color: var(--ink-2); }
+.scn-seed { font-weight: 800; }
+.scn-team { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.scn-team > span { display: flex; flex-direction: column; min-width: 0; }
+.scn-team .tname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.scn-team .logo { width: 24px; height: 24px; flex: none; }
+.scn-st { font-size: 11.5px; color: var(--ink-2); }
+.scn-st.bye, .scn-st.po { color: var(--accent); font-weight: 600; }
+.scn-fr { margin: 12px 0 0; font-size: 13.5px; line-height: 1.6; }
+.scn-fr .yb-label { display: block; margin-bottom: 2px; }
+.scn-adjs { margin-top: 12px; font-size: 13.5px; }
+.scn-adjs summary { cursor: pointer; font-weight: 600; }
+.scn-adj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 12px; }
+.scn-adj { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.scn-adj span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scn-adj input { width: 72px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
+@media (max-width: 860px) {
+  .scn-grid { grid-template-columns: 1fr; }
+  .scn-res { position: static; }
+}
+@media (max-width: 420px) {
+  .scn-row { grid-template-columns: 26px minmax(0, 1fr) 44px 40px 30px; gap: 6px; padding: 7px 8px; font-size: 13px; }
+  .scn-b { padding: 6px 8px; gap: 6px; }
+}

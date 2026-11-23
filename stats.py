@@ -256,6 +256,8 @@ def playoff_odds(season, schedule, team_strength, track=None):
                   "seeds": [round(100 * c / n, 1) for c in v["seeds"]],
                   # average final points for (the tiebreaker), and how often this team is in a points tie at each cut
                   "projPF": round(v["pf"] / n, 1),
+                  # the weekly scoring model (mean, sd) behind it, for the scenario builder's favorites
+                  "wk": [round(team_strength[tid]["mean"], 1), round(team_strength[tid]["sd"], 1)],
                   "ties": {k: [round(100 * tie_n[k][tid] / n, 1), round(100 * tie_in[k][tid] / tie_n[k][tid], 1) if tie_n[k][tid] >= 50 else None]
                            for k, _ in cuts if tie_n[k][tid]}}
             for tid, v in tally.items()}

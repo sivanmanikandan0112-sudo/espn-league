@@ -436,6 +436,19 @@ play-by-play feed is behind bot protection, so the site doesn't read it), or to 
 Cowboys"), read from the same game pages (league-rostered players only); before his game starts it opens the game. Real's links are web links; whether they open the Real app or its website
 depends on the phone.
 
+## Scenario builder
+
+Insights → Playoff race → Scenario builder (`scnBody` in app.js), linked from the Playoff picture on Standings and
+My team. Every regular-season game left (this week's from the week's matchups, later ones from `upcoming`) is a pair
+of buttons; tap the winner. It starts on the favorites: ESPN's live win probability this week, then the playoff
+odds' weekly scoring model (`odds.wk` = mean and spread per team, from `team_strengths`). The standings are worked
+out in the browser: wins first, then projected final points (`odds.projPF`, the tiebreaker race's numbers) plus any
+adjustment typed in. It shows seeds, bye / playoffs / out, "on points" where a tie on wins decides a cut, the move
+from today's standings, the first round, and a line for your team. "You win out / lose out" set your games;
+"Favorites" resets. Picks are kept in the link (`?s=<first week>.<h|a per game>&adj=<team>:<points>`), updated as you
+tap, so Share (the phone's share sheet, or copy) sends the same scenario; a link from an earlier week drops the
+weeks played since. This week's games ESPN has already settled (win probability 0 or 100) are locked.
+
 ## Season yearbook
 
 History → Yearbook (`yearbookHtml` in app.js), for every finished season (the current one shows a "comes out when

@@ -382,7 +382,7 @@
     if (!head.length && !rows.length) return "";
     return section(`Playoff picture <span class="muted">· week ${C.week}</span>`, { short: "Who's clinched, who's out, and what this week's results can settle.",
       full: `Worked out exactly from the remaining schedule: a team has clinched only if no combination of results can push it out of the top ${L.playoffTeams || 6}, and it's eliminated only if none can get it in. Ties in the standings are broken by total points, which can't be known ahead of time, so they're treated as going against a team for clinching and in its favor for elimination; a team can still get in (or out) on points beyond what's shown (the Tiebreaker race below has the odds on that). The scenarios list the fewest results this week that settle it, whatever happens after.${C.byes ? ` The top ${C.byes} get a first-round bye.` : ""}` },
-      `<div class="panel cl-pic">${head.length ? `<p class="cl-head">${head.join("<br>")}</p>` : ""}${rows.map(r => `<div class="cl-row"><div class="cl-team">${logo(r.t)}<b>${esc(r.t.name)}</b>${clinchTag(r.t)}</div>${r.lines.map(l => `<p class="cl-line ${l.goal}">${l.html}</p>`).join("")}</div>`).join("")}</div>`);
+      `<div class="panel cl-pic">${head.length ? `<p class="cl-head">${head.join("<br>")}</p>` : ""}${rows.map(r => `<div class="cl-row"><div class="cl-team">${logo(r.t)}<b>${esc(r.t.name)}</b>${clinchTag(r.t)}</div>${r.lines.map(l => `<p class="cl-line ${l.goal}">${l.html}</p>`).join("")}</div>`).join("")}${insightHas("build") ? `<p class="cl-more"><a class="wk-link" href="${href("insights", { at: "build" }, "race")}">Build your own scenario ›</a></p>` : ""}</div>`);
   }
 
   // ---------------------------------------------------------------- tiebreaker race (league.tieRace + team.odds.ties/projPF, build)
@@ -2429,17 +2429,17 @@
   // Insights pages. Each groups related views, shown one at a time with a switch at the top; the old one-view
   // sub-tabs still work as links (they open the page that holds them now, on that view).
   const INSIGHT_GROUPS = [
-    ["race", "Playoff race", ["race", "seeds", "form"]],
+    ["race", "Playoff race", ["race", "build", "seeds", "form"]],
     ["luck", "Luck", ["luck", "close", "upsets", "projection", "usage", "injury"]],
     ["schedule", "Schedule", ["schedule", "byes"]],
     ["lineups", "Lineups", ["efficiency", "autopilot"]],
     ["draft", "Draft", ["draft"]],
     ["whatif", "What ifs", ["rules", "swap", "butterfly"]],
   ];
-  const INSIGHT_ALIAS = { seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", usage: "luck", injury: "luck", byes: "schedule", efficiency: "lineups", autopilot: "lineups", redraft: "draft", rules: "whatif", swap: "whatif", butterfly: "whatif" };
+  const INSIGHT_ALIAS = { build: "race", seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", usage: "luck", injury: "luck", byes: "schedule", efficiency: "lineups", autopilot: "lineups", redraft: "draft", rules: "whatif", swap: "whatif", butterfly: "whatif" };
   function insightHas(k) {
     return ({
-      form: () => D.teams.some(x => x.form), seeds: () => D.teams.some(x => x.odds && x.odds.seeds), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0, injury: () => D.teams.some(x => x.injuries), usage: () => !!(D.nfl && D.nfl.teams && Object.keys(D.nfl.teams).length), autopilot: () => D.teams.some(x => x.autopilot && x.autopilot.weeks),
+      build: () => scnGames().length > 0, form: () => D.teams.some(x => x.form), seeds: () => D.teams.some(x => x.odds && x.odds.seeds), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0, injury: () => D.teams.some(x => x.injuries), usage: () => !!(D.nfl && D.nfl.teams && Object.keys(D.nfl.teams).length), autopilot: () => D.teams.some(x => x.autopilot && x.autopilot.weeks),
       byes: () => D.teams.some(x => x.byeCrunch && x.byeCrunch.length), draft: () => !!D.draft,
       redraft: () => !!(D.draft && D.draft.redraft), rules: () => !!(D.rulesLab && D.rulesLab.weeks),
       swap: () => !!(D.scheduleSwap && D.scheduleSwap.weeks),
@@ -2448,7 +2448,7 @@
   }
   function insightPartLabel(k) {
     if (k === "race") return D.teams.some(t => t.odds) ? "Playoff odds" : "Final results";
-    return { seeds: "Seed odds", form: "Hot & cold", luck: "Luck", close: "Close games", upsets: "Upset tracker", projection: "Vs. projection", usage: "Vs. usage",
+    return { build: "Scenario builder", seeds: "Seed odds", form: "Hot & cold", luck: "Luck", close: "Close games", upsets: "Upset tracker", projection: "Vs. projection", usage: "Vs. usage",
       injury: "Injury toll", schedule: "Strength of schedule", byes: "Byes ahead", efficiency: "Efficiency", autopilot: "You vs. autopilot", rules: "Rules lab", swap: "Schedule swap", butterfly: "Butterfly effect" }[k] || k;
   }
   function insightTabs() {
@@ -2457,7 +2457,166 @@
       .map(([k, label]) => [k, k === "race" && !(hasOdds || !L.over) ? "Final results" : label]);
   }
 
+  // ---------------------------------------------------------------- scenario builder (Insights → Playoff race)
+  // Pick the winner of every regular-season game left; the standings, seeds, byes and first round update as you go.
+  // Ties in the standings go to total points: each team's projected final points (the playoff simulations' average,
+  // this week's live projection included), which can be nudged. Favorites come from ESPN's live win probability this
+  // week and the playoff odds' weekly scoring model after that. The picks live in the link (?s=week.picks), so a
+  // scenario can be shared; an older link drops the weeks that have been played since.
+  const SCN = { picks: null, sig: "", src: "", adj: {}, note: "" };
+  const erf = x => { const t = 1 / (1 + 0.3275911 * Math.abs(x)), y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; };
+  function scnP(h, a) {
+    const A = (teamById[h] || {}).odds, B = (teamById[a] || {}).odds;
+    if (!A || !B || !A.wk || !B.wk) return 0.5;
+    return 0.5 * (1 + erf((A.wk[0] - B.wk[0]) / Math.sqrt(A.wk[1] ** 2 + B.wk[1] ** 2 || 1) / Math.SQRT2));
+  }
+  function scnGames() {
+    if (!L || !L.isCurrent || L.over || !D.teams.some(t => t.odds)) return [];
+    const RS = L.regularSeasonWeeks, out = [];
+    const cur = D.weeks.find(w => w.week === L.currentWeek && !w.final && w.week <= RS);
+    if (cur) cur.games.filter(g => g.sides.length === 2 && !g.playoff).forEach(g => {
+      const [h, a] = g.sides, wp = h.winProb != null && a.winProb != null && h.winProb + a.winProb > 0;
+      const done = wp && (h.winProb === 1 || a.winProb === 1);
+      out.push({ week: cur.week, h: h.team, a: a.team, pH: wp ? h.winProb / (h.winProb + a.winProb) : scnP(h.team, a.team), live: [h.pts, a.pts],
+        locked: done ? (h.winProb === 1 ? 0 : 1) : null });
+    });
+    const after = cur ? cur.week : L.currentWeek - 1;
+    (D.upcoming || []).filter(u => u.week > after && u.week <= RS && (u.teams || []).length === 2 && u.teams.every(t => teamById[t]))
+      .forEach(u => out.push({ week: u.week, h: u.teams[0], a: u.teams[1], pH: scnP(u.teams[0], u.teams[1]) }));
+    return out;
+  }
+  const scnFav = games => games.map(g => g.locked != null ? g.locked : g.pH >= 0.5 ? 0 : 1);
+  // the picks for these games: from the link if it matches (dropping weeks played since it was made), else favorites
+  function scnLoad(games) {
+    const sig = games.map(g => g.week + ":" + g.h + "-" + g.a).join(",");
+    const src = (state.params.get("s") || "") + "|" + (state.params.get("adj") || "");
+    if (SCN.sig === sig && SCN.src === src && SCN.picks) return;
+    SCN.sig = sig; SCN.src = src; SCN.picks = scnFav(games); SCN.adj = {}; SCN.note = "";
+    const raw = state.params.get("s") || "";
+    const m = raw.match(/^(\d+)\.([ha]+)$/);
+    if (m && games.length) {
+      const per = Math.max(1, Math.floor(L.size / 2)), skip = (games[0].week - Number(m[1])) * per;
+      const chars = skip >= 0 ? m[2].slice(skip) : "";
+      if (chars.length === games.length) chars.split("").forEach((c, i) => { if (games[i].locked == null) SCN.picks[i] = c === "h" ? 0 : 1; });
+      else SCN.note = "That shared scenario doesn't match the games left anymore, so this starts from the favorites.";
+      if (skip > 0 && chars.length === games.length) SCN.note = `That scenario was shared before week ${games[0].week}; the games played since are left out.`;
+    }
+    (state.params.get("adj") || "").split(",").forEach(x => { const [id, v] = x.split(":"); if (teamById[id] && isFinite(+v)) SCN.adj[id] = +v; });
+  }
+  function scnParams(games) {
+    const p = { at: "build" };
+    if (games.length && SCN.picks.some((x, i) => x !== scnFav(games)[i])) p.s = games[0].week + "." + SCN.picks.map(x => x ? "a" : "h").join("");
+    const adj = Object.entries(SCN.adj).filter(([, v]) => v).map(([k, v]) => k + ":" + v).join(",");
+    if (adj) p.adj = adj;
+    return p;
+  }
+  function scnStandings(games) {
+    const rows = D.teams.map(t => ({ t, w: t.wins, l: t.losses, tie: t.ties || 0, pts: (t.odds && t.odds.projPF != null ? t.odds.projPF : t.pf) + (SCN.adj[t.id] || 0) }));
+    const by = Object.fromEntries(rows.map(r => [r.t.id, r]));
+    games.forEach((g, i) => { const [win, lose] = SCN.picks[i] === 0 ? [g.h, g.a] : [g.a, g.h]; by[win].w++; by[lose].l++; });
+    const score = r => r.w + r.tie / 2;
+    rows.sort((a, b) => score(b) - score(a) || b.pts - a.pts);
+    const po = L.playoffTeams || 0, byes = Math.max(0, 2 ** (L.playoffRounds || 1) - po);
+    rows.forEach((r, i) => {
+      r.seed = i + 1;
+      r.status = r.seed <= byes ? "bye" : r.seed <= po ? "po" : "out";
+      // level on wins with someone on the other side of a cut it sits at = that spot came down to points
+      r.onPts = [byes, po].some(c => c && rows.some((o, j) => o !== r && score(o) === score(r) && (j < c) !== (i < c)));
+    });
+    return { rows, po, byes };
+  }
+  function scnBody() {
+    const games = scnGames();
+    if (!games.length) return `<div class="panel">There are no regular-season games left to pick.</div>`;
+    scnLoad(games);
+    const { rows, po, byes } = scnStandings(games);
+    const me = rows.find(r => isMine(r.t));
+    const fav = scnFav(games), changed = SCN.picks.filter((x, i) => x !== fav[i]).length;
+    const nm = id => esc(tname(id));
+    const STAT = { bye: "Bye", po: "Playoffs", out: "Out" };
+    let summary = "";
+    if (me) {
+      const first = me.status === "po" ? (() => { const opp = rows[po + byes - me.seed]; return opp && opp !== me ? `, first round against ${esc(opp.t.name)} (#${opp.seed})` : ""; })() : "";
+      summary = `<p class="scn-me ${me.status}">In this scenario you finish <b>${ordinal(me.seed)}</b> at ${me.w}–${me.l}${me.tie ? "–" + me.tie : ""}: <b>${me.status === "bye" ? "a first-round bye" : me.status === "po" ? "in the playoffs" : "out of the playoffs"}</b>${first}${me.onPts ? (me.status === "out" ? ", missing out on points" : ", on points") : ""}.</p>`;
+    }
+    const weeks = [...new Set(games.map(g => g.week))];
+    const gameHtml = (g, i) => {
+      const pick = SCN.picks[i], lock = g.locked != null;
+      const btn = (side, id, p) => `<button type="button" class="scn-b${pick === side ? " on" : ""}" data-scn="${i}:${side}" aria-pressed="${pick === side}"${lock ? " disabled" : ""}>${logo(teamById[id])}<span class="scn-n">${nm(id)}</span><span class="scn-p">${g.live && lock ? "" : Math.round(100 * p) + "%"}</span></button>`;
+      return `<div class="scn-g${lock ? " locked" : ""}" role="group" aria-label="Week ${g.week}: ${esc(tname(g.h))} vs. ${esc(tname(g.a))}">${btn(0, g.h, g.pH)}${btn(1, g.a, 1 - g.pH)}${g.live ? `<p class="scn-live">${lock ? "Decided" : "Live"}: ${fmt(g.live[0])}–${fmt(g.live[1])}</p>` : ""}</div>`;
+    };
+    const cut = (r, i) => i + 1 === byes ? " cut-bye" : i + 1 === po ? " cut-po" : "";
+    const moved = r => { const d = (r.t.standing || r.seed) - r.seed; return d > 0 ? `<span class="pos">▲${d}</span>` : d < 0 ? `<span class="neg">▼${-d}</span>` : '<span class="muted">–</span>'; };
+    const firstRound = [];
+    for (let s = byes + 1, e = po; s < e; s++, e--) firstRound.push(`<b>#${s}</b> ${esc(rows[s - 1].t.name)} vs. <b>#${e}</b> ${esc(rows[e - 1].t.name)}`);
+    const adjRows = D.teams.slice().sort((a, b) => a.name.localeCompare(b.name)).map(t => `<label class="scn-adj"><span>${esc(t.name)}</span><input type="number" step="5" inputmode="decimal" data-scn-adj="${t.id}" value="${SCN.adj[t.id] || 0}" aria-label="Points to add to ${esc(t.name)}'s projection"></label>`).join("");
+    return `${SCN.note ? `<p class="scn-note">${esc(SCN.note)}</p>` : ""}${summary}
+      <div class="scn-bar">
+        <button type="button" class="scn-act" data-scn="fav"${changed ? "" : " disabled"}>Favorites${changed ? ` <span class="muted">(${changed} changed)</span>` : ""}</button>
+        ${me ? `<button type="button" class="scn-act" data-scn="winout">You win out</button><button type="button" class="scn-act" data-scn="loseout">You lose out</button>` : ""}
+        <button type="button" class="scn-act share" data-scn="share">Share this scenario</button>
+      </div>
+      <div class="scn-grid">
+        <div class="scn-games">${weeks.map(w => `<div class="scn-week"><h3 class="scn-wh">Week ${w}${w === L.currentWeek && games.some(g => g.live) ? ' <span class="muted">· in progress</span>' : ""}</h3>${games.map((g, i) => g.week === w ? gameHtml(g, i) : "").join("")}</div>`).join("")}</div>
+        <div class="scn-res">
+          <h3 class="scn-wh">Final standings in this scenario</h3>
+          <div class="scn-table" role="table" aria-label="Standings in this scenario">
+            <div class="scn-row head" role="row"><span role="columnheader" title="Seed">#</span><span role="columnheader">Team</span><span role="columnheader">Record</span><span role="columnheader" title="Projected final points for, the tiebreaker">Points</span><span role="columnheader" title="Change from the standings now">Now</span></div>
+            ${rows.map((r, i) => `<div class="scn-row ${r.status}${cut(r, i)}${isMine(r.t) ? " mine" : ""}" role="row"><span role="cell" class="scn-seed">${r.seed}</span><span role="cell" class="scn-team">${logo(r.t)}<span><span class="tname">${esc(r.t.name)}</span><span class="scn-st ${r.status}">${STAT[r.status]}${r.onPts ? " · on points" : ""}</span></span></span><span role="cell">${r.w}–${r.l}${r.tie ? "–" + r.tie : ""}</span><span role="cell">${r.pts.toFixed(0)}</span><span role="cell">${moved(r)}</span></div>`).join("")}
+          </div>
+          ${firstRound.length ? `<p class="scn-fr"><span class="yb-label">First round</span>${firstRound.join("<br>")}${byes ? `<br><span class="muted">Byes: ${rows.slice(0, byes).map(r => esc(r.t.name)).join(", ")}</span>` : ""}</p>` : ""}
+          <details class="scn-adjs"${Object.values(SCN.adj).some(Boolean) ? " open" : ""}><summary>Adjust projected points (tiebreaker)</summary><p class="muted">Add or take away points from a team's projected final total, to see how a tie on wins would go.</p><div class="scn-adj-grid">${adjRows}</div></details>
+        </div>
+      </div>`;
+  }
+  function scnUpdate() {
+    const box = document.getElementById("scn");
+    if (!box) return;
+    const games = scnGames(), p = scnParams(games);
+    state.params = new URLSearchParams(Object.assign(state.season !== IDX.current ? { season: state.season } : {}, p));
+    SCN.src = (p.s || "") + "|" + (p.adj || "");
+    history.replaceState(null, "", href("insights", p, "race"));
+    box.innerHTML = scnBody();
+  }
+  document.addEventListener("click", async e => {
+    const b = e.target.closest("[data-scn]");
+    if (!b || !document.getElementById("scn")) return;
+    const games = scnGames(), v = b.dataset.scn;
+    if (v === "fav") SCN.picks = scnFav(games);
+    else if (v === "winout" || v === "loseout") games.forEach((g, i) => {
+      if (g.locked != null) return;
+      const mine = isMine(teamById[g.h]) ? 0 : isMine(teamById[g.a]) ? 1 : null;
+      if (mine != null) SCN.picks[i] = v === "winout" ? mine : 1 - mine;
+    });
+    else if (v === "share") {
+      const url = location.origin + location.pathname + href("insights", scnParams(games), "race");
+      try {
+        if (navigator.share && matchMedia("(pointer: coarse)").matches) await navigator.share({ title: `${IDX.name}: my playoff scenario`, url });
+        else { await navigator.clipboard.writeText(url); b.textContent = "Link copied"; setTimeout(() => { b.textContent = "Share this scenario"; }, 2000); }
+      } catch { prompt("Copy this link:", url); }
+      return;
+    } else {
+      const [i, side] = v.split(":").map(Number);
+      if (games[i] && games[i].locked == null) SCN.picks[i] = side;
+    }
+    SCN.note = "";
+    scnUpdate();
+  });
+  document.addEventListener("change", e => {
+    if (!e.target.matches("[data-scn-adj]")) return;
+    const v = Number(e.target.value);
+    SCN.adj[e.target.dataset.scnAdj] = isFinite(v) ? v : 0;
+    const open = e.target.closest("details");
+    scnUpdate();
+    const d = document.querySelector(".scn-adjs"); if (open && d) d.open = true;
+  });
+
   const INSIGHTS = {
+    build() {
+      return section("Scenario builder", { short: "Pick the winner of every game left and see where everyone finishes.",
+        full: "Start from the favorites (ESPN's live win odds this week, the playoff odds' scoring model after that) and tap a team to make it the winner. Teams level on wins are ordered by total points: each team's projected final points, which you can adjust at the bottom. Games already decided this week are locked. Share sends a link that opens on the same picks." },
+        `<div class="scn" id="scn">${scnBody()}</div>`);
+    },
     rules() {
       const R = D.rulesLab;
       const RULE_INFO = {
@@ -4020,7 +4179,7 @@
             const c = clinchOf(t.id), lines = clinchLines(t.id, true), n = (c || {}).now || {};
             const status = n.bye === "in" ? "You've clinched a first-round bye." : n.po === "in" ? "You've clinched a playoff spot." : n.po === "out" ? "You've been eliminated from the playoffs." : "";
             const tie = tieRaceMine(t);
-            return status || lines.length || tie ? `<div class="me-fix prac"><span><b>Playoff picture:</b> ${[status].concat(lines.map(l => l.html), [tie]).filter(Boolean).join(" ")} <a class="wk-link" href="${href("standings")}">All scenarios ›</a></span></div>` : "";
+            return status || lines.length || tie ? `<div class="me-fix prac"><span><b>Playoff picture:</b> ${[status].concat(lines.map(l => l.html), [tie]).filter(Boolean).join(" ")} <a class="wk-link" href="${href("standings")}">All scenarios ›</a>${insightHas("build") ? ` <a class="wk-link" href="${href("insights", { at: "build" }, "race")}">Build your own ›</a>` : ""}</span></div>` : "";
           })()}`);
       }
     }
@@ -4300,6 +4459,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-24", [
+      ["Scenario builder", "Insights → Playoff race, Standings", "Pick the winner of every game left and watch the standings, seeds, byes and first round update, with ties going to projected points (adjustable). Share a scenario as a link.", "#/insights/race?at=build"],
       ["Season yearbook", "History → Yearbook", "A keepsake for every finished season: the champion, final standings, the bracket, the season's extremes and awards, its spots in the all-time record book, and a page per team. Save it as a PDF or print it.", "#/history/yearbook?season=2025"],
       ["Tiebreaker race", "Standings, My team", "Ties in the standings go to total points. How often the playoff and bye lines come down to points, who's usually in that tie, who wins it, and the points gap now and at projections.", "#/"],
     ]],
@@ -4474,6 +4634,7 @@
       ["winprob", "Win probability", "Matchups", "#/matchups", "ESPN's live chance each team wins its matchup, shown while the week is in progress.", []],
       ["bigplays", "Big plays", "Matchups → Big plays", "#/matchups/plays", "Touchdowns, 5+ point field goals, turnovers, big defensive plays and 30+ yard gains (50+ for a pass) by league players, caught from ESPN every minute during games, with the fantasy points that play was worth. The Season view adds them up by team and player since the feed started.", ["Team leaderboard"]],
       ["monday", "Monday-night math", "Matchups", "#/matchups", "Once a matchup is down to players in games that haven't started, what each side needs and a win chance from those players' own game logs.", []],
+      ["build", "Scenario builder", "Insights → Playoff race", "#/insights/race?at=build", "Pick a winner for every regular-season game left and see the final standings, seeds, byes and first round. It starts from the favorites (ESPN's live win odds this week, the playoff odds' scoring model after). Teams level on wins are ordered by projected final points, which can be adjusted. The picks are saved in the link, so a scenario can be shared.", ["Scenario builder"]],
       ["tierace", "Tiebreaker race", "Standings, My team", "#/", "Teams level on wins are separated by total points. From the playoff-odds simulations: how often a team ends level on wins with someone across the playoff (or bye) line (In a tie), how often it comes out ahead when that happens (Wins it), its projected final points, and the pairs that meet in that tie most often, with the gap now and at projections.", ["Tiebreaker race"]],
       ["clinch", "Clinched / eliminated", "Standings, My team", "#/", "Exact, from the remaining schedule: clinched only if no combination of results can push a team out of the playoff spots (or bye spots), eliminated only if none can get it in. Points tiebreakers are treated as unknown (against a team for clinching, for it for elimination). The week's scenarios are the fewest results that settle it, whatever happens after.", ["Playoff picture"]],
       ["conditions", "Game conditions", "Watch guide, player card, lineup check", "#/matchups/watch", "Forecast for the first 3 hours of each outdoor game (Open-Meteo): temperature, wind and gusts, chance and amount of rain or snow. Flags: Windy (15+ mph or gusts 25+; hurts kickers and passing), Rain (likely, 0.1+ inch), Snow (0.2+ inch), Frigid (25°F or colder), Hot (88°F+). Domes and roofed stadiums show Indoors.", []],
