@@ -250,6 +250,34 @@ gh secret set -f .env
 
 GitHub pauses scheduled workflows after 60 days with no commits; re-enable it from the Actions tab if that happens.
 
+### Pre-publish checks
+
+Each build checks itself before publishing; if a check fails, the job stops and the last good version stays live.
+
+- **Every build** (`check_site.py`, a second or two): every season's data file loads, has its teams (as many as the
+  league has), and has weeks once the season is under way; `index.js` and `status.json` load; `app.js` and `sw.js`
+  parse. It only fails on a clearly broken build.
+- **New code only** (`check_site.mjs`, about a minute): serves the built site locally, opens it in the runner's
+  Google Chrome (via `playwright-core`) with a team claimed, visits every page linked from the current season (plus
+  the main tabs of each past season), taps open a team card and a player card, then does the main pages again at
+  phone size. Any uncaught error or empty page fails it; a failed network call (the worker or ESPN briefly down) is
+  only reported. Calls to the live worker are passed through with the real site's origin. After a pass, a
+  fingerprint of the code files (`site/*.js|css|html|webmanifest` and the check itself, not the data) is saved in
+  the Actions cache, so the 5-minute data refreshes skip it until the code changes again. Run it locally with
+  `npm install --no-save playwright-core@1.48.2 && node check_site.mjs`.
+- If the browser check is wrongly blocking a good build: **Run workflow** with **Skip the browser check** ticked.
+
+### Watchdog (admin alerts)
+
+Every 5 minutes the worker (`watchdog`) checks that the site is still updating and pushes the league admins'
+alert devices (`ADMIN_MEMBERS`, alerts on in Settings) when: the last 2+ builds failed (naming the failed step, with
+a hint: ESPN cookies for the data step, the log for a check), the live data (`data/status.json`) is over 20 minutes
+old during games or 75 otherwise, ESPN rejects the worker's cookies (10 minutes in a row), GitHub rejects the
+worker's token, or the token expires within 7 days (and again within 1, from GitHub's
+`github-authentication-token-expiration` header). One alert per problem (repeated after 12 hours if it's still
+there), a "fixed" alert when it clears, quiet hours respected (held alerts go out after). State lives in KV
+`watchdog`, written only when a problem starts, alerts or clears.
+
 ## Live worker (minute-by-minute scores)
 
 `worker/` is a small Cloudflare Worker (free plan). `GET /live` returns the current week's matchups, lineups and

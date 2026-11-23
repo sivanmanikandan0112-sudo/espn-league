@@ -79,6 +79,8 @@ self.addEventListener("notificationclick", event => {
   event.notification.close();
   const target = new URL(event.notification.data && event.notification.data.url || "", self.registration.scope).toString();
   event.waitUntil((async () => {
+    // a link off the site (the admin watchdog's GitHub links) opens on its own, leaving the site where it was
+    if (!target.startsWith(self.registration.scope)) return self.clients.openWindow(target);
     const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     const open = wins.find(w => w.url.startsWith(self.registration.scope));
     if (open) { await open.focus(); return open.navigate ? open.navigate(target).catch(() => {}) : null; }

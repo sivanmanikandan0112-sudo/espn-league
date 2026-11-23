@@ -1498,7 +1498,10 @@ export default {
     // game-day alerts run on their own trigger, so their pushes don't share this run's request budget
     if (event.cron === ALERT_CRON) { ctx.waitUntil(runAlerts(env, event.scheduledTime).catch(e => console.log("alerts failed", String(e)))); return; }
     if (env.PICKEM) ctx.waitUntil(updateFeed(env).catch(e => console.log("feed update failed", String(e))));
-    ctx.waitUntil(maybeRebuild(env, new Date(event.scheduledTime)).catch(e => console.log("rebuild check failed", String(e))));
+    const at = new Date(event.scheduledTime);
+    ctx.waitUntil(maybeRebuild(env, at).catch(e => { console.log("rebuild check failed", String(e)); return {}; })
+      .then(r => at.getUTCMinutes() % 5 === 3 ? watchdog(env, at.getTime(), r || {}) : null)
+      .catch(e => console.log("watchdog failed", String(e))));
   },
 };
 
@@ -1570,7 +1573,7 @@ async function maybeRebuild(env, now) {
   const min = now.getUTCMinutes();
   const reasons = [];
   if (min % 30 === 0) reasons.push("every 30 minutes");
-  let games = false;
+  let games = false, espnError = null;
   // KV is only written when something actually changed, so this stays far inside the daily write allowance
   if (env.PICKEM) {
     const prev = await env.PICKEM.get("watch:fp", "json");
@@ -1583,7 +1586,7 @@ async function maybeRebuild(env, now) {
         await env.PICKEM.put("watch:fp", JSON.stringify(fp));
         if (prev) reasons.push(whatChanged(prev.parts, fp.parts));
       }
-    } catch (e) { console.log("league check failed; time-based rebuilds still run", String(e)); }
+    } catch (e) { espnError = String(e.message || e); console.log("league check failed; time-based rebuilds still run", String(e)); }
     if (parts) {
       try { games = await gamesOn(parts.yr, parts.week, now.getTime()); } catch (e) { console.log("games-on check failed", String(e)); }
     }
@@ -1597,6 +1600,92 @@ async function maybeRebuild(env, now) {
     if (age != null && age > (games ? 6.5 : 31.5)) reasons.push(`catch-up: last rebuild ${Math.round(age)} min ago`);
   }
   if (reasons.length) await dispatchRebuild(env, reasons.join(", ")).catch(e => console.log("GitHub dispatch failed", String(e)));
+  return { games, espnError };
+}
+
+// ---------------------------------------------------------------- watchdog (alerts for the league admins)
+// Every 5 minutes, a check that the site is still updating. The admins' alert devices (ADMIN_MEMBERS) get a push
+// when: the last 2+ site builds failed (with the step that failed: ESPN data, or a pre-publish check), the live
+// data is stale (over 20 minutes during NFL games, 75 otherwise), ESPN rejects the worker's login cookies, GitHub
+// rejects the worker's token, or that token expires within 7 days (again within 1). Each problem alerts once (again
+// after 12 hours if it's still there), and a "fixed" alert follows when it clears. Quiet hours are respected: an
+// alert held back is sent once they end. KV ("watchdog") is only written when a problem starts, alerts or clears.
+const WATCH_KEY = "watchdog";
+const RUN_FAILED = ["failure", "timed_out", "startup_failure"];
+const BUILD_HINT = {
+  "Pull league data from ESPN": "Usually the ESPN login cookies (ESPN_S2 / ESPN_SWID) have expired; update them in the GitHub repo's secrets.",
+  "Check the data and code (every build)": "The pre-publish check blocked it; the run's log says what broke.",
+  "Check the site in a browser (new code only)": "The browser check blocked new code; the run's log lists the pages. If the check itself is wrong, run the workflow by hand with \"Skip the browser check\" ticked.",
+};
+
+async function watchProblems(env, now, { games, espnError }) {
+  const found = {};
+  if (env.GITHUB_TOKEN) {
+    const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${env.GITHUB_WORKFLOW}/runs?per_page=10`, { headers: githubHeaders(env) });
+    if (r.status === 401) found.github = { wait: 10, title: "GitHub token rejected", body: "The live worker can't start site rebuilds. Make a new token and save it with: wrangler secret put GITHUB_TOKEN." };
+    else if (r.ok) {
+      const exp = r.headers.get("github-authentication-token-expiration");
+      const days = exp ? (Date.parse(exp.trim().replace(" UTC", "Z").replace(" ", "T")) - now) / 864e5 : Infinity;
+      if (days < 7) found.token = { level: days < 1 ? 1 : 7, title: "GitHub token expiring",
+        body: `The worker's GitHub token expires in ${days < 1 ? "under a day" : Math.floor(days) + " days"}. After that the site only rebuilds on GitHub's own schedule. Make a new one and run: wrangler secret put GITHUB_TOKEN.` };
+      const runs = ((await r.json()).workflow_runs || []).filter(x => x.status === "completed");
+      let n = 0;
+      while (n < runs.length && RUN_FAILED.includes(runs[n].conclusion)) n++;
+      if (n >= 2) {
+        let step = "";
+        try {
+          const j = await (await fetch(runs[0].jobs_url, { headers: githubHeaders(env) })).json();
+          step = (((j.jobs || [])[0] || {}).steps || []).find(x => x.conclusion === "failure")?.name || "";
+        } catch { /* the step name is a nicety */ }
+        found.builds = { title: "Site updates are failing", url: runs[0].html_url,
+          body: `The last ${n >= runs.length ? n + "+" : n} builds failed${step ? ` at "${step}"` : ""}. The live site stays on its last good version until one passes. ${BUILD_HINT[step] || "Tap to open the run's log."}` };
+      }
+    }
+  }
+  try {
+    const r = await fetch(`${env.SITE_DATA}status.json?t=${now}`);
+    if (r.ok) {
+      const age = (now - Date.parse((await r.json()).updated)) / 60e3, limit = games ? 20 : 75;
+      if (age > limit) found.stale = { title: "Site data is stale", body: `The live site's data is ${Math.round(age)} minutes old${games ? " with NFL games on" : ""}. Builds may be failing or not starting.` };
+    }
+  } catch (e) { console.log("watchdog: status check failed", String(e)); }
+  if (espnError && /login expired|ESPN 40[13]/.test(espnError))
+    found.espn = { wait: 10, title: "ESPN login rejected", body: "ESPN is refusing the worker's login cookies, so live scores and alerts stop. Update them with: wrangler secret put ESPN_S2 (and ESPN_SWID)." };
+  return found;
+}
+
+async function watchdog(env, now, ctx) {
+  if (!env.PICKEM) return;
+  const found = await watchProblems(env, now, ctx);
+  const prev = (await env.PICKEM.get(WATCH_KEY, "json")) || {};
+  const state = {}, send = [];
+  let changed = false;
+  for (const [k, p] of Object.entries(found)) {
+    const o = prev[k] || { since: now };
+    if (!prev[k]) changed = true;
+    const due = now - o.since >= (p.wait || 0) * 60e3 && (!o.alerted || (p.level || 0) !== (o.level || 0) || now - o.alerted >= 12 * 3600e3);
+    state[k] = { since: o.since, alerted: o.alerted || 0, level: o.alerted ? o.level || 0 : p.level || 0 };
+    if (due) send.push([k, { title: `League HQ: ${p.title}`, body: p.body, url: p.url || "#/", tag: `lhq-watch-${k}` }]);
+  }
+  for (const [k, o] of Object.entries(prev)) {
+    if (found[k]) continue;
+    changed = true;
+    if (o.alerted) send.push([null, { title: "League HQ: fixed", body: { builds: "Site builds are passing again.", stale: "The site's data is fresh again.",
+      espn: "ESPN is accepting the worker's login again.", github: "GitHub accepts the worker's token again.", token: "The worker's GitHub token is no longer about to expire." }[k] || "A problem cleared.", url: "#/", tag: `lhq-watch-${k}` }]);
+  }
+  if (send.length) {
+    const subs = await loadSubs(env), admin = admins(env);
+    const devices = Object.values(subs).filter(rec => admin.includes(rec.member) && !quietNow(rec, now));
+    for (const [k, msg] of send) {
+      let ok = false;
+      for (const rec of devices) {
+        try { if ((await sendPush(env, rec.sub, msg, { ttl: 6 * 3600 })) < 300) ok = true; } catch (e) { console.log("watchdog push failed", String(e)); }
+      }
+      console.log(`watchdog: ${msg.title}: ${msg.body} (${ok ? "sent" : "no admin device reachable"})`);
+      if (k && ok) { state[k].alerted = now; state[k].level = found[k].level || 0; changed = true; }
+    }
+  }
+  if (changed) await env.PICKEM.put(WATCH_KEY, JSON.stringify(state));
 }
 
 // ---------------------------------------------------------------- game-day alerts (Web Push)

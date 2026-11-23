@@ -9,7 +9,12 @@ on:
     - cron: "0 */3 * * *"          # otherwise every 3 hours (waivers, trades, lineup moves)
     - cron: "0 6-13 * * 3"         # Wednesday ~1-9 AM ET, hourly: ESPN closes the week (after Tuesday stat
                                    # corrections) and runs waivers overnight, so finished weeks land fast
-  workflow_dispatch: {}            # "Run workflow" button for an instant refresh
+  workflow_dispatch:               # "Run workflow" button for an instant refresh
+    inputs:
+      skip_browser_check:
+        description: "Skip the browser check (only if it's wrongly blocking a good build)"
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -35,12 +40,44 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The browser check runs once per version of the site's code: a fingerprint of the code files (not the data)
+      # is remembered after a pass, so the 5-minute data refreshes skip it.
+      - id: code
+        name: Fingerprint the site's code
+        run: echo "key=site-check-${{ hashFiles('site/*.js', 'site/*.css', 'site/*.html', 'site/*.webmanifest', 'check_site.mjs') }}" >> "$GITHUB_OUTPUT"
+
+      - id: checked
+        uses: actions/cache/restore@v4
+        with:
+          path: .site-check-ok
+          key: ${{ steps.code.outputs.key }}
+
       - name: Pull league data from ESPN
         env:
           ESPN_LEAGUE_ID: ${{ secrets.ESPN_LEAGUE_ID }}
           ESPN_S2: ${{ secrets.ESPN_S2 }}
           ESPN_SWID: ${{ secrets.ESPN_SWID }}
         run: python3 build.py
+
+      # If either check fails, the job stops here and the last good version stays live.
+      - name: Check the data and code (every build)
+        run: python3 check_site.py
+
+      - name: Check the site in a browser (new code only)
+        if: steps.checked.outputs.cache-hit != 'true' && !inputs.skip_browser_check
+        # it can't install its browser library = a build-machine problem: warn and publish, check again next build
+        run: |
+          if ! npm install --no-save --no-fund --no-audit playwright-core@1.48.2; then
+            echo "::warning::Browser check skipped: couldn't install playwright-core"; exit 0
+          fi
+          node check_site.mjs
+
+      # only after a real pass (check_site.mjs writes the marker)
+      - if: steps.checked.outputs.cache-hit != 'true' && hashFiles('.site-check-ok') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .site-check-ok
+          key: ${{ steps.code.outputs.key }}
 
       - name: Stamp this deploy's version on the code files
         # index.html loads style.css/app.js with ?v=<commit>, so browsers fetch new code right away,

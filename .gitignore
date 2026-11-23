@@ -8,3 +8,6 @@ __pycache__/
 worker/node_modules/
 worker/.wrangler/
 worker/.dev.vars
+node_modules/
+package-lock.json
+.site-check-ok

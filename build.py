@@ -1452,6 +1452,9 @@ def main():
         f.write("window.LEAGUE_INDEX=")
         json.dump(index, f, separators=(",", ":"))
         f.write(";\n")
+    # tiny file the worker's watchdog reads to see how fresh the live site is
+    with open(os.path.join(DATA_DIR, "status.json"), "w") as f:
+        json.dump({"updated": index["updated"], "build": index["build"]}, f)
     print("Wrote data/index.js: seasons %s, %d members all-time" % (seasons, len(index["history"]["members"])))
 
 
