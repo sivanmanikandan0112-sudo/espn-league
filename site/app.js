@@ -3123,7 +3123,7 @@
   });
 
   // ---------------------------------------------------------------- history
-  const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Tale of the tape"], ["rivalries", "Rivalries"], ["records", "Record book"], ["badges", "Badges"], ["players", "Player history"]];
+  const HISTORY_TABS = [["overview", "Champions & standings"], ["h2h", "Tale of the tape"], ["rivalries", "Rivalries"], ["records", "Record book"], ["badges", "Badges"], ["players", "Player history"], ["yearbook", "Yearbook"]];
   const BADGE_ICON = { champ: "🏆", runner: "🥈", seed1: "👑", pfking: "💰", comeback: "🔄", streak: "🔥", weektop: "⭐", seasonhigh: "🚀",
     club200: "💯", perfect: "🎯", blowout: "💥", nailbiter: "😅", heartbreak: "💔", robbed: "😤", stolen: "🍀", beatall: "⚔️", dud: "🧊", basement: "🪦" };
   // one member's badges: [{def, list: [[badge, season, week, game, detail]...] newest first}] in the badge order
@@ -3159,7 +3159,137 @@
     return `<a class="when" href="#/matchups?${p}" title="Open this box score"><span>${r.season} · ${r.playoff ? "Playoffs" : "Wk"} ${r.week}</span>${r.game != null ? '<span class="go">Box score →</span>' : ""}</a>`;
   };
 
+  // ---------------------------------------------------------------- season yearbook (History → Yearbook)
+  // A keepsake for a finished season, one page per section when printed (Save as PDF): the champion, final standings,
+  // the playoff bracket, the season's extremes and awards, its entries in the all-time record book, then a page per
+  // team (finish, best and worst week, MVP, best draft pick, trades, badges). All from data the site already has.
+  const ybLink = y => "#/history/yearbook" + (y === IDX.current ? "" : "?season=" + y);
+  function yearbookHtml(H) {
+    const RS = L.regularSeasonWeeks, f2 = n => Number(n || 0).toFixed(2);
+    const order = D.teams.slice().sort((a, b) => (a.finalRank || 99) - (b.finalRank || 99));
+    const champ = order[0], runner = order[1];
+    const tn = id => esc(tname(id));
+    const reg = D.weeks.filter(w => w.week <= RS && w.final);
+    const pw = D.weeks.filter(w => w.week > RS && w.games.some(g => g.tier === "WINNERS_BRACKET"));
+    // regular season plus the playoff bracket (not the consolation games)
+    const sides = reg.concat(pw).flatMap(w => w.games.filter(g => g.sides.length === 2 && (w.week <= RS || g.tier === "WINNERS_BRACKET"))
+      .flatMap(g => g.sides.map((sd, i) => ({ w: w.week, sd, op: g.sides[1 - i] }))));
+    const wk = n => n > RS ? `week ${n} (playoffs)` : `week ${n}`;
+    const final = pw.length ? pw[pw.length - 1].games.find(g => g.tier === "WINNERS_BRACKET" && g.sides.length === 2 && g.sides.some(x => x.team === champ.id)) : null;
+    const fs_ = final ? final.sides.slice().sort((a, b) => b.pts - a.pts) : null;
+    const page = (cls, body) => `<section class="yb-page ${cls}">${body}</section>`;
+    const by = (arr, f) => arr.reduce((m, x) => (m == null || f(x) > f(m) ? x : m), null);
+
+    // cover
+    const cover = page("yb-cover", `<p class="yb-kicker">${esc(IDX.name)} · ${L.season} yearbook</p>
+      <div class="yb-champ">${logoImg(champ.logo, champ.name, "yb-logo")}<div><p class="yb-label">Champion</p><h2>${esc(champ.name)}</h2>
+      <p class="muted">${esc(champ.manager)} · ${record(champ)}${champ.seed ? ` · ${ordinal(champ.seed)} seed` : ""}</p></div></div>
+      ${fs_ ? `<p class="yb-final">Beat <b>${esc(tname(fs_[1].team))}</b> ${f2(fs_[0].pts)}–${f2(fs_[1].pts)} in the final.</p>` : runner ? `<p class="yb-final">Runner-up: <b>${esc(runner.name)}</b></p>` : ""}
+      <p class="muted">${L.size} teams · ${RS}-week regular season · ${L.playoffTeams} made the playoffs</p>`);
+
+    // standings
+    const standings = page("", `<h3 class="yb-h">Final standings</h3>${table([
+      { label: "Finish", num: 1, cell: t => `<b>${finishText(t.finalRank)}</b>` },
+      { label: "Team", cell: teamCell },
+      { label: "Record", num: 1, cell: t => record(t) },
+      { label: "Points for", num: 1, cell: t => fmt(t.pf) },
+      { label: "Points against", num: 1, cell: t => fmt(t.pa) },
+      { label: "Seed", num: 1, cell: t => t.seed ? "#" + t.seed : "—" },
+    ], order)}`);
+
+    // playoffs
+    const roundName = (i, n) => i === n - 1 ? "Championship" : i === n - 2 ? "Semifinals" : i === 0 ? "First round" : "Round " + (i + 1);
+    const bracket = pw.length ? page("", `<h3 class="yb-h">Playoffs</h3>${pw.map((w, i) => {
+      const gs = w.games.filter(g => g.tier === "WINNERS_BRACKET");
+      return `<div class="yb-round"><p class="yb-label">${roundName(i, pw.length)} · week ${w.week}</p>${gs.map(g => {
+        if (g.sides.length < 2) return `<p class="yb-game muted">${tn(g.sides[0].team)}: bye</p>`;
+        const [a, b] = g.sides.slice().sort((x, y) => y.pts - x.pts);
+        return `<p class="yb-game"><b>${tn(a.team)}</b> ${f2(a.pts)} – ${f2(b.pts)} ${tn(b.team)}</p>`;
+      }).join("")}</div>`;
+    }).join("")}`) : "";
+
+    // the season in numbers + awards
+    const hi = by(sides, x => x.sd.pts), lo = by(sides, x => -x.sd.pts);
+    const blow = by(sides, x => x.sd.pts - x.op.pts), close = by(sides.filter(x => x.sd.pts > x.op.pts), x => -(x.sd.pts - x.op.pts));
+    const pgs = sides.flatMap(x => x.sd.lineup.filter(p => !["BE", "IR"].includes(p.slot)).map(p => ({ p, w: x.w, team: x.sd.team })));
+    const topP = by(pgs, x => x.p.pts || 0);
+    const facts = [
+      hi && ["Highest score", `${f2(hi.sd.pts)}`, `${tn(hi.sd.team)}, ${wk(hi.w)}`],
+      lo && ["Lowest score", `${f2(lo.sd.pts)}`, `${tn(lo.sd.team)}, ${wk(lo.w)}`],
+      blow && ["Biggest blowout", `${(blow.sd.pts - blow.op.pts).toFixed(2)}`, `${tn(blow.sd.team)} over ${tn(blow.op.team)}, ${wk(blow.w)}`],
+      close && ["Closest game", `${(close.sd.pts - close.op.pts).toFixed(2)}`, `${tn(close.sd.team)} over ${tn(close.op.team)}, ${wk(close.w)}`],
+      topP && ["Best player week", `${f2(topP.p.pts)}`, `${esc(topP.p.name)} (${esc(topP.p.pos)}) for ${tn(topP.team)}, ${wk(topP.w)}`],
+      ["Trades", String((D.trades || []).length), "made during the season"],
+    ].filter(Boolean);
+    const tw = (D.trades || []).map(tr => {
+      if (!tr.sides || tr.sides.length !== 2) return null;
+      const [a, b] = tr.sides.slice().sort((x, y) => (y.started || 0) - (x.started || 0));
+      return { tr, a, b, edge: (a.started || 0) - (b.started || 0) };
+    }).filter(Boolean);
+    const bestTrade = by(tw, x => x.edge);
+    const D_ = D.draft || {};
+    const draftAce = D_.teams ? by(Object.entries(D_.teams), ([, v]) => v.value || 0) : null;
+    const steal = D_.picks ? by(D_.picks.filter(p => p.value != null), p => p.value) : null;
+    const awards = [
+      ["Most points", by(order, t => t.pf), t => `${fmt(t.pf)} points for`],
+      ["Luckiest", order.some(t => t.luck != null) ? by(order, t => t.luck || 0) : null, t => `${signed(t.luck)} wins of luck`],
+      ["Unluckiest", order.some(t => t.luck != null) ? by(order, t => -(t.luck || 0)) : null, t => `${signed(t.luck)} wins of luck`],
+      ["Best lineups", order.some(t => t.efficiency != null) ? by(order, t => t.efficiency || 0) : null, t => `${t.efficiency}% lineup efficiency`],
+      ["Best draft", draftAce ? teamById[draftAce[0]] : null, () => `grade ${esc(draftAce[1].grade || "")}, ${draftAce[1].value > 0 ? "+" : ""}${Math.round(draftAce[1].value)} points of value`],
+      ["Steal of the draft", steal ? teamById[steal.team] : null, () => `${esc(steal.name)}, round ${steal.round} pick ${steal.roundPick} (${Math.round(steal.pts)} pts)`],
+      ["Trade of the year", bestTrade && bestTrade.edge > 0 ? teamById[bestTrade.a.team] : null, () => `got ${bestTrade.a.gets.map(g => esc(g.name)).join(", ")} (${Math.round(bestTrade.a.started || 0)} started points) from ${tn(bestTrade.b.team)}`],
+    ].filter(a => a[1]);
+    const numbers = page("", `<h3 class="yb-h">The season in numbers</h3><div class="yb-facts">${facts.map(([k, v, d]) => `<div class="yb-fact"><p class="yb-label">${k}</p><p class="yb-v">${v}</p><p class="muted">${d}</p></div>`).join("")}</div>
+      <h3 class="yb-h">Awards</h3><div class="yb-awards">${awards.map(([k, t, d]) => `<div class="yb-award">${logo(t)}<div><p class="yb-label">${k}</p><p><b>${esc(t.name)}</b></p><p class="muted">${d(t)}</p></div></div>`).join("")}</div>`);
+
+    // the all-time record book entries set this season
+    const REC = [["highScores", "highest scores", r => `${esc(r.team)}, ${f2(r.pts)}`], ["lowScores", "lowest scores", r => `${esc(r.team)}, ${f2(r.pts)}`],
+      ["blowouts", "biggest blowouts", r => `${esc(r.winner.team)} over ${esc(r.loser.team)}, by ${(r.winPts - r.losePts).toFixed(2)}`],
+      ["closest", "closest games", r => `${esc(r.winner.team)} over ${esc(r.loser.team)}, by ${(r.winPts - r.losePts).toFixed(2)}`],
+      ["shootouts", "biggest shootouts", r => `${esc(r.winner.team)} ${f2(r.winPts)}, ${esc(r.loser.team)} ${f2(r.losePts)}`],
+      ["playerGames", "best player games", r => `${esc(r.name)} (${esc(r.pos)}) for ${esc(r.team)}, ${f2(r.pts)}`],
+      ["benchGames", "biggest bench games", r => `${esc(r.name)} (${esc(r.pos)}) on ${esc(r.team)}'s bench, ${f2(r.pts)}`]];
+    const recs = REC.flatMap(([k, label, txt]) => ((H.records || {})[k] || []).map((r, i) => [i, r]).filter(([, r]) => r.season === L.season)
+      .map(([i, r]) => `<li><b>#${i + 1} all-time</b> in ${label}: ${txt(r)} <span class="muted">(week ${r.week}${r.playoff ? ", playoffs" : ""})</span></li>`));
+    const book = recs.length ? page("", `<h3 class="yb-h">Into the record book</h3><ul class="yb-recs">${recs.join("")}</ul>`) : "";
+
+    // a page per team
+    const B = (H.badges || {}), defs = Object.fromEntries((B.defs || []).map(d => [d.id, d]));
+    const teamPages = order.map(t => {
+      const mine = sides.filter(x => x.sd.team === t.id);
+      const best = by(mine, x => x.sd.pts), worst = by(mine, x => -x.sd.pts);
+      const tot = {};
+      D.weeks.filter(w => w.final).forEach(w => w.games.forEach(g => g.sides.filter(x => x.team === t.id).forEach(x => x.lineup
+        .filter(p => !["BE", "IR"].includes(p.slot)).forEach(p => { const o = tot[p.id] || (tot[p.id] = { name: p.name, pos: p.pos, pts: 0 }); o.pts += p.pts || 0; }))));
+      const mvp = by(Object.values(tot), x => x.pts);
+      const pick = D_.picks ? by(D_.picks.filter(p => p.team === t.id && p.value != null), p => p.value) : null;
+      const trades = (D.trades || []).filter(tr => (tr.sides || []).some(x => x.team === t.id)).map(tr => {
+        const me = tr.sides.find(x => x.team === t.id), them = tr.sides.find(x => x.team !== t.id);
+        return `<li>Got ${me.gets.map(g => esc(g.name)).join(", ")} from ${tn(them.team)} for ${them.gets.map(g => esc(g.name)).join(", ")} <span class="muted">(${Math.round(me.started || 0)} vs. ${Math.round(them.started || 0)} started points)</span></li>`;
+      });
+      const owner = (t.owners || [])[0];
+      const badges = ((B.earned || {})[owner] || []).filter(e => e[1] === L.season && defs[e[0]]);
+      const rows = [
+        best && ["Best week", `${f2(best.sd.pts)} in ${wk(best.w)}`], worst && ["Worst week", `${f2(worst.sd.pts)} in ${wk(worst.w)}`],
+        mvp && ["MVP", `${esc(mvp.name)} (${esc(mvp.pos)}), ${f2(mvp.pts)} points as a starter`],
+        pick && ["Best draft pick", `${esc(pick.name)}, round ${pick.round} (${pick.value > 0 ? "+" : ""}${Math.round(pick.value)} vs. expected)`],
+        t.luck != null && ["Luck", `${signed(t.luck)} wins`], t.efficiency != null && ["Lineup efficiency", `${t.efficiency}%`],
+      ].filter(Boolean);
+      return page("yb-team", `<div class="yb-thead">${logo(t)}<div><p class="yb-label">${finishText(t.finalRank)}${t.seed ? ` · ${ordinal(t.seed)} seed` : ""}</p><h3>${esc(t.name)}</h3><p class="muted">${esc(t.manager)} · ${record(t)} · ${fmt(t.pf)} points for</p></div></div>
+        <dl class="yb-dl">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+        ${trades.length ? `<p class="yb-label">Trades</p><ul class="yb-list">${trades.join("")}</ul>` : ""}
+        ${badges.length ? `<p class="yb-label">Badges</p><p class="yb-badges">${badges.map(e => `<span title="${esc(defs[e[0]].desc)}">${BADGE_ICON[e[0]] || ""} ${esc(defs[e[0]].name)}${e[2] != null ? ` <span class="muted">wk ${e[2]}</span>` : ""}</span>`).join("")}</p>` : ""}`);
+    });
+    return `<div class="yearbook">${cover}${standings}${bracket}${numbers}${book}${teamPages.join("")}</div>`;
+  }
+
   const HISTORY = {
+    yearbook(H) {
+      const yrs = IDX.seasons.filter(y => y !== IDX.current || (state.season === IDX.current && L.over)).sort((a, b) => b - a);
+      const picker = yrs.length ? `<nav class="yb-pick" aria-label="Yearbook seasons">${yrs.map(y => `<a href="${ybLink(y)}"${y === state.season ? ' class="active" aria-current="page"' : ""}>${y}</a>`).join("")}</nav>` : "";
+      if (!L.over) return `<div class="panel yb-soon"><p>The ${L.season} yearbook comes out the day the season ends.${yrs.length ? " Past seasons:" : ""}</p>${picker}</div>`;
+      return `<div class="yb-bar">${picker}<button class="btn" id="yb-print" type="button">Save as PDF / print</button></div>${yearbookHtml(H)}`;
+    },
     players() {
       const pid = state.params.get("player") || "";
       setTimeout(() => fillPlayerHistory(main.querySelector(".ph-box"), pid), 0);
@@ -4170,6 +4300,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-24", [
+      ["Season yearbook", "History → Yearbook", "A keepsake for every finished season: the champion, final standings, the bracket, the season's extremes and awards, its spots in the all-time record book, and a page per team. Save it as a PDF or print it.", "#/history/yearbook?season=2025"],
       ["Tiebreaker race", "Standings, My team", "Ties in the standings go to total points. How often the playoff and bye lines come down to points, who's usually in that tie, who wins it, and the points gap now and at projections.", "#/"],
     ]],
     ["2026-11-23", [
@@ -4756,6 +4887,7 @@
       renderKeepScroll(renderStandings);
       return;
     }
+    if (e.target.closest("#yb-print")) { window.print(); return; }
     if (e.target.closest("#redraft-more")) { state.redraftRounds = (state.redraftRounds || 2) + 3; renderKeepScroll(renderInsights); return; }
     if (e.target.closest("#expand-all")) {
       const allOpen = D.teams.every(t => state.open.has(t.id));

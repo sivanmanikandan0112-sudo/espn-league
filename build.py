@@ -1399,6 +1399,48 @@ def rivalries(h2h, top=6):
 
 # ---------------------------------------------------------------- main
 
+def audit_season(data):
+    """Numbers audit: rebuild each team's record, points for and against from the season's finished regular-season
+    box scores and compare with ESPN's official standings; also check every box score equals the sum of its starters.
+    Returns plain-language mismatches (empty = all good). Never blocks a build; the worker's watchdog alerts on the
+    current season's."""
+    lg, issues = data["league"], []
+    names = {t["id"]: t["name"] for t in data["teams"]}
+    rec = {t["id"]: [0, 0, 0, 0.0, 0.0] for t in data["teams"]}
+    for w in data["weeks"]:
+        if not w.get("final") or w["week"] > lg["regularSeasonWeeks"]:
+            continue
+        for g in w["games"]:
+            sides = g["sides"]
+            for sd in sides:
+                starters = sum(p.get("pts") or 0 for p in sd.get("lineup", []) if p.get("slot") not in ("BE", "IR"))
+                if sd.get("lineup") and abs(starters - sd["pts"]) > 0.05:
+                    issues.append("Week %d: %s's box score says %.2f but its starters add up to %.2f"
+                                  % (w["week"], names.get(sd["team"], sd["team"]), sd["pts"], starters))
+            if len(sides) != 2 or sides[0]["team"] not in rec or sides[1]["team"] not in rec:
+                continue
+            (h, a) = sides
+            rec[h["team"]][3] += h["pts"]; rec[h["team"]][4] += a["pts"]
+            rec[a["team"]][3] += a["pts"]; rec[a["team"]][4] += h["pts"]
+            win = g.get("winner")
+            if win == "TIE":
+                rec[h["team"]][2] += 1; rec[a["team"]][2] += 1
+                continue
+            w_id = h["team"] if win == "HOME" else a["team"] if win == "AWAY" else (h["team"] if h["pts"] > a["pts"] else a["team"])
+            l_id = a["team"] if w_id == h["team"] else h["team"]
+            rec[w_id][0] += 1; rec[l_id][1] += 1
+    for t in data["teams"]:
+        w_, l_, t_, pf, pa = rec[t["id"]]
+        if (w_, l_, t_) != (t.get("wins", 0), t.get("losses", 0), t.get("ties", 0)):
+            issues.append("%s: the box scores give a %d-%d%s record, ESPN says %d-%d%s" % (
+                t["name"], w_, l_, "-%d" % t_ if t_ else "", t.get("wins", 0), t.get("losses", 0), "-%d" % t["ties"] if t.get("ties") else ""))
+        if abs(pf - (t.get("pf") or 0)) > 0.1:
+            issues.append("%s: points for add up to %.2f, ESPN says %.2f" % (t["name"], pf, t.get("pf") or 0))
+        if abs(pa - (t.get("pa") or 0)) > 0.1:
+            issues.append("%s: points against add up to %.2f, ESPN says %.2f" % (t["name"], pa, t.get("pa") or 0))
+    return issues
+
+
 def write_js(path, var, key, obj):
     with open(path, "w") as f:
         f.write("window.%s=window.%s||{};window.%s[%s]=" % (var, var, var, json.dumps(key)))
@@ -1452,9 +1494,20 @@ def main():
         f.write("window.LEAGUE_INDEX=")
         json.dump(index, f, separators=(",", ":"))
         f.write(";\n")
-    # tiny file the worker's watchdog reads to see how fresh the live site is
+    # numbers audit (every season in the log; the current one also goes to the watchdog)
+    audit = []
+    for d in built:
+        try:
+            found = audit_season(d)
+        except Exception as e:  # noqa: BLE001 - an audit bug must never break the build
+            print("  numbers audit %s: skipped (%s)" % (d["league"]["season"], e))
+            continue
+        print("  numbers audit %s: %s" % (d["league"]["season"], "; ".join(found) if found else "all match ESPN"))
+        if d is current:
+            audit = found
+    # tiny file the worker's watchdog reads: how fresh the live site is, and the current season's audit
     with open(os.path.join(DATA_DIR, "status.json"), "w") as f:
-        json.dump({"updated": index["updated"], "build": index["build"]}, f)
+        json.dump({"updated": index["updated"], "build": index["build"], "audit": audit[:10]}, f)
     print("Wrote data/index.js: seasons %s, %d members all-time" % (seasons, len(index["history"]["members"])))
 
 

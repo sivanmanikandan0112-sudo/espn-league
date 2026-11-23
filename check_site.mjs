@@ -3,10 +3,13 @@
 // few taps (a team card, a player card). Fails (exit 1) if any page throws an error or renders nothing, so the
 // previous good version stays live. Runs in GitHub Actions only when the site's code changed since the last pass.
 //
-//   npm install --no-save playwright-core@1.48.2 && node check_site.mjs [site_dir]
+//   npm install --no-save playwright-core@1.48.2 axe-core@4.10.2 && node check_site.mjs [site_dir]
+// After the pass/fail part it prints a report that never blocks: an accessibility scan of the main pages (axe-core)
+// and a cold first load on a throttled phone (also written to the GitHub run's summary page).
 // Uses the installed Google Chrome (CHROME_PATH to point at another one).
 import { chromium } from "playwright-core";
 import { createServer } from "node:http";
+import { gzipSync } from "node:zlib";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,8 +24,10 @@ const server = createServer(async (req, res) => {
   if (path.endsWith("/")) path += "index.html";
   try {
     const body = await readFile(join(SITE, path));
-    res.writeHead(200, { "Content-Type": TYPES[extname(path)] || "application/octet-stream", "Cache-Control": "no-store" });
-    res.end(body);
+    const type = TYPES[extname(path)] || "application/octet-stream";
+    const zip = /gzip/.test(req.headers["accept-encoding"] || "") && /text|javascript|json|svg|manifest/.test(type);
+    res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store", ...(zip ? { "Content-Encoding": "gzip" } : {}) });
+    res.end(zip ? gzipSync(body) : body);
   } catch { res.writeHead(404); res.end("not found"); }
 });
 await new Promise(r => server.listen(0, "127.0.0.1", r));
@@ -82,7 +87,7 @@ async function run({ viewport, claim, label, cap }) {
   };
   const queue = ["#/"], seen = new Set([key("#/")]);
   for (const s of idx.seasons.filter(s => s !== idx.current)) {
-    for (const t of ["", "matchups", "insights", "trades", "history", "myteam"]) {
+    for (const t of ["", "matchups", "insights", "trades", "history", "history/yearbook", "myteam"]) {
       const h = `#/${t}?season=${s}`;
       if (!seen.has(key(h))) { seen.add(key(h)); queue.push(h); }
     }
@@ -125,6 +130,61 @@ try {
 } catch (e) {
   problems.push(`check crashed: ${String(e.message || e).split("\n")[0]}`);
 }
+// ---- report only (never blocks): accessibility of the main pages, and a cold first load on a slow phone
+const report = [];
+const MAIN_PAGES = ["#/", "#/myteam", "#/matchups", "#/matchups/watch", "#/games", "#/insights", "#/trades", "#/history", "#/settings", "#/whatsnew", "#/glossary"];
+try {
+  const axeSrc = await readFile(join(dirname(fileURLToPath(import.meta.url)), "node_modules/axe-core/axe.min.js"), "utf8");
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
+  const page = await ctx.newPage();
+  await page.goto(origin + "/");
+  await page.waitForFunction(() => document.querySelector("#main") && document.querySelector("#main").children.length);
+  await page.addScriptTag({ content: axeSrc });
+  const byRule = new Map();
+  for (const h of MAIN_PAGES) {
+    await page.evaluate(x => { location.hash = x; }, h);
+    await page.waitForTimeout(400);
+    const v = await page.evaluate(async () => (await window.axe.run(document, { resultTypes: ["violations"] })).violations
+      .map(x => ({ id: x.id, impact: x.impact, help: x.help, n: x.nodes.length, eg: (x.nodes[0] || {}).target })));
+    for (const x of v) {
+      const r = byRule.get(x.id) || { ...x, n: 0, pages: [] };
+      r.n += x.n; r.pages.push(h); byRule.set(x.id, r);
+    }
+  }
+  await ctx.close();
+  const order = { critical: 0, serious: 1, moderate: 2, minor: 3 };
+  const rules = [...byRule.values()].sort((a, b) => (order[a.impact] ?? 4) - (order[b.impact] ?? 4) || b.n - a.n);
+  report.push(`### Accessibility (${MAIN_PAGES.length} main pages, axe-core)`, "");
+  if (!rules.length) report.push("No issues found.");
+  else {
+    report.push(`${rules.length} kinds of issue, ${rules.reduce((x, r) => x + r.n, 0)} spots in all.`, "", "| Impact | Issue | Spots | Pages | Example |", "|---|---|---|---|---|");
+    for (const r of rules) report.push(`| ${r.impact || ""} | ${r.help} (${r.id}) | ${r.n} | ${r.pages.length} | \`${String((r.eg || [])[0] || "").slice(0, 60).replace(/\|/g, "\\|")}\` |`);
+  }
+} catch (e) { report.push(`Accessibility scan skipped: ${String(e.message || e).split("\n")[0]}`); }
+
+try {
+  // Chrome's "slow 4G": 150 ms round trips, 1.6 Mbps down, plus a 4x slower CPU (a mid-range phone); empty cache
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, serviceWorkers: "block", isMobile: true });
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send("Network.enable");
+  await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 150, downloadThroughput: 1.6e6 / 8, uploadThroughput: 750e3 / 8 });
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+  let bytes = 0, reqs = 0;
+  cdp.on("Network.loadingFinished", e => { bytes += e.encodedDataLength || 0; reqs++; });
+  const t0 = Date.now();
+  await page.goto(origin + "/", { timeout: 60000 });
+  await page.waitForFunction(() => { const m = document.querySelector("#main"); return m && m.innerText.trim().length > 20; }, null, { timeout: 60000 });
+  const first = (Date.now() - t0) / 1000;
+  const kb = Math.round(bytes / 1024);
+  report.push("", "### Speed (cold first load, slow 4G, 4x slower CPU)", "", `Standings readable after **${first.toFixed(1)} s**, ${kb} KB over ${reqs} requests (local copy, gzipped like GitHub Pages; the live worker's calls not included).`);
+  if (first > 10) console.log(`::warning::Slow first load: ${first.toFixed(1)} s on slow 4G`);
+  await ctx.close();
+} catch (e) { report.push("", `Speed test skipped: ${String(e.message || e).split("\n")[0]}`); }
+
+console.log("\n" + report.join("\n") + "\n");
+if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, "## Site check report\n\n" + report.join("\n") + "\n", { flag: "a" });
+
 await browser.close();
 server.close();
 

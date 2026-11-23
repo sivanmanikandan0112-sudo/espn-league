@@ -1623,3 +1623,55 @@ body.has-ticker .tour-pill { bottom: calc(50px + env(safe-area-inset-bottom)); }
 .tr-cut + .tr-cut { margin-top: 22px; }
 .tr-h { font-size: 15px; font-weight: 600; margin: 0 0 8px; line-height: 1.4; }
 .tr-pair { margin: 8px 0 0; font-size: 13.5px; line-height: 1.5; padding-left: 10px; border-left: 3px solid var(--line); }
+
+/* Season yearbook (History → Yearbook) */
+.yb-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0 16px; }
+.yb-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.yb-pick a { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; color: var(--ink-2); font-weight: 600; font-size: 13px; }
+.yb-pick a.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.yb-soon .yb-pick { margin-top: 10px; }
+.yb-bar .btn { border: 0; border-radius: 10px; padding: 9px 14px; background: var(--accent); color: #fff; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; }
+.yb-page { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+.yb-kicker, .yb-label { margin: 0; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+.yb-cover { text-align: center; padding: 34px 20px; }
+.yb-champ { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: 22px 0 12px; }
+.yb-champ h2 { margin: 2px 0 4px; font-size: clamp(24px, 6vw, 36px); line-height: 1.15; overflow-wrap: anywhere; }
+.yb-cover .yb-logo, .yb-cover .logo { width: 96px; height: 96px; border-radius: 50%; }
+.yb-final { font-size: 16px; margin: 4px 0 10px; }
+.yb-h { margin: 0 0 12px; font-size: 17px; }
+.yb-page .yb-h:not(:first-child) { margin-top: 22px; }
+.yb-round + .yb-round { margin-top: 14px; }
+.yb-game { margin: 4px 0 0; font-size: 14px; }
+.yb-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.yb-fact { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.yb-fact .yb-v { margin: 2px 0; font-size: 22px; font-weight: 800; }
+.yb-fact .muted, .yb-award .muted { margin: 0; font-size: 13px; }
+.yb-awards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.yb-award { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.yb-award p { margin: 0; overflow-wrap: anywhere; }
+.yb-recs, .yb-list { margin: 6px 0 0; padding-left: 18px; line-height: 1.55; font-size: 14px; }
+.yb-thead { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.yb-thead h3 { margin: 2px 0; font-size: 20px; overflow-wrap: anywhere; }
+.yb-thead p { margin: 0; }
+.yb-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0 0 12px; font-size: 14px; }
+.yb-dl dt { color: var(--ink-2); font-weight: 600; }
+.yb-dl dd { margin: 0; }
+.yb-team .yb-list + .yb-label, .yb-team .yb-dl + .yb-label { margin-top: 14px; }
+.yb-badges { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13.5px; margin: 6px 0 0; }
+@media (max-width: 560px) {
+  .yb-page { padding: 16px; }
+  .yb-dl { grid-template-columns: 1fr; gap: 0; }
+  .yb-dl dd { margin-bottom: 8px; }
+}
+/* printed / saved as PDF: just the yearbook, one section per page, ink on white */
+@media print {
+  body:has(.yearbook) .masthead, body:has(.yearbook) .tabs, body:has(.yearbook) .season-pick, body:has(.yearbook) .bottom-nav,
+  body:has(.yearbook) .ticker, body:has(.yearbook) .footer, body:has(.yearbook) .subnav, body:has(.yearbook) .yb-bar,
+  body:has(.yearbook) #banner, body:has(.yearbook) main > .section-head, body:has(.yearbook) .skip { display: none !important; }
+  body:has(.yearbook) { background: #fff !important; color: #111 !important; padding: 0 !important; }
+  .yearbook { --surface: #fff; --surface-2: #f4f4f4; --ink: #111; --ink-2: #555; --line: #ccc; --bg: #fff; color: #111; }
+  .yb-page { border: 0; border-radius: 0; padding: 0; margin: 0; break-after: page; }
+  .yb-page:last-child { break-after: auto; }
+  .yb-cover { padding-top: 30vh; }
+  .yb-fact, .yb-award, tr, li { break-inside: avoid; }
+}

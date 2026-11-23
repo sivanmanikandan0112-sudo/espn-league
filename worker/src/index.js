@@ -1607,7 +1607,8 @@ async function maybeRebuild(env, now) {
 // Every 5 minutes, a check that the site is still updating. The admins' alert devices (ADMIN_MEMBERS) get a push
 // when: the last 2+ site builds failed (with the step that failed: ESPN data, or a pre-publish check), the live
 // data is stale (over 20 minutes during NFL games, 75 otherwise), ESPN rejects the worker's login cookies, GitHub
-// rejects the worker's token, or that token expires within 7 days (again within 1). Each problem alerts once (again
+// rejects the worker's token, that token expires within 7 days (again within 1), or the build's numbers audit finds
+// the site's records or points disagreeing with ESPN. Each problem alerts once (again
 // after 12 hours if it's still there), and a "fixed" alert follows when it clears. Quiet hours are respected: an
 // alert held back is sent once they end. KV ("watchdog") is only written when a problem starts, alerts or clears.
 const WATCH_KEY = "watchdog";
@@ -1645,7 +1646,11 @@ async function watchProblems(env, now, { games, espnError }) {
   try {
     const r = await fetch(`${env.SITE_DATA}status.json?t=${now}`);
     if (r.ok) {
-      const age = (now - Date.parse((await r.json()).updated)) / 60e3, limit = games ? 20 : 75;
+      const st = await r.json();
+      const audit = Array.isArray(st.audit) ? st.audit : [];
+      if (audit.length) found.audit = { wait: 30, level: audit.length, title: "Numbers don't match ESPN",
+        body: `The numbers audit found ${audit.length === 1 ? "a mismatch" : audit.length + " mismatches"} this season: ${audit.slice(0, 2).join("; ")}${audit.length > 2 ? "; …" : ""}. Could be a commissioner score adjustment, a stat correction the site hasn't picked up, or a bug.` };
+      const age = (now - Date.parse(st.updated)) / 60e3, limit = games ? 20 : 75;
       if (age > limit) found.stale = { title: "Site data is stale", body: `The live site's data is ${Math.round(age)} minutes old${games ? " with NFL games on" : ""}. Builds may be failing or not starting.` };
     }
   } catch (e) { console.log("watchdog: status check failed", String(e)); }
@@ -1671,7 +1676,7 @@ async function watchdog(env, now, ctx) {
     if (found[k]) continue;
     changed = true;
     if (o.alerted) send.push([null, { title: "League HQ: fixed", body: { builds: "Site builds are passing again.", stale: "The site's data is fresh again.",
-      espn: "ESPN is accepting the worker's login again.", github: "GitHub accepts the worker's token again.", token: "The worker's GitHub token is no longer about to expire." }[k] || "A problem cleared.", url: "#/", tag: `lhq-watch-${k}` }]);
+      espn: "ESPN is accepting the worker's login again.", github: "GitHub accepts the worker's token again.", audit: "The site's numbers match ESPN again.", token: "The worker's GitHub token is no longer about to expire." }[k] || "A problem cleared.", url: "#/", tag: `lhq-watch-${k}` }]);
   }
   if (send.length) {
     const subs = await loadSubs(env), admin = admins(env);

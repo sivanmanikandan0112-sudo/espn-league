@@ -67,7 +67,7 @@ jobs:
         if: steps.checked.outputs.cache-hit != 'true' && !inputs.skip_browser_check
         # it can't install its browser library = a build-machine problem: warn and publish, check again next build
         run: |
-          if ! npm install --no-save --no-fund --no-audit playwright-core@1.48.2; then
+          if ! npm install --no-save --no-fund --no-audit playwright-core@1.48.2 axe-core@4.10.2; then
             echo "::warning::Browser check skipped: couldn't install playwright-core"; exit 0
           fi
           node check_site.mjs

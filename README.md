@@ -266,6 +266,16 @@ Each build checks itself before publishing; if a check fails, the job stops and 
   the Actions cache, so the 5-minute data refreshes skip it until the code changes again. Run it locally with
   `npm install --no-save playwright-core@1.48.2 && node check_site.mjs`.
 - If the browser check is wrongly blocking a good build: **Run workflow** with **Skip the browser check** ticked.
+- **Report, never blocking** (end of `check_site.mjs`, new code only): an accessibility scan of the 11 main pages with
+  `axe-core` (issues grouped by rule, with impact, count and an example element) and a cold first load of Standings
+  on a throttled phone (Chrome's slow 4G, 4x slower CPU, empty cache, files gzipped like GitHub Pages), printed in
+  the log and on the run's summary page. A first load over 10 seconds adds a warning.
+- **Numbers audit** (`audit_season` in build.py, every build, never blocking): each season's finished regular-season
+  box scores are added back up into every team's record, points for and points against and compared with ESPN's
+  standings, and every box score is checked against the sum of its starters. All seasons go to the build log; the
+  current season's mismatches go into `data/status.json`, where the watchdog alerts on them (if they last 30
+  minutes, so a week ESPN is mid-way through closing doesn't count). Known: 2023 week 10 has one team's score 48
+  points above its starters, most likely a commissioner adjustment.
 
 ### Watchdog (admin alerts)
 
@@ -425,6 +435,16 @@ passing TD matched to its one catch. Other plays link to that player's own game 
 play-by-play feed is behind bot protection, so the site doesn't read it), or to the game, plus ESPN Gamecast. The player card's Real button opens **that player's own performance in that game** on Real ("Cam Ward Stats vs
 Cowboys"), read from the same game pages (league-rostered players only); before his game starts it opens the game. Real's links are web links; whether they open the Real app or its website
 depends on the phone.
+
+## Season yearbook
+
+History → Yearbook (`yearbookHtml` in app.js), for every finished season (the current one shows a "comes out when
+the season ends" note). From data the site already has: a cover with the champion and the final, final standings,
+the playoff bracket by round, the season in numbers (regular season plus the playoff bracket), awards (most points,
+luckiest and unluckiest, best lineups, best draft and steal of the draft, trade of the year by started points), the
+season's entries in the all-time record book, and a page per team (finish, best and worst week, MVP by points as a
+starter, best draft pick, trades, badges). **Save as PDF / print** uses the browser's print: the print styles hide
+the site around it, switch to ink on white and start each section on its own page (17 pages for a 12-team season).
 
 ## Getting-started tour
 
