@@ -676,6 +676,9 @@ async function graphQuiz(env, st) {
   const r = await fetch(SITE_DATA(env) + "graph.json?t=" + Date.now());
   const G = r.ok ? await r.json() : null;
   if (!G || G.season !== st.season || !(G.players || []).length) throw new Error("This week's graphs aren't ready yet. Try again soon.");
+  // the games open the next week on Monday night, a little before the site's data takes in the week just played: wait
+  // for it (nothing is frozen until then), so every week's graphs run through the week before
+  if (G.through < st.week - 1) throw new Error(`This week's graphs aren't ready yet: they're waiting for week ${st.week - 1}'s final stats. Try again in an hour or two.`);
   const usedKey = `graph-used:${st.season}`;
   const used = new Set((await env.PICKEM.get(usedKey, "json")) || []);
   const rand = seeded(`graph|${env.PIN_SALT || "league-hq"}|${st.season}|${st.week}`);

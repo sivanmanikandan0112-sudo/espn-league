@@ -530,7 +530,9 @@ twice in a season (`graph-used:<season>`).
 
 The pool is `data/graph.json`, written by `graph_pool()` in `build.py`: the 220 most-owned QBs/RBs/WRs/TEs with weekly
 points from ESPN's `filterStatsForTopScoringPeriodIds` (null = didn't play). It's only re-fetched when another week is
-complete (the build reads the live copy back first). The worker picks the week's puzzles with a seed that includes
+complete (the build reads the live copy back first); a week is complete 6 hours after its last NFL kickoff
+(`week_over`), not when ESPN rolls over on Wednesday. The games open the next week on Monday night, so the worker
+won't freeze a week's puzzles until `graph.json` runs through the week before (it answers "not ready yet" meanwhile). The worker picks the week's puzzles with a seed that includes
 `PIN_SALT`, freezes them in `graph-q:<season>:<week>`, and only returns an answer after that member's guess
 (`graph-a:<season>:<week>`, season board `graph-board:<season>`).
 

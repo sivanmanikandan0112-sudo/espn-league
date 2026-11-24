@@ -104,6 +104,13 @@ def opponents(season):
     return out
 
 
+def week_over(season, week, now=None):
+    """True once every NFL game of this week is over: 6 hours after its last kickoff (the worker's games use the same
+    rule to move on to the next week)."""
+    kicks = [g.get("date") or 0 for t in pro_teams(season) for g in (t.get("proGamesByScoringPeriod") or {}).get(str(week), [])]
+    return bool(kicks) and (now or time.time()) * 1000 > max(kicks) + 6 * 3600 * 1000
+
+
 def bye_weeks(season):
     return {t["id"]: t.get("byeWeek") for t in pro_teams(season)}
 
@@ -831,8 +838,10 @@ def add_power_moves(data, teams, season):
 def graph_pool(season, latest, size=220):
     """Guess the graph (Games): the most-owned QBs, RBs, WRs and TEs with their fantasy points (league scoring) in
     every completed week. The worker picks each week's three puzzles from this file (data/graph.json). The weekly
-    points of completed weeks don't change, so the live copy is reused until another week is complete."""
-    through = latest - 1
+    points of completed weeks don't change, so the live copy is reused until another week is complete. A week counts
+    as complete once its last NFL game is over (6 hours after the last kickoff), not when ESPN rolls the league over
+    on Wednesday: the games open the next week on Monday night, and that week's graphs should include the last one."""
+    through = latest if week_over(season, latest) else latest - 1
     if through < 3:
         return None
     prev = live_site_file("graph.json")
