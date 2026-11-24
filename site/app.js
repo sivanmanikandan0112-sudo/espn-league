@@ -537,7 +537,7 @@
         pickem: [`made pick'em picks for week ${e.w}`, "#/games"],
         pick4: ["saved a Pick 4 lineup", "#/games/pick4"],
         fa: ["saved a waiver wire challenge lineup", "#/games/pick4?view=fa"],
-        bull: ["saved Bullseye picks", "#/games/bullseye"],
+        bull: ["saved Bullseye picks", "#/games"], // Bullseye was retired; old activity still says what happened
         rank: ["ranked this week's Rank 'em", "#/games/rankem"],
         trivia: [`finished week ${e.w}'s trivia`, "#/games/trivia"],
         graph: ["played Guess the graph", "#/games/graph"],
@@ -867,10 +867,10 @@
 
   const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"]];
   // Games: pick'em and league trivia (name + PIN), separate from the stats tabs
-  const GAMES_TABS = [["", "Pick'em"], ["pick4", "Pick 4"], ["bullseye", "Bullseye"], ["rankem", "Rank 'em"], ["graph", "Guess the graph"], ["trivia", "League trivia"]];
+  const GAMES_TABS = [["", "Pick'em"], ["pick4", "Pick 4"], ["rankem", "Rank 'em"], ["graph", "Guess the graph"], ["trivia", "League trivia"]];
   function renderGames() {
     if (state.sub === "trivia") return renderTrivia();
-    if (state.sub === "bullseye") return renderBullseye();
+    if (state.sub === "bullseye") { location.replace("#/games"); return; } // Bullseye was retired
     if (state.sub === "rankem") return renderRankem();
     if (state.sub === "graph") return renderGraph();
     if (state.sub === "pick4") return renderPick3();
@@ -1395,7 +1395,7 @@
         grid = `<div class="sg-wrap"><table class="pk-grid"><thead><tr><th></th>${heads}<th class="n">Right</th></tr></thead><tbody>${rows}</tbody></table></div>
           <p class="note">Green = right, red = wrong; lighter shades mean that pick is currently ahead or behind in a live game.</p>`;
       }
-      const next = P.lockAt && Date.now() >= P.lockAt ? " Next week's picks open early Wednesday morning, once this week is final." : "";
+      const next = P.lockAt && Date.now() >= P.lockAt ? " Next week's picks open as soon as this week's last NFL game ends (usually late Monday night)." : "";
       body = head(`Week ${P.week} pick'em`, `${status}.${next}`) + section("This week's picks", "", grid) + leaderboard;
     }
     main.innerHTML = body;
@@ -1448,7 +1448,7 @@
       { label: "Perfect weeks", num: 1, cell: r => Object.values(r.weeks).filter(x => x === 5).length },
     ], board)) : "";
     if (T.over) { main.innerHTML = head("The season is over. Trivia is back next season.") + leaderboard; return; }
-    const sub = `Week ${T.week}: 5 questions about your league's own history, ${T.questions.some(q => q.level) ? "from easy to expert, " : ""}new every week when the matchup week changes (early Wednesday). You get <b>one try</b>, so no peeking at the History tab.`;
+    const sub = `Week ${T.week}: 5 questions about your league's own history, ${T.questions.some(q => q.level) ? "from easy to expert, " : ""}new every week once the week's last NFL game ends (usually late Monday night). You get <b>one try</b>, so no peeking at the History tab.`;
     const who = `<div class="panel pk-who">
         <label class="field">Who are you? <select id="tv-member"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
         <label class="field">PIN <input id="tv-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="4 digits" value="${esc(PK.pin)}"></label>
@@ -1734,7 +1734,7 @@
     if (!/^\d{4}$/.test(pin)) return { error: "Enter a 4-digit PIN." };
     const r = await pkApi(path, Object.assign({ member, pin }, extra || {}));
     if (r.error) return r;
-    if (member !== PK.member) { PK.ready = false; PK.sel = {}; TV.ready = false; TV.result = null; TV.sel = []; TV.auto = false; P3.ready = false; BU.ready = false; RK.ready = false; GG.ready = false; GG.guesses = {}; }
+    if (member !== PK.member) { PK.ready = false; PK.sel = {}; TV.ready = false; TV.result = null; TV.sel = []; TV.auto = false; P3.ready = false; RK.ready = false; GG.ready = false; GG.guesses = {}; }
     PK.member = member; PK.pin = pin;
     store.set("pk-member", member);
     store.set("pk-pin", remember ? pin : "");
@@ -1761,140 +1761,6 @@
     }
     return true;
   }
-
-  // ---------------------------------------------------------------- Bullseye (Games)
-  // A target each week; pick up to 5 players whose real points add up as close to it as possible without going over.
-  const BU = { data: null, at: 0, sel: [], saved: [], ready: false, auto: false, msg: "", err: false, pos: "ALL", q: "" };
-  const BU_POS = ["ALL", "QB", "RB", "WR", "TE"];
-  // a week's finish order: everyone under (or on) the target by how close, then the busts by how little they went over
-  function bullOrder(rows, target) {
-    return rows.map(r => ({ ...r, bust: r.pts > target + 1e-9, miss: Math.abs(target - r.pts) })).sort((a, b) => a.bust - b.bust || a.miss - b.miss);
-  }
-  async function renderBullseye() {
-    const head = gameHead("bullseye", "Bullseye");
-    if (state.season !== IDX.current) { main.innerHTML = head + `<div class="empty">Bullseye runs in the current season. <a href="#/games/bullseye">Go to this week's Bullseye</a></div>`; return; }
-    if (!LIVE_API_BASE()) { main.innerHTML = head + '<div class="empty">Bullseye needs the live worker, which isn\'t set up.</div>'; return; }
-    if (!BU.data) main.innerHTML = head + '<div class="empty">Loading this week\'s target…</div>';
-    if (!(await gameLoad(BU, "bullseye", "/bull", "/bull/mine", buLoad))) return;
-    bullView();
-  }
-  function buLoad(r) {
-    BU.ready = true; BU.err = false;
-    BU.saved = r.picks || [];
-    BU.sel = BU.saved.map(p => p.id);
-    BU.msg = r.newPin ? "Welcome! The PIN you entered becomes yours for the season when you save." : "";
-  }
-  function bullView() {
-    const T = BU.data;
-    if (!T || T.error) { main.innerHTML = gameHead("bullseye", "Bullseye") + `<div class="empty">${esc((T && T.error) || "Couldn't load Bullseye.")} <button type="button" class="linkbtn" data-bu="reload">Try again</button></div>`; return; }
-    // season leaderboard: weeks won, bullseyes (within a point without going over), busts, average miss
-    const board = {};
-    Object.values(T.history || {}).forEach(({ target, rows }) => {
-      bullOrder(Object.entries(rows).map(([m, pts]) => ({ m, pts })), target).forEach((r, i) => {
-        const b = board[r.m] = board[r.m] || { m: r.m, weeks: 0, wins: 0, eyes: 0, busts: 0, miss: 0, under: 0 };
-        b.weeks++; if (i === 0) b.wins++;
-        if (r.bust) b.busts++; else { b.under++; b.miss += r.miss; if (r.miss <= 1) b.eyes++; }
-      });
-    });
-    const leaders = Object.values(board).sort((a, b) => b.wins - a.wins || b.eyes - a.eyes || (a.under ? a.miss / a.under : 1e9) - (b.under ? b.miss / b.under : 1e9));
-    const leaderboard = leaders.length ? section("Season leaderboard", "Weeks won first, then bullseyes, then average miss.", table([
-      { label: "Player", cell: r => `<b>${esc(nameOfMember(r.m))}</b>` },
-      { label: "Weeks won", num: 1, cell: r => `<b>${r.wins}</b>` },
-      { label: "Bullseyes", num: 1, cell: r => r.eyes },
-      { label: "Busts", num: 1, cell: r => r.busts },
-      { label: "Avg miss", num: 1, cell: r => r.under ? (r.miss / r.under).toFixed(1) : "—" },
-      { label: "Weeks played", num: 1, cell: r => r.weeks },
-    ], leaders)) : "";
-    if (T.over) { main.innerHTML = gameHead("bullseye", "Bullseye", '<p class="sub">The season is over. Back next season.</p>') + leaderboard; return; }
-
-    const now = Date.now();
-    const byId = Object.fromEntries(T.players.map(p => [p.id, p]));
-    const savedBy = Object.fromEntries(BU.saved.map(p => [p.id, p]));
-    const info = id => Object.assign({}, savedBy[id] || {}, byId[id] || {}, savedBy[id] && savedBy[id].pts != null ? { pts: savedBy[id].pts } : {});
-    const played = p => p && now >= p.at;
-    const locked = id => savedBy[id] && played(savedBy[id]);
-    const injTag = x => x && x.inj ? ` <span class="p3-inj ${x.inj === "OUT" ? "out" : ""}">${esc(x.inj)}</span>` : "";
-    const projSum = BU.sel.reduce((n, id) => n + (info(id).proj || 0), 0);
-    const liveSum = BU.sel.reduce((n, id) => n + (locked(id) && info(id).pts != null ? info(id).pts : 0), 0);
-    const intro = expl(`This week's target is <b>${T.target.toFixed(1)}</b> points. Pick up to ${T.max} players whose real points add up as close to it as you can without going over.`,
-      `Each week has a new target between 40 and 70 points. Pick 1 to ${T.max} players (any QBs, RBs, WRs and TEs, from any NFL team); your score is their real points this week under our scoring. Closest to the target without going over wins the week; going over is a <b>bust</b> and ranks below everyone who stayed under. Within 1 point counts as a <b>bullseye</b>. Each player locks when his game kicks off; until then you can swap him for anyone who hasn't played yet. Projections are ESPN's for this week, the same ones Pick 4 uses.`, "bullseye");
-    let game = "";
-    if (BU.ready) {
-      const changed = BU.sel.join(",") !== BU.saved.map(p => p.id).join(",");
-      const picks = BU.sel.map(id => {
-        const p = info(id), lock = locked(id);
-        const out = !lock && byId[id] && byId[id].inj === "OUT" ? `<span class="p3-warn">Ruled out. Swap him before ${esc(kickTime(p.at))}.</span>` : "";
-        return `<div class="p3-slot${lock ? " locked" : ""}"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span><span class="p3-sn"><b>${esc(p.n)}${injTag(byId[id])}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${lock ? "locked 🔒" : esc(kickTime(p.at))}${p.proj != null ? ` · proj ${p.proj.toFixed(1)}` : ""}</span>${out}</span>
-          ${lock && p.pts != null ? `<b class="p3-pts">${p.pts.toFixed(1)} pts</b>` : `<span class="p3-sal">${p.proj != null ? p.proj.toFixed(1) : "—"}</span>`}
-          ${lock ? "" : `<button type="button" class="linkbtn" data-bu-drop="${id}" aria-label="Remove ${esc(p.n)}">✕</button>`}</div>`;
-      }).join("") || '<div class="empty">No players yet. Add up to ' + T.max + " from the list.</div>";
-      const full = BU.sel.length >= T.max;
-      const q = BU.q.trim().toLowerCase();
-      const list = T.players.filter(p => (BU.pos === "ALL" || p.pos === BU.pos) && (!q || p.n.toLowerCase().includes(q) || p.team.toLowerCase() === q))
-        .sort((a, b) => (a.inj === "OUT") - (b.inj === "OUT") || b.proj - a.proj).slice(0, 150);
-      const rows = list.map(p => {
-        const on = BU.sel.includes(p.id), gone = played(p);
-        const why = on ? "" : gone ? "played" : p.inj === "OUT" ? "out" : full ? "5 picked" : "";
-        return `<button type="button" class="p3-row${on ? " on" : ""}" data-bu-pick="${p.id}"${(why || (on && locked(p.id))) ? " disabled" : ""}>
-          <span class="p3-rn"><b>${esc(p.n)}${injTag(p)}</b><span class="team-mgr">${esc(p.pos)} · ${esc(p.team)} ${esc(p.opp)} · ${gone ? "played" : esc(kickTime(p.at))}</span></span>
-          <span class="p3-rp">proj</span><span class="p3-rs">${p.proj.toFixed(1)}</span><span class="p3-rw">${on ? "✓" : why ? esc(why) : "Add"}</span></button>`;
-      }).join("");
-      const gap = T.target - projSum;
-      const meter = `<div class="bu-meter"><div class="bu-nums"><span>Target <b>${T.target.toFixed(1)}</b></span><span>Projected <b class="${gap < 0 ? "neg" : ""}">${projSum.toFixed(1)}</b></span>${liveSum ? `<span>Scored so far <b>${liveSum.toFixed(1)}</b></span>` : ""}</div>
-        <div class="bu-bar"><span style="width:${Math.min(100, 100 * projSum / T.target).toFixed(1)}%"></span>${liveSum ? `<i style="width:${Math.min(100, 100 * liveSum / T.target).toFixed(1)}%"></i>` : ""}</div>
-        <p class="note">${!BU.sel.length ? "" : gap >= 0 ? `${gap.toFixed(1)} projected points under the target.` : `${(-gap).toFixed(1)} projected points over: that would be a bust if the projections hold.`}</p></div>`;
-      game = `<div class="p3-wrap"><div class="p3-lineup">${meter}${picks}
-          <div class="pk-save"><button type="button" class="cta" data-bu="save"${changed && BU.sel.length ? "" : " disabled"}>${changed ? "Save picks" : "Saved"}</button></div></div>
-        <div class="p3-pick"><nav class="pg-by p3-tabs" aria-label="Position">${BU_POS.map(k => `<a href="#" data-bu-pos="${k}" class="${BU.pos === k ? "active" : ""}">${k === "ALL" ? "All" : k}</a>`).join("")}</nav>
-          <input id="bu-q" type="search" placeholder="Search players or a team (e.g. KC)" value="${esc(BU.q)}" autocomplete="off">
-          <div class="p3-list">${rows || '<div class="empty">No players match.</div>'}</div></div></div>`;
-    }
-    const msg = BU.msg ? `<p class="note${BU.err ? " live" : ""}">${esc(BU.msg)}</p>` : "";
-    const entries = Object.entries(T.entries || {}).map(([m, picks]) => ({ m, picks, pts: picks.reduce((n, x) => n + (x.pts || 0), 0) }))
-      .sort((a, b) => bullOrder([a], T.target)[0].bust - bullOrder([b], T.target)[0].bust || Math.abs(T.target - a.pts) - Math.abs(T.target - b.pts));
-    const week = entries.length ? section(`Week ${T.week} so far`, "Players show once their game starts. Over the target is a bust.", `<div class="p3-board">${entries.map(({ m, picks, pts }) =>
-      `<div class="p3-entry"><div class="p3-eh"><b>${esc(nameOfMember(m))}</b><span class="${pts > T.target ? "neg" : ""}">${pts.toFixed(1)}${pts > T.target ? " · bust" : ""}</span></div>${picks.map(x => x.hidden
-        ? '<div class="p3-ep muted"><span class="slot">?</span>hidden until kickoff</div>'
-        : `<div class="p3-ep"><span class="slot ${esc(x.pos)}">${esc(x.pos)}</span><span class="p3-sn">${esc(x.n)}</span><b>${(x.pts || 0).toFixed(1)}</b></div>`).join("")}</div>`).join("")}</div>`) : "";
-    main.innerHTML = gameHead("bullseye", "Bullseye", intro) + `<div class="bu-target"><span class="kicker">Week ${T.week} target</span><b>${T.target.toFixed(1)}</b><span class="team-mgr">points, without going over</span></div>` +
-      gameWho("bu", BU.ready) + msg + game + week + leaderboard;
-    const qi = main.querySelector("#bu-q");
-    if (qi && BU.focusQ) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); BU.focusQ = false; }
-  }
-  main.addEventListener("click", async e => {
-    if (!(state.tab === "games" && state.sub === "bullseye")) return;
-    const pos = e.target.closest("[data-bu-pos]");
-    if (pos) { e.preventDefault(); BU.pos = pos.dataset.buPos; return bullView(); }
-    const drop = e.target.closest("[data-bu-drop]");
-    if (drop) { BU.sel = BU.sel.filter(id => id !== Number(drop.dataset.buDrop)); BU.msg = ""; return bullView(); }
-    const pk = e.target.closest("[data-bu-pick]");
-    if (pk && !pk.disabled) {
-      const id = Number(pk.dataset.buPick);
-      BU.sel = BU.sel.includes(id) ? BU.sel.filter(x => x !== id) : BU.sel.length < BU.data.max ? [...BU.sel, id] : BU.sel;
-      BU.msg = ""; return bullView();
-    }
-    const a = e.target.closest("[data-bu]");
-    if (!a) return;
-    if (a.dataset.bu === "reload") { BU.data = null; return renderBullseye(); }
-    if (a.dataset.bu === "continue") {
-      const r = await gameSignIn("bu", "/bull/mine");
-      if (r.error) { BU.msg = r.error; BU.err = true; BU.ready = false; return bullView(); }
-      buLoad(r); return bullView();
-    }
-    if (a.dataset.bu === "save") {
-      a.disabled = true; a.textContent = "Saving…";
-      const r = await pkApi("/bull/save", { member: PK.member, pin: PK.pin, picks: BU.sel });
-      if (r.error) { BU.msg = r.error; BU.err = true; return bullView(); }
-      BU.saved = r.picks; BU.sel = r.picks.map(p => p.id); BU.err = false;
-      BU.msg = `Saved ${r.picks.length} player${r.picks.length === 1 ? "" : "s"}.`;
-      BU.data = await pkApi("/bull"); BU.at = Date.now();
-      bullView();
-    }
-  });
-  main.addEventListener("input", e => {
-    if (e.target.id !== "bu-q") return;
-    BU.q = e.target.value; BU.focusQ = true; bullView();
-  });
 
   // ---------------------------------------------------------------- Rank 'em (Games)
   // Five players at one position; put them in order of the points they'll score. Locks at the first kickoff.
@@ -4497,7 +4363,7 @@
       ["Why you moved", "Standings, My team", "What changed a team's power value this week: injuries, roster moves, projection changes. ▲/▼ shows the power rank change.", "#/myteam"],
       ["Nemesis players", "History → Record book, My team", "The NFL players who've scored the most against you, all-time.", "#/history/records"],
       ["Career luck", "History", "Every manager's luck across every season: actual wins vs. the wins their scoring deserved.", "#/history"],
-      ["Bullseye", "Games → Bullseye", "A new target every week: pick up to 5 players whose points add up as close to it as you can without going over.", "#/games/bullseye"],
+      ["Bullseye", "Games (retired November 2026)", "A new target every week: pick up to 5 players whose points add up as close to it as you can without going over.", "#/games"],
       ["Rank 'em", "Games → Rank 'em", "Put five players at one position in order of the points they'll score. 3 points per exact spot, 1 for one off.", "#/games/rankem"],
       ["Reactions", "Matchups, Big plays, Standings", "Tap an emoji under any matchup, big play or the weekly high and low score. Hold one to see who reacted.", "#/matchups"],
       ["Upset tracker", "Insights → Luck", "Every team's record as ESPN's favorite and as the underdog, with its biggest upset and worst loss.", "#/insights/luck?at=upsets"],
@@ -4649,7 +4515,6 @@
       ["pickem", "Pick'em", "Games", "#/games", "Pick the winner of every league matchup before the week's first kickoff.", []],
       ["pick4", "Pick 4", "Games → Pick 4", "#/games/pick4", "Pick a QB, RB, WR and TE under a salary cap. Prices are $400 per projected point and move with the news; each spot locks at its player's kickoff.", []],
       ["fachallenge", "Waiver wire challenge", "Games → Pick 4", "#/games/pick4?view=fa", "Pick 4 using only players who are free agents in our league.", []],
-      ["bullseye", "Bullseye", "Games → Bullseye", "#/games/bullseye", "Pick up to 5 players whose real points add up as close to the week's target as possible without going over. Going over is a bust.", []],
       ["rankem", "Rank 'em", "Games → Rank 'em", "#/games/rankem", "Put five players at one position in order of the points they'll score. 3 points per exact spot, 1 for one spot off, 15 max.", []],
       ["graph", "Guess the graph", "Games → Guess the graph", "#/games/graph", "Three graphs a week of one player's weekly fantasy points; pick him from four names. Easy, Medium and Hard are worth 1, 2 and 3 points.", []],
       ["trivia", "League trivia", "Games → League trivia", "#/games/trivia", "Five questions a week about league history, easy to expert. One try each.", []],

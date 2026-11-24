@@ -355,7 +355,7 @@ Worker `GET /react?week=N`, `POST /react/toggle {member, pin, week, item, emoji}
 
 Standings sidebar (and under the standings on phones): recent activity on the site, newest first, from the worker's
 `GET /pulse`. Written by the worker whenever someone reacts (and removed if they take it back), saves pick'em, Pick 4,
-waiver wire challenge, Bullseye or Rank 'em entries, finishes trivia or updates the trade block. Never what anyone
+waiver wire challenge or Rank 'em entries (and Bullseye, until it was retired), finishes trivia or updates the trade block. Never what anyone
 picked. One KV value per season, `pulse:<season>`, the last 40 events; the same person doing the same thing within
 30 minutes moves back to the top instead of adding a line (`pulse()` in `worker/src/index.js`).
 
@@ -509,14 +509,10 @@ the same game, but only players unrostered in this league (free agents or on wai
 re-checked with every re-price: newly dropped players join, players picked up leave (they stay in lineups that have them). Same $400/point prices; the cap is 80% of the priciest free-agent QB + RB + WR + TE.
 Its own KV keys (`p3fa-slate`, `p3fa-entries`, `p3fa-season`) and leaderboard (`P3_MODES` in the worker).
 
-## Bullseye
+## Bullseye (retired)
 
-Games → Bullseye (`#/games/bullseye`, worker `/bull`, `/bull/mine`, `/bull/save`). Each week has a target from 40.0 to
-70.0 (seeded by season + week). Pick 1-5 players from Pick 4's player list; your score is their real points. Closest
-to the target without going over wins; over is a bust (ranked after everyone under, by how little they went over);
-within 1 point is a bullseye. Each player locks at his kickoff and others' players stay hidden until then. KV
-`bull-entries:<season>:<week>` (`{sp, target, e: {member: {picks}}}`), finished weeks scored once into
-`bull-season:<season>`. Leaderboard: weeks won, then bullseyes, then average miss.
+Removed in November 2026. Its stored data was left in KV untouched (`bull-entries:<season>:<week>`,
+`bull-season:<season>`), and old `#/games/bullseye` links go to Games.
 
 ## Guess the graph
 
@@ -544,8 +540,10 @@ share their spots), 15 max; the page also shows what ESPN's projected order woul
 
 ## Weekly pick'em
 
-Games → Pick'em. Picks for a week open when ESPN moves on to it (early Wednesday) and lock at that week's first
-NFL kickoff; the worker enforces this and hides everyone's picks until the lock. Each member claims their name with a
+Games → Pick'em. Picks for a week open as soon as the previous week's last NFL game ends (usually late Monday
+night; the worker's `gamesWeek`, which every weekly game uses: 4 hours after the last kickoff with no game in progress,
+or 6 hours after it regardless; in the playoffs pick'em waits for ESPN to set the next matchups) and lock at that
+week's first NFL kickoff; the worker enforces this and hides everyone's picks until the lock. Each member claims their name with a
 4-digit PIN the first time they pick (stored hashed in the worker's `PICKEM` KV namespace). One point per correct
 pick; the leaderboard and weekly winners count games once they're final.
 
