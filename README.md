@@ -561,6 +561,21 @@ cd worker && npx wrangler kv key delete --remote --binding PICKEM "pin:2026:{MEM
 (Member ids are the `{...}` ids in `site/data/index.js`; local testing can force picks open with
 `PICKEM_FORCE_OPEN=1` in `worker/.dev.vars`.)
 
+## Trade impact
+
+Trades → Trade impact (`#/trades/impact?a=<team>&ga=<players>&b=<team>&gb=<players>`, `renderTradeImpact` in app.js;
+all in the browser, no build or worker changes). Pick two teams and the QBs, RBs, WRs and TEs each would send. For every
+week left (from the first week nobody has played, through the final), each team's best lineup (QB, RB, WR, TE, FLEX
+from the roster's expected points per week `wk`, the same numbers power value uses) is worked out with and without
+the trade; half of each week's change (`TI_SHRINK`, matching `STRENGTH_SHRINK`) is added to that team's weekly scoring
+model (`odds.wk`). `tiSim` then runs 10,000 seasons both ways (this week's games, once under way, use ESPN's live win
+probability; then the regular season, standings by wins then points, and the reseeded bracket) with one fixed seed
+and the same number of draws per run, so before and after differ only by the trade. Shows each team's lineup change,
+the next week's lineup moves, a warning when it leaves a position with nobody to start, playoff / bye / title odds
+before and after, and other teams whose playoff odds move a point or more. Linked from Compare players (two
+players on different teams) and the Trade block (two-way and one-way fits, and each team's block). Kickers and
+defenses aren't counted, and the drop a lopsided trade would force isn't modeled.
+
 ## Trade block
 
 Trades → Trade block. Every player's trade status (On the block / Normal / Untouchable) is read from ESPN's own trade

@@ -1725,3 +1725,38 @@ body.has-ticker .tour-pill { bottom: calc(50px + env(safe-area-inset-bottom)); }
   .scn-row { grid-template-columns: 26px minmax(0, 1fr) 44px 40px 30px; gap: 6px; padding: 7px 8px; font-size: 13px; }
   .scn-b { padding: 6px 8px; gap: 6px; }
 }
+
+/* ---- Trade impact (Trades) */
+.ti-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin: 4px 0 10px; }
+.ti-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; min-width: 0; }
+.ti-card.mine { border-color: var(--accent); }
+.ti-head { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.ti-head .logo { width: 28px; height: 28px; flex: none; }
+.ti-line { margin: 8px 0 2px; font-size: 14px; }
+.ti-card .team-mgr { margin: 0 0 8px; }
+.ti-odds { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.ti-odds th, .ti-odds td { padding: 6px 4px; border-top: 1px solid var(--line); text-align: right; }
+.ti-odds thead th { border-top: 0; font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+.ti-odds tbody th { text-align: left; font-weight: 600; }
+.tb-try, .cmp-ti { margin: 8px 0 0; font-size: 13px; }
+.cmp-ti { margin: 0 0 12px; }
+.ti-warn { margin: -4px 0 8px; font-size: 13px; font-weight: 600; color: var(--hot); }
+.ti-ripple { font-size: 13px; color: var(--ink-2); margin: 0 0 12px; }
+.ti-empty { margin: 4px 0 12px; }
+.ti-pick { position: relative; }
+.ti-sticky { position: sticky; top: var(--ti-top, 56px); z-index: 3; background: var(--bg); padding: 8px 2px; font-size: 13px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+@media (min-width: 641px) { .ti-sticky { top: 53px; } } /* just under the pinned section tabs */
+.ti-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.ti-side { min-width: 0; }
+.ti-side .field { width: 100%; }
+.ti-side select { min-width: 0; max-width: 100%; }
+.ti-sends { font-size: 13px; margin: 8px 0; }
+.ti-list { display: flex; flex-direction: column; gap: 4px; }
+.ti-p { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 8px; text-align: left; font: inherit; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; cursor: pointer; }
+.ti-p:hover { border-color: var(--ink-2); }
+.ti-p.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.ti-n { min-width: 0; display: flex; flex-direction: column; }
+.ti-n b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ti-v { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 13px; }
+.ti-v .muted { font-weight: 500; font-size: 11px; }

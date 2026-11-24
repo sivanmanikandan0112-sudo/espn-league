@@ -2905,6 +2905,197 @@
     window.scrollTo(0, 0);
   }
 
+  // ---------------------------------------------------------------- trade impact (Trades → Trade impact)
+  // Pick two teams and the players each would send; see what the trade does to both teams' projected lineups and to
+  // their playoff, bye and title odds (and anyone else's that moves). Each team's best lineup (QB, RB, WR, TE and FLEX
+  // from the build's expected points per week, byes and injuries included) is worked out with and without the trade,
+  // and half of the weekly change is added to that team's scoring model (the playoff odds pull every team's strength
+  // halfway to the league average). The rest of the regular season and the bracket are then simulated here, both
+  // ways, with the same random draws, so the difference is the trade's and not luck. The picks live in the link.
+  const TI_POS = ["QB", "RB", "WR", "TE"], TI_SIMS = 10000, TI_SHRINK = 0.5;
+  function tiSlots() {
+    const n = k => ((((D.settings || {}).slots || []).find(s => s.slot === k)) || { count: 0 }).count;
+    return { QB: n("QB"), RB: n("RB"), WR: n("WR"), TE: n("TE"), FLEX: n("FLEX") };
+  }
+  const tiCur = () => D.weeks.find(w => w.week === L.currentWeek && !w.final);
+  const tiStarted = () => { const c = tiCur(); return !!(c && c.games.some(g => g.sides.some(s => s.pts > 0))); };
+  // the weeks a trade made now would count for: from the first week nobody has played yet through the final
+  function tiWeeks() {
+    const out = [];
+    for (let w = tiStarted() ? L.currentWeek + 1 : L.currentWeek; w <= L.finalWeek; w++) out.push(w);
+    return out;
+  }
+  const tiPts = (p, w) => (p.wk && p.wk[w]) || 0;
+  function tiLineup(players, w, S) {
+    const left = players.filter(p => TI_POS.includes(p.pos) && tiPts(p, w) > 0).sort((a, b) => tiPts(b, w) - tiPts(a, w));
+    const used = new Set();
+    TI_POS.forEach(pos => left.filter(p => p.pos === pos).slice(0, S[pos]).forEach(p => used.add(p.id)));
+    left.filter(p => !used.has(p.id) && p.pos !== "QB").slice(0, S.FLEX).forEach(p => used.add(p.id));
+    const starters = left.filter(p => used.has(p.id));
+    // positions this lineup can't fill (the FLEX can't stand in for a missing QB, RB, WR or TE spot)
+    const short = TI_POS.filter(pos => starters.filter(p => p.pos === pos).length < S[pos] && left.filter(p => p.pos === pos).length < S[pos]);
+    return { pts: starters.reduce((n, p) => n + tiPts(p, w), 0), ids: used, short };
+  }
+  // each side's lineup with and without the trade: change per week, weekly averages, and who moves in and out of
+  // the first week's lineup
+  function tiEffect(T) {
+    const S = tiSlots(), weeks = tiWeeks(), A = teamById[T.a], B = teamById[T.b];
+    const after = {
+      [T.a]: A.roster.filter(p => !T.ga.includes(p.id)).concat(B.roster.filter(p => T.gb.includes(p.id))),
+      [T.b]: B.roster.filter(p => !T.gb.includes(p.id)).concat(A.roster.filter(p => T.ga.includes(p.id))),
+    };
+    const out = {};
+    [A, B].forEach(t => {
+      const per = {};
+      let s0 = 0, s1 = 0;
+      weeks.forEach(w => { const x = tiLineup(t.roster, w, S).pts, y = tiLineup(after[t.id], w, S).pts; per[w] = y - x; s0 += x; s1 += y; });
+      const w0 = weeks[0], X = tiLineup(t.roster, w0, S), Y = tiLineup(after[t.id], w0, S), x0 = X.ids, y0 = Y.ids;
+      const byId = Object.fromEntries(t.roster.concat(after[t.id]).map(p => [p.id, p]));
+      out[t.id] = { per, avg0: weeks.length ? s0 / weeks.length : 0, avg1: weeks.length ? s1 / weeks.length : 0, week: w0,
+        into: [...y0].filter(x => !x0.has(x)).map(x => byId[x]), out: [...x0].filter(x => !y0.has(x)).map(x => byId[x]),
+        holes: Y.short.filter(pos => !X.short.includes(pos)) };
+    });
+    return out;
+  }
+  // playoff, bye and title odds from TI_SIMS runs of the rest of the season and the bracket; delta = team id ->
+  // {week: points added to that team's weekly mean}. A fixed seed and the same number of draws in every run, so two
+  // calls differ only by the deltas.
+  function tiSim(delta) {
+    let s = 20261124;
+    const rnd = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(2 * Math.PI * rnd());
+    const teams = D.teams, po = L.playoffTeams, byes = Math.max(0, 2 ** L.playoffRounds - po), roundWeeks = (D.settings || {}).playoffRoundWeeks || 1;
+    const M = Object.fromEntries(teams.map(t => [t.id, t.odds.wk]));
+    const score = (id, w) => M[id][0] + ((delta[id] || {})[w] || 0) + M[id][1] * gauss();
+    const cur = tiCur(), live = tiStarted(), proj = {};
+    if (cur) cur.games.forEach(g => g.sides.forEach(sd => { proj[sd.team] = sd.proj != null ? sd.proj : sd.pts; }));
+    const games = scnGames();
+    const tally = Object.fromEntries(teams.map(t => [t.id, [0, 0, 0]]));
+    for (let n = 0; n < TI_SIMS; n++) {
+      const wins = {}, pf = {};
+      teams.forEach(t => { wins[t.id] = t.wins + (t.ties || 0) / 2; pf[t.id] = t.pf; });
+      for (const g of games) {
+        let sh, sa, home;
+        if (live && cur && g.week === cur.week) { // this week's games are under way: ESPN's live odds decide them
+          const r = rnd();
+          sh = proj[g.h] || 0; sa = proj[g.a] || 0;
+          home = g.locked != null ? g.locked === 0 : r < g.pH;
+        } else { sh = score(g.h, g.week); sa = score(g.a, g.week); home = sh >= sa; }
+        pf[g.h] += sh; pf[g.a] += sa; wins[home ? g.h : g.a]++;
+      }
+      const field = teams.map(t => t.id).sort((x, y) => wins[y] - wins[x] || pf[y] - pf[x]).slice(0, po);
+      field.forEach((id, i) => { tally[id][0]++; if (i < byes) tally[id][1]++; });
+      const seed = Object.fromEntries(field.map((id, i) => [id, i]));
+      let alive = field.slice(byes), waiting = field.slice(0, byes), w = L.regularSeasonWeeks + 1;
+      while (alive.length + waiting.length > 1) { // reseeded each round: the best seed left plays the worst
+        alive.sort((x, y) => seed[x] - seed[y]);
+        const next = [];
+        for (let i = 0; i < Math.floor(alive.length / 2); i++) {
+          const x = alive[i], y = alive[alive.length - 1 - i], sx = score(x, w), sy = score(y, w);
+          next.push(sx >= sy ? x : y);
+        }
+        if (alive.length % 2) next.push(alive[Math.floor(alive.length / 2)]);
+        alive = next.concat(waiting).sort((x, y) => seed[x] - seed[y]);
+        waiting = [];
+        w += roundWeeks;
+      }
+      if (alive[0] != null) tally[alive[0]][2]++;
+    }
+    return Object.fromEntries(Object.entries(tally).map(([id, v]) => [id, v.map(x => 100 * x / TI_SIMS)]));
+  }
+  // the trade in the link: ?a=team&ga=players&b=team&gb=players (only QBs, RBs, WRs and TEs count)
+  function tiState() {
+    const P = state.params, ids = D.teams.map(t => t.id);
+    const mine = (D.teams.find(isMine) || {}).id;
+    let a = Number(P.get("a")), b = Number(P.get("b"));
+    if (!ids.includes(b)) b = null;
+    if (!ids.includes(a) || a === b) a = mine != null && mine !== b ? mine : ids.find(x => x !== b);
+    if (b == null || b === a) b = ids.find(x => x !== a);
+    const list = (k, t) => (P.get(k) || "").split(",").map(Number).filter(id => teamById[t].roster.some(p => p.id === id && TI_POS.includes(p.pos)));
+    return { a, b, ga: list("ga", a), gb: list("gb", b) };
+  }
+  function tiParams(T) {
+    const p = { a: T.a, b: T.b };
+    if (T.ga.length) p.ga = T.ga.join(",");
+    if (T.gb.length) p.gb = T.gb.join(",");
+    return p;
+  }
+  // a link that opens this page on a trade (Compare players, Trade block)
+  const tiHref = (a, ga, b, gb) => href("trades", tiParams({ a, b, ga: ga || [], gb: gb || [] }), "impact");
+  function renderTradeImpact() {
+    const head = `<div class="section-head"><div><h1>Trade impact</h1>${expl("What a trade does to both teams' lineups and playoff odds.",
+      "Pick two teams and the players each would send. Each team's best weekly lineup (QB, RB, WR, TE and FLEX, from the same expected points per week as power value, byes and injuries included) is worked out with and without the trade for every week left, playoffs included. Half of each week's change goes into the team's weekly scoring model, because the playoff odds pull every team's strength halfway toward the league average. Then the rest of the regular season and the bracket are simulated 10,000 times both ways with the same random draws, so the difference is the trade's, not luck. \"Before\" comes from this same simulation, so it can differ from Playoffs → Odds by a point or so. Kickers and defenses aren't counted (they're left out of power value too), and a team getting more players than it sends would have to drop someone, which isn't counted either.", "tradeimpact")}</div></div>${subnav("trades", TRADE_TABS, "impact")}`;
+    if (!L.isCurrent || L.over || !D.teams.every(t => t.odds && t.odds.wk) || !tiWeeks().length) {
+      main.innerHTML = head + `<div class="empty">Trade impact works during the regular season, while there are playoff odds to move.${L.isCurrent ? "" : ` <a href="#/trades/impact">Go to ${IDX.current}</a>`}</div>`;
+      return;
+    }
+    const T = tiState(), A = teamById[T.a], B = teamById[T.b], weeks = tiWeeks();
+    const S = D.settings || {};
+    const dl = S.tradeDeadline ? new Date(S.tradeDeadline) : null;
+    const deadline = !dl ? "" : Date.now() > dl.getTime() ? `<p class="note">The trade deadline passed on ${esc(dl.toLocaleDateString([], { month: "short", day: "numeric" }))}, so this is a what-if now.</p>`
+      : `<p class="note">Trade deadline: ${esc(dl.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}.</p>`;
+    const avg = p => { const v = weeks.map(w => tiPts(p, w)); return v.length ? v.reduce((n, x) => n + x, 0) / v.length : 0; };
+    const POS_ORDER = { QB: 0, RB: 1, WR: 2, TE: 3 };
+    const side = (t, key, give) => {
+      const rows = t.roster.filter(p => TI_POS.includes(p.pos)).sort((x, y) => POS_ORDER[x.pos] - POS_ORDER[y.pos] || avg(y) - avg(x));
+      const sending = rows.filter(p => give.includes(p.id));
+      return `<section class="ti-side"><label class="field">${key === "a" ? "Team 1" : "Team 2"} <select data-ti-team="${key}">${D.teams.map(o =>
+        `<option value="${o.id}"${o.id === t.id ? " selected" : ""}${o.id === (key === "a" ? T.b : T.a) ? " disabled" : ""}>${esc(o.name)}</option>`).join("")}</select></label>
+        <p class="ti-sends"><span class="kicker">Sends</span> ${sending.length ? sending.map(p => `<b>${esc(p.name)}</b>`).join(", ") : '<span class="muted">tap players below</span>'}</p>
+        <div class="ti-list">${rows.map(p => { const on = give.includes(p.id);
+          return `<button type="button" class="ti-p${on ? " on" : ""}" data-ti-p="${key}:${p.id}" aria-pressed="${on}"><span class="slot ${esc(p.pos)}">${esc(p.pos)}</span><span class="ti-n"><b>${esc(p.name)}</b><span class="team-mgr">${esc(p.team || "FA")}${p.injury ? " · " + esc(String(p.injury).replace(/_/g, " ").toLowerCase()) : ""}${p.slot === "IR" ? " · IR" : ""}</span></span><span class="ti-v">${avg(p).toFixed(1)}<span class="muted">/wk</span></span></button>`;
+        }).join("")}</div></section>`;
+    };
+    let result = '<div class="panel ti-empty">Tap the players each team would send. The lineups and odds update as you go.</div>', sticky = "";
+    if (T.ga.length || T.gb.length) {
+      const E = tiEffect(T);
+      const delta = Object.fromEntries(Object.entries(E).map(([id, e]) => [id, Object.fromEntries(Object.entries(e.per).map(([w, v]) => [w, TI_SHRINK * v]))]));
+      const before = tiSim({}), after = tiSim(delta);
+      const p1 = v => v >= 99.95 ? ">99.9%" : v > 0 && v < 0.05 ? "<0.1%" : v.toFixed(1) + "%";
+      const chg = (x, y) => { const d = y - x; return Math.abs(d) < 0.05 ? '<span class="muted">no change</span>' : `<b class="${d > 0 ? "pos" : "neg"}">${d > 0 ? "+" : "−"}${Math.abs(d).toFixed(1)}</b>`; };
+      const oddsRow = (label, id, k) => `<tr><th>${label}</th><td>${p1(before[id][k])}</td><td>${p1(after[id][k])}</td><td>${chg(before[id][k], after[id][k])}</td></tr>`;
+      const names = list => list.map(p => esc(p.name)).join(", ");
+      const card = t => {
+        const e = E[t.id];
+        const moves = [e.into.length ? `in: ${names(e.into)}` : "", e.out.length ? `out: ${names(e.out)}` : ""].filter(Boolean).join(" · ");
+        return `<article class="ti-card${isMine(t) ? " mine" : ""}"><div class="ti-head">${logo(t)}<b>${esc(t.name)}</b></div>
+          <p class="ti-line">Best lineup: <b>${e.avg0.toFixed(1)} → ${e.avg1.toFixed(1)}</b> projected points a week ${chg(e.avg0, e.avg1)}</p>
+          <p class="team-mgr">Week ${e.week} lineup ${moves ? moves : "doesn't change"}</p>
+          ${e.holes.length ? `<p class="ti-warn">Leaves no ${e.holes.join(" or ")} to start in week ${e.week}: they'd need a pickup.</p>` : ""}
+          <table class="ti-odds"><thead><tr><th></th><th>Before</th><th>After</th><th>Change</th></tr></thead><tbody>
+          ${oddsRow("Playoffs", t.id, 0)}${L.playoffTeams < 2 ** L.playoffRounds ? oddsRow("Bye", t.id, 1) : ""}${oddsRow("Title", t.id, 2)}</tbody></table></article>`;
+      };
+      const others = D.teams.filter(t => t.id !== T.a && t.id !== T.b && Math.abs(after[t.id][0] - before[t.id][0]) >= 1)
+        .sort((x, y) => Math.abs(after[y.id][0] - before[y.id][0]) - Math.abs(after[x.id][0] - before[x.id][0])).slice(0, 4);
+      const ripple = others.length ? `<p class="ti-ripple"><span class="kicker">Also moves</span> ${others.map(t => `${esc(t.name)}'s playoff odds ${p1(before[t.id][0])} → ${p1(after[t.id][0])}`).join(" · ")}</p>` : "";
+      const short = t => { const x = before[t.id][0], y = after[t.id][0]; return `${esc(t.name)} ${p1(x)} → ${p1(y)}`; };
+      sticky = `<div class="ti-sticky"><span class="kicker">Playoff odds</span> ${short(A)} · ${short(B)}</div>`;
+      result = `<div class="ti-cards">${card(A)}${card(B)}</div>${ripple}`;
+    }
+    main.innerHTML = head + deadline + result + `<div class="ti-pick">${sticky}<div class="ti-sides">${side(A, "a", T.ga)}${side(B, "b", T.gb)}</div></div>`;
+  }
+  function tiGo(T) {
+    const p = tiParams(T);
+    state.params = new URLSearchParams(p);
+    history.replaceState(null, "", href("trades", p, "impact"));
+    renderKeepScroll(renderTradeImpact);
+  }
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-ti-p]");
+    if (!b || state.tab !== "trades" || state.sub !== "impact") return;
+    const [k, id] = b.dataset.tiP.split(":"), T = tiState(), list = k === "a" ? T.ga : T.gb, pid = Number(id);
+    const next = list.includes(pid) ? list.filter(x => x !== pid) : list.concat(pid);
+    if (k === "a") T.ga = next; else T.gb = next;
+    tiGo(T);
+  });
+  document.addEventListener("change", e => {
+    const s = e.target.closest("[data-ti-team]");
+    if (!s || state.tab !== "trades" || state.sub !== "impact") return;
+    const T = tiState();
+    if (s.dataset.tiTeam === "a") { T.a = Number(s.value); T.ga = []; } else { T.b = Number(s.value); T.gb = []; }
+    tiGo(T);
+  });
+
   // ---------------------------------------------------------------- playoffs
   // Everything about who makes it and who wins it: the playoff picture (clinch / eliminate scenarios) and tiebreaker
   // race, playoff and title odds, seed odds, the scenario builder, and the bracket. Opens on the picture during the
@@ -2941,11 +3132,12 @@
   }
 
   // ---------------------------------------------------------------- trades
-  const TRADE_TABS = [["", "Trade history"], ["block", "Trade block"], ["compare", "Compare players"]];
+  const TRADE_TABS = [["", "Trade history"], ["block", "Trade block"], ["compare", "Compare players"], ["impact", "Trade impact"]];
 
   function renderTrades() {
     if (state.sub === "block") return renderBlock();
     if (state.sub === "compare") return renderCompare();
+    if (state.sub === "impact") return renderTradeImpact();
     const swap = '<div class="swap"><svg width="22" height="22" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>';
     const body = D.trades.map(tr => {
       const early = !tr.weeksSince;
@@ -3054,8 +3246,11 @@
     const chart = `<div class="cmp-chart"><div class="cmp-legend"><span><i class="cmp-a"></i>${esc(a.name)}</span><span><i class="cmp-b"></i>${esc(b.name)}</span><span class="muted">· = not on a league roster or didn't play</span></div>
       <div class="cmp-scroll"><svg viewBox="0 0 ${W} ${H + 18}" width="${W}" height="${H + 18}" role="img" aria-label="Weekly points">${ticks}
       ${weeks.map((w, i) => bar(a, w, i, 0, "cmp-a") + bar(b, w, i, bw, "cmp-b") + `<text x="${30 + i * (bw * 2 + gap) + bw}" y="${H + 14}" text-anchor="middle" class="cmp-axis">${w}</text>`).join("")}</svg></div></div>`;
+    // two players on different league teams this season: one tap to see what swapping them does to the odds
+    const swap = cur && a.owner && b.owner && a.owner !== b.owner && TI_POS.includes(a.pos) && TI_POS.includes(b.pos) && D.teams.every(t => t.odds && t.odds.wk)
+      ? `<p class="cmp-ti"><a class="wk-link" href="${tiHref(a.owner, [a.id], b.owner, [b.id])}">What would this trade do to both teams' playoff odds? ›</a></p>` : "";
     const box = main.querySelector(".cmp-body");
-    if (box) box.innerHTML = table + section("Week by week", "", chart);
+    if (box) box.innerHTML = swap + table + section("Week by week", "", chart);
   }
 
   // ---------------------------------------------------------------- trade block
@@ -3106,7 +3301,17 @@
     const fitLine = f => {
       const gives = (who, list) => list.length ? `<b>${esc(who.t.name)}</b> has ${list.map(p => esc(p.name) + " (" + esc(p.pos) + ")").join(", ")}` : "";
       const parts = [gives(f.A, f.aGives) && gives(f.A, f.aGives) + ` for ${esc(f.B.t.name)}`, gives(f.B, f.bGives) && gives(f.B, f.bGives) + ` for ${esc(f.A.t.name)}`].filter(Boolean);
-      return `<div class="tb-fit${f.two ? " two" : ""}"><span class="badge${f.two ? " new" : ""}">${f.two ? "Two-way fit" : "One-way fit"}</span> ${parts.join(" · ")}</div>`;
+      const odds = L.isCurrent && !L.over && D.teams.every(t => t.odds && t.odds.wk) && tiWeeks().length;
+      const tryIt = odds ? ` <a class="wk-link" href="${tiHref(f.A.t.id, f.aGives.filter(p => TI_POS.includes(p.pos)).map(p => p.id), f.B.t.id, f.bGives.filter(p => TI_POS.includes(p.pos)).map(p => p.id))}">See the odds impact ›</a>` : "";
+      return `<div class="tb-fit${f.two ? " two" : ""}"><span class="badge${f.two ? " new" : ""}">${f.two ? "Two-way fit" : "One-way fit"}</span> ${parts.join(" · ")}${tryIt}</div>`;
+    };
+    // their block players into Trade impact (against your team when you've claimed one), to start building an offer
+    const tryBlock = (t, l) => {
+      const blockIds = l.players.filter(p => TI_POS.includes(p.pos)).map(p => p.id);
+      if (!blockIds.length || !L.isCurrent || L.over || !D.teams.every(x => x.odds && x.odds.wk) || !tiWeeks().length) return "";
+      const mine = D.teams.find(isMine), p = { b: t.id, gb: blockIds.join(",") };
+      if (mine && mine.id !== t.id) p.a = mine.id;
+      return `<p class="tb-try"><a class="wk-link" href="${href("trades", p, "impact")}">See what their block does to the odds ›</a></p>`;
     };
     const card = t => {
       const l = L2[t.id];
@@ -3116,7 +3321,7 @@
         ${l.players.length ? `<div class="tb-row"><span class="kicker">On the block</span><div class="tb-chips">${l.players.map(chip).join("")}</div></div>` : ""}
         ${l.untouchable.length ? `<p class="tb-untouch"><span class="kicker">Untouchable</span> ${l.untouchable.map(p => esc(p.name)).join(", ")}</p>` : ""}
         ${l.needs.length ? `<div class="tb-row"><span class="kicker">Looking for</span><div class="tb-chips">${l.needs.map(p => `<span class="tb-chip need"><span class="slot ${esc(p)}">${esc(p)}</span></span>`).join("")}</div></div>` : ""}
-        ${l.note ? `<p class="tb-note">“${esc(l.note)}”</p>` : ""}</article>`;
+        ${l.note ? `<p class="tb-note">“${esc(l.note)}”</p>` : ""}${tryBlock(t, l)}</article>`;
     };
     const order = cur.teams.slice().sort((a, b) => (L2[b.id] ? 1 : 0) - (L2[a.id] ? 1 : 0) || a.standing - b.standing);
 
@@ -4367,6 +4572,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-24", [
+      ["Trade impact", "Trades → Trade impact", "Pick two teams and the players each would send: see both teams' best lineups and their playoff, bye and title odds before and after, plus anyone else's odds the trade moves. Linked from Compare players and the Trade block.", "#/trades/impact"],
       ["Playoffs tab", "Playoffs", "Everything about who makes it now lives in its own tab, right of Standings: the playoff picture and tiebreaker race (moved off Standings), playoff and seed odds and the scenario builder (from Insights), and the bracket (from Matchups). It opens on the bracket once the playoffs start.", "#/playoffs"],
       ["Games open Monday night", "Games", "Next week's pick'em, Pick 4, waiver wire challenge, Rank 'em, trivia and Guess the graph now open as soon as the week's last NFL game ends, instead of early Wednesday.", "#/games"],
       ["Bullseye retired", "Games", "Bullseye has been removed from Games.", "#/games"],
@@ -4547,6 +4753,7 @@
       ["winprob", "Win probability", "Matchups", "#/matchups", "ESPN's live chance each team wins its matchup, shown while the week is in progress.", []],
       ["bigplays", "Big plays", "Matchups → Big plays", "#/matchups/plays", "Touchdowns, 5+ point field goals, turnovers, big defensive plays and 30+ yard gains (50+ for a pass) by league players, caught from ESPN every minute during games, with the fantasy points that play was worth. The Season view adds them up by team and player since the feed started.", ["Team leaderboard"]],
       ["monday", "Monday-night math", "Matchups", "#/matchups", "Once a matchup is down to players in games that haven't started, what each side needs and a win chance from those players' own game logs.", []],
+      ["tradeimpact", "Trade impact", "Trades → Trade impact", "#/trades/impact", "What a trade would do to both teams: each one's best weekly lineup (QB, RB, WR, TE, FLEX by expected points, byes and injuries included) with and without it, and their playoff, bye and title odds from 10,000 simulations of the rest of the season and the bracket, run both ways with the same random draws. Half of the lineup change counts, the same pull toward the league average the playoff odds use. Kickers and defenses aren't counted.", ["Trade impact"]],
       ["build", "Scenario builder", "Playoffs → Scenario builder", "#/playoffs/scenarios", "Pick a winner for every regular-season game left and see the final standings, seeds, byes and first round. It starts from the favorites (ESPN's live win odds this week, the playoff odds' scoring model after). Teams level on wins are ordered by projected final points, which can be adjusted. The picks are saved in the link, so a scenario can be shared.", ["Scenario builder"]],
       ["tierace", "Tiebreaker race", "Playoffs → Picture, My team", "#/playoffs/picture", "Teams level on wins are separated by total points. From the playoff-odds simulations: how often a team ends level on wins with someone across the playoff (or bye) line (In a tie), how often it comes out ahead when that happens (Wins it), its projected final points, and the pairs that meet in that tie most often, with the gap now and at projections.", ["Tiebreaker race"]],
       ["clinch", "Clinched / eliminated", "Playoffs → Picture, My team", "#/playoffs/picture", "Exact, from the remaining schedule: clinched only if no combination of results can push a team out of the playoff spots (or bye spots), eliminated only if none can get it in. Points tiebreakers are treated as unknown (against a team for clinching, for it for elimination). The week's scenarios are the fewest results that settle it, whatever happens after.", ["Playoff picture"]],
@@ -5678,7 +5885,7 @@
     ["Matchups", "#/matchups", "Live scores every minute on game day, box scores, every big play and a watch guide."],
     ["Games", "#/games", "Weekly pick'em, Pick 4, trivia and puzzles about this league, with season leaderboards."],
     ["Insights", "#/insights", "Luck, hot and cold teams, lineups, schedule, the draft and what-ifs. Each tab has a switch at the top for its views."],
-    ["Trades", "#/trades", "Every trade with grades, the trade block, and side-by-side player comparisons."],
+    ["Trades", "#/trades", "Every trade with grades, the trade block, side-by-side player comparisons, and what a trade would do to both teams' playoff odds."],
     ["History", "#/history", "Every past season, the record book, player history and Tale of the tape for any two managers."]];
   function tourSteps() {
     const me = ME.member, pushOn = TOUR.push;
