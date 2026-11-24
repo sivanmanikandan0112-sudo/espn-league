@@ -3420,131 +3420,203 @@
   };
 
   // ---------------------------------------------------------------- League Wrapped (History → Wrapped)
-  // Each manager's season as a short story: one fact per slide (a big number or name, one plain sentence, at most one
-  // small picture), every number set against the league or its history. A slide is only included when it's worth
-  // showing for that team (bench regret only if a bench call cost a game, luck only for the 3 luckiest / unluckiest,
-  // ...), so everyone gets their own 8-12 slides. The tone celebrates, with a light roast. Ends with 2-3 league slides
-  // everyone shares and a summary card; every slide can be saved as an image. Finished seasons only: the current one
-  // opens the day the championship is decided. All from data the site already has (season file, player stints,
-  // the moves log, the history index).
+  // Each manager's finished season as a full-screen story. One idea per slide, every number set against the league or
+  // its history, with player photos (ESPN headshots), a guess-your-MVP slide, a Wrapped-style top 5, the road through
+  // the standings, and the team's strongest optional slides (clutch, best move, the one that got away, the
+  // heartbreaker, bench regret, luck, rivals, superlatives, trade of the year). The tone celebrates, with a light roast.
+  // Ends with the league's champion and week of the year and a trading-card summary; every slide shares as an image.
+  // Finished seasons only (the current one opens the day the championship is decided). All from data the site has.
   const WR_THEMES = {
-    brand: { bg: "#0c2a20", ink: "#eaf5ef", ink2: "#9fc7b3", hi: "#2bc47b" },
-    sun: { bg: "#f6c344", ink: "#241a00", ink2: "#5e4a0c", hi: "#241a00" },
-    sky: { bg: "#1f4fd1", ink: "#f2f5ff", ink2: "#bccbf7", hi: "#ffd84d" },
-    berry: { bg: "#5b2368", ink: "#fbefff", ink2: "#dcb5e6", hi: "#ff9bd2" },
-    coral: { bg: "#d9482a", ink: "#fff4ef", ink2: "#ffd0c2", hi: "#fff4ef" },
-    paper: { bg: "#f1f4f2", ink: "#0f1a16", ink2: "#56645e", hi: "#14824e" },
+    brand: { bg: "#0c2a20", ink: "#eaf5ef", ink2: "#9fc7b3", hi: "#2bc47b", sh: "#1d5a43" },
+    sun: { bg: "#f6c344", ink: "#241a00", ink2: "#5e4a0c", hi: "#d9482a", sh: "#ffdf80" },
+    sky: { bg: "#1f4fd1", ink: "#f2f5ff", ink2: "#bccbf7", hi: "#ffd84d", sh: "#3d6ef0" },
+    berry: { bg: "#5b2368", ink: "#fbefff", ink2: "#dcb5e6", hi: "#ff9bd2", sh: "#7a3a8a" },
+    coral: { bg: "#d9482a", ink: "#fff4ef", ink2: "#ffd0c2", hi: "#ffe066", sh: "#ee6a4c" },
+    paper: { bg: "#f1f4f2", ink: "#0f1a16", ink2: "#56645e", hi: "#14824e", sh: "#dbe5df" },
+    night: { bg: "#14112b", ink: "#f3f0ff", ink2: "#a9a3d6", hi: "#7cf2c5", sh: "#2a2457" },
   };
+  const WR_LIGHT = ["paper", "sun"];
   const WR_MS = 6500; // time on each slide
-  const WR_OPT = 4;   // optional slides per story (clutch, best move, the one that got away, bench, luck, rivals, type, awards...)
-  const WR = { slides: [], i: 0, start: 0, held: 0, paused: false, raf: 0, el: null, holdT: 0, downAt: 0 };
+  const WR_OPT = 3;   // optional slides per story
+  const WR = { slides: [], i: 0, start: 0, pauseAt: 0, paused: false, raf: 0, el: null, holdT: 0 };
   const wrLink = (season, extra) => "#/history/wrapped" + (() => { const p = new URLSearchParams(extra || {}); if (season !== IDX.current) p.set("season", season); const s = p.toString(); return s ? "?" + s : ""; })();
   const wrReady = () => L.over;
+  const wrPhoto = p => p.pos === "D/ST" ? `https://a.espncdn.com/i/teamlogos/nfl/500/${String(p.team || "").toLowerCase()}.png` : `https://a.espncdn.com/i/headshots/nfl/players/full/${p.id}.png`;
+  const WR_TYPE_ICON = [["loyalist", "🫡"], ["waiver", "🦅"], ["tinker", "🔧"], ["night", "🦉"], ["gut", "🎲"], ["planner", "📋"], ["deal", "🤝"], ["projection", "📈"], ["game-day", "⏰"], ["sunday", "☕"], ["quick", "⚡"], ["patient", "🧘"], ["all-rounder", "⭐"]];
+  const wrTypeIcon = type => (WR_TYPE_ICON.find(([k]) => String(type).toLowerCase().includes(k)) || [0, "🏈"])[1];
 
   // everything the slides need for one team, then the slides themselves
-  function wrSlides(t, P, M) {
+  function wrSlides(t, P, M, ST) {
     const RS = L.regularSeasonWeeks, f1 = n => Number(n || 0).toFixed(1), owner = (t.owners || [])[0];
     const tn = id => tname(id);
     const reg = D.weeks.filter(w => w.week <= RS && w.final);
     const pw = D.weeks.filter(w => w.week > RS && w.final && w.games.some(g => g.tier === "WINNERS_BRACKET"));
     const roundName = i => i === pw.length - 1 ? "the final" : i === pw.length - 2 ? "the semifinals" : i === 0 ? "the first round" : "round " + (i + 1);
-    const wkName = w => w > RS ? (pw.findIndex(x => x.week === w) >= 0 ? roundName(pw.findIndex(x => x.week === w)).replace(/^the /, "").replace(/^./, c => c.toUpperCase()) : "Playoffs") + ` (week ${w})` : `Week ${w}`;
-    // every game a team played that counts: regular season + winners bracket
+    const wkName = w => { const i = pw.findIndex(x => x.week === w); return w > RS && i >= 0 ? roundName(i).replace(/^the /, "").replace(/^./, c => c.toUpperCase()) + ` (week ${w})` : `Week ${w}`; };
     const games = [];
     reg.concat(pw).forEach(w => w.games.filter(g => g.sides.length === 2 && (w.week <= RS || g.tier === "WINNERS_BRACKET")).forEach(g =>
       g.sides.forEach((sd, k) => games.push({ w: w.week, sd, op: g.sides[1 - k], po: w.week > RS }))));
     const mine = games.filter(x => x.sd.team === t.id);
     const regMine = mine.filter(x => !x.po);
     const won = x => x.sd.pts > x.op.pts, lost = x => x.sd.pts < x.op.pts;
-    const slides = [];
-    const add = s => slides.push(s);
     const starters = sd => sd.lineup.filter(p => !["BE", "IR"].includes(p.slot));
+    const slides = [], add = s => slides.push(s);
+    // ranks against the league, and a player's real stat line over a set of weeks (from the season's stat file)
+    const rankOf = (f, x, hi = true) => 1 + D.teams.filter(o => hi ? f(o) > f(x) : f(o) < f(x)).length;
+    const n0 = v => Math.round(v).toLocaleString();
+    function pline(id, pos, weeks) {
+      const sum = {};
+      let g = 0;
+      (weeks || []).forEach(w => { const r = ST && ST[w + "|" + id]; if (!r) return; g++; Object.entries(r.r || {}).forEach(([k, v]) => { sum[k] = (sum[k] || 0) + v; }); });
+      if (!g) return [];
+      const v = k => sum[k] || 0, td = v(4) + v(25) + v(43);
+      if (pos === "QB") return [[n0(v(3)), "pass yds"], [String(v(4)), "pass TD"], [n0(v(24)), "rush yds"], [String(v(20)), "INT"]];
+      if (pos === "RB") return [[n0(v(24) + v(42)), "scrimmage yds"], [String(td), "TD"], [n0(v(24)), "rush yds"], [String(v(53)), "catches"]];
+      if (pos === "WR" || pos === "TE") return [[n0(v(42)), "rec yds"], [String(td), "TD"], [String(v(53)), "catches"], [String(v(58)), "targets"]];
+      return [];
+    }
+    const range = (a, b) => Array.from({ length: Math.max(0, b - a + 1) }, (_, k) => a + k);
+    let seed = (t.id * 7919 + L.season) % 2147483647 || 1;
+    const rand = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+
+    // player totals as a starter (regular season + winners bracket)
+    const tot = {};
+    let all = 0;
+    mine.forEach(x => starters(x.sd).forEach(p => {
+      const o = tot[p.id] || (tot[p.id] = { id: p.id, name: p.name, pos: p.pos, team: p.team, pts: 0, starts: 0, best: 0, bestW: 0, wks: [], big: 0 });
+      o.pts += p.pts || 0; o.starts++; all += p.pts || 0; o.wks.push(x.w); if ((p.pts || 0) >= 20) o.big++;
+      if ((p.pts || 0) > o.best) { o.best = p.pts || 0; o.bestW = x.w; }
+    }));
+    const ranked = Object.values(tot).sort((a, b) => b.pts - a.pts);
+    const mvp = ranked[0];
+    const starterTiles = p => { const ln = pline(p.id, p.pos, p.wks).slice(0, 2); return [[(p.pts / Math.max(1, p.starts)).toFixed(1), "pts per start"], [p.best.toFixed(1), `best game (wk ${p.bestW})`]].concat(ln.length ? ln : [[String(p.big), "20-pt games"]]); };
 
     // 1. cover
-    add({ key: "cover", theme: "brand", kicker: `${L.season} · League Wrapped`, big: t.name, line: `${t.manager}, here's your season.`, logo: t.logo, cover: true });
+    add({ key: "cover", theme: "night", kicker: `${L.season} League Wrapped`, big: t.name, line: `${t.manager}, this was your season.`, logo: t.logo, cover: true });
 
-    // 2. how it ended
+    // 2. the road through the standings (rank after each regular-season week; W/L on each dot)
+    {
+      const W = {}, PF = {};
+      D.teams.forEach(x => { W[x.id] = 0; PF[x.id] = 0; });
+      const road = [];
+      reg.forEach(w => {
+        w.games.filter(g => g.sides.length === 2).forEach(g => {
+          const [a, b] = g.sides; PF[a.team] += a.pts; PF[b.team] += b.pts;
+          if (a.pts > b.pts) W[a.team]++; else if (b.pts > a.pts) W[b.team]++; else { W[a.team] += 0.5; W[b.team] += 0.5; }
+        });
+        const order = D.teams.map(x => x.id).sort((x, y) => W[y] - W[x] || PF[y] - PF[x]);
+        const g = regMine.find(x => x.w === w.week);
+        road.push({ w: w.week, r: order.indexOf(t.id) + 1, res: g ? (won(g) ? "W" : lost(g) ? "L" : "T") : "" });
+      });
+      if (road.length >= 3) {
+        const first = road[0], last = road[road.length - 1];
+        const top = road.reduce((m, x) => (x.r < m.r ? x : m)), low = road.reduce((m, x) => (x.r > m.r ? x : m));
+        let line = `${ordinal(first.r)} after week ${first.w}`;
+        if (top.r < first.r && top !== last) line += `, as high as ${ordinal(top.r)} in week ${top.w}`;
+        if (low.r > first.r && low !== last && low.r > top.r + 2) line += `, as low as ${ordinal(low.r)} in week ${low.w}`;
+        line += `, and ${ordinal(last.r)} when the regular season ended.`;
+        if (t.finalRank === 1) line += " Then you won it all.";
+        let run = 0, best = 0;
+        regMine.forEach(x => { run = won(x) ? run + 1 : 0; best = Math.max(best, run); });
+        const inSpot = road.filter(x => x.r <= L.playoffTeams).length;
+        add({ key: "road", theme: "paper", kicker: "Your road", stats: [[`${inSpot}/${road.length}`, "weeks in a playoff spot"], [ordinal(top.r), `highest (wk ${top.w})`], [String(best), "longest win streak"]], big: first.r === last.r ? `${ordinal(last.r)}, start to finish` : `${ordinal(first.r)} → ${ordinal(last.r)}`, line,
+          sub: `${record(t)} regular season${best >= 3 ? ` · longest win streak: ${best}` : ""}`, road, cut: L.playoffTeams });
+      }
+    }
+
+    // 3. how it ended
     {
       const po = L.playoffTeams, order = D.teams.slice().sort((a, b) => (a.standing || 99) - (b.standing || 99));
       const finalG = pw.length ? mine.find(x => x.w === pw[pw.length - 1].week) : null;
-      let big = finishText(t.finalRank), line = "", theme = "sky";
+      const beat = D.teams.filter(x => x.pf < t.pf).length;
+      let big = finishText(t.finalRank), line = "", theme = "sky", confetti = false, emoji = "";
       if (t.finalRank === 1) {
-        theme = "sun";
+        theme = "sun"; confetti = true; emoji = "🏆";
         line = finalG ? `Beat ${tn(finalG.op.team)} ${f1(finalG.sd.pts)}–${f1(finalG.op.pts)} in the final.` : "League champion.";
         const ch = ((IDX.history || {}).champions || []).filter(c => c.record);
         const pctOf = r => { const [w, l] = String(r).split("-").map(Number); return w / Math.max(1, w + l); };
         const me = ch.find(x => x.season === L.season);
-        if (me && ch.length > 1 && ch.every(c => c === me || pctOf(c.record) > pctOf(me.record)))
-          line += ` From a ${record(t)} regular season: the worst record of any champion in league history. Didn't matter.`;
+        if (me && ch.length > 1 && ch.every(c => c === me || pctOf(c.record) > pctOf(me.record))) line += ` From a ${record(t)} regular season, the worst record of any champion in league history. Didn't matter.`;
       } else if (t.finalRank === 2 && finalG) {
-        line = `Lost the final to ${tn(finalG.op.team)} by ${f1(finalG.op.pts - finalG.sd.pts)}. So close.`;
+        emoji = "🥈"; line = `Lost the final to ${tn(finalG.op.team)} by ${f1(finalG.op.pts - finalG.sd.pts)}. One game away.`;
       } else if (t.seed && t.seed <= po) {
+        emoji = "🎟️";
         const out = mine.filter(x => x.po && lost(x)).pop();
-        line = `Made the playoffs as the ${ordinal(t.seed)} seed${out ? `, out in ${roundName(pw.findIndex(w => w.week === out.w))} to ${tn(out.op.team)}` : ""}.`;
+        line = `Made the playoffs as the ${ordinal(t.seed)} seed${out ? `, then went out in ${roundName(pw.findIndex(w => w.week === out.w))} to ${tn(out.op.team)}` : ""}.`;
       } else {
+        emoji = "📺";
         const last = order[po - 1];
-        if (last && last.wins === t.wins) line = `Missed the playoffs on points: ${f1(last.pf - t.pf)} behind ${last.name} for the last spot.`;
+        if (last && last.wins === t.wins) line = `Missed the playoffs on points: ${f1(last.pf - t.pf)} behind ${last.name} for the last spot. Brutal.`;
         else if (last) line = `Missed the playoffs by ${last.wins - t.wins} win${last.wins - t.wins === 1 ? "" : "s"}.`;
-        if (t.finalRank === L.size) { line += " Last place. Somebody had to be."; theme = "coral"; }
+        if (t.finalRank === L.size) { line += " Last place. Somebody had to be."; theme = "coral"; emoji = "🪦"; }
       }
-      add({ key: "finish", theme, kicker: "How it ended", big, line: line.trim(), sub: `${record(t)} · ${fmt(t.pf)} points for${t.seed ? ` · ${ordinal(t.seed)} seed` : ""}` });
+      const stats = [[`#${rankOf(x => x.pf, t)}`, "in points scored"], [`#${rankOf(x => x.pa, t)}`, "most points against"]];
+      if (t.allPlayW != null) stats.push([`${t.allPlayW}–${t.allPlayL}`, "vs. everyone, every week"]);
+      add({ key: "finish", theme, kicker: "How it ended", big, emoji, confetti, line: line.trim(), stats, sub: `${record(t)} · ${fmt(t.pf)} points, ${beat === L.size - 1 ? "the most in the league" : beat === 0 ? "the fewest in the league" : `more than ${beat} of the other ${L.size - 1} teams`}` });
     }
 
-    // 3. the season in one strip
-    if (regMine.length) {
-      let run = 0, best = [0, 0, 0], lrun = 0, worst = [0, 0, 0];
-      regMine.forEach(x => {
-        if (won(x)) { run++; lrun = 0; if (run > best[0]) best = [run, x.w - run + 1, x.w]; }
-        else { lrun++; run = 0; if (lrun > worst[0]) worst = [lrun, x.w - lrun + 1, x.w]; }
-      });
-      let line = best[0] >= 2 ? `Your best run: ${best[0]} straight wins (weeks ${best[1]}–${best[2]}).` : "Wins were hard to string together.";
-      if (worst[0] >= 4) line += ` Also a ${worst[0]}-game skid in weeks ${worst[1]}–${worst[2]}.`;
-      add({ key: "strip", theme: "paper", kicker: "Your season, week by week", big: record(t), line, strip: regMine.map(x => ({ w: x.w, r: won(x) ? "W" : lost(x) ? "L" : "T", pts: x.sd.pts })) });
+    // 4. guess your MVP, then 5. your top 5
+    if (ranked.length >= 4) {
+      const opts = ranked.slice(0, 4).map(p => ({ ...p })).sort(() => rand() - 0.5);
+      add({ key: "quiz", theme: "berry", kicker: "Quick question", big: "Who scored the most for you?", quiz: { options: opts, answer: mvp.id },
+        reveal: `${mvp.name}: ${f1(mvp.pts)} points, ${Math.round(100 * mvp.pts / Math.max(1, all))}% of everything you scored.`, face: mvp, stats: starterTiles(mvp) });
     }
+    if (ranked.length >= 3) add({ key: "top5", theme: "brand", kicker: "Your top players", big: "Your top 5", top5: ranked.slice(0, 5).map(p => ({ ...p, share: Math.round(100 * p.pts / Math.max(1, all)) })) });
 
-    // 4. your peak
+    // 6. peak and valley
     {
-      const top = mine.reduce((m, x) => (!m || x.sd.pts > m.sd.pts ? x : m), null);
+      const top = mine.reduce((m, x) => (!m || x.sd.pts > m.sd.pts ? x : m), null), low = mine.reduce((m, x) => (!m || x.sd.pts < m.sd.pts ? x : m), null);
       if (top) {
         const rank = 1 + games.filter(x => x.sd.pts > top.sd.pts).length;
         const where = rank === 1 ? "The highest score anyone put up all season." : `The ${ordinal(rank)}-best score of the ${games.length} this season.`;
-        add({ key: "peak", theme: "sky", kicker: "Your peak", big: f1(top.sd.pts), line: `${wkName(top.w)}${top.po ? ", when it counted most" : ""}. ${where}`,
-          bars: mine.map(x => ({ v: x.sd.pts, hi: x === top })) });
+        const star = starters(top.sd).sort((a, b) => (b.pts || 0) - (a.pts || 0))[0];
+        add({ key: "peak", theme: "sky", kicker: "Your peak", big: f1(top.sd.pts), count: top.sd.pts,
+          line: `${wkName(top.w)}${top.po ? ", when it counted most" : ""}. ${where}`, sub: star ? `${star.name} led the way with ${f1(star.pts)}.` : "",
+          bars: mine.map(x => ({ v: x.sd.pts, hi: x === top, lo: x === low })), low: low && low !== top ? `Your low: ${f1(low.sd.pts)} in ${wkName(low.w).toLowerCase()}.` : "",
+          stats: (() => { const avg = x => { const g = games.filter(y => y.sd.team === x.id && !y.po); return g.reduce((n, y) => n + y.sd.pts, 0) / Math.max(1, g.length); };
+            const lgAvg = games.filter(y => !y.po).reduce((n, y) => n + y.sd.pts, 0) / Math.max(1, games.filter(y => !y.po).length);
+            const tops = reg.filter(w => { const sc = games.filter(y => y.w === w.week); const mx = Math.max(...sc.map(y => y.sd.pts)); return sc.some(y => y.sd.team === t.id && y.sd.pts === mx); }).length;
+            return [[f1(avg(t)), `points a week (#${rankOf(avg, t)})`], [`${regMine.filter(x => x.sd.pts > lgAvg).length}/${regMine.length}`, "weeks above the league average"], [String(tops), `week${tops === 1 ? "" : "s"} with the league's top score`]]; })() });
       }
     }
 
-    // 5. MVP and 6. clutch
-    const tot = {};
-    let all = 0;
-    mine.forEach(x => starters(x.sd).forEach(p => { const o = tot[p.id] || (tot[p.id] = { id: p.id, name: p.name, pos: p.pos, pts: 0, starts: 0 }); o.pts += p.pts || 0; o.starts++; all += p.pts || 0; }));
-    const mvp = Object.values(tot).sort((a, b) => b.pts - a.pts)[0];
-    if (mvp) add({ key: "mvp", theme: "berry", kicker: "Your MVP", big: mvp.name, line: `${f1(mvp.pts)} points in your lineup: ${Math.round(100 * mvp.pts / Math.max(1, all))}% of everything you scored.`, sub: `${mvp.pos} · ${mvp.starts} starts` });
+    // optional slides (the team's strongest WR_OPT, kept in story order)
     {
       const decided = {};
-      mine.filter(won).forEach(x => { const margin = x.sd.pts - x.op.pts; starters(x.sd).filter(p => (p.pts || 0) > margin).forEach(p => { (decided[p.id] = decided[p.id] || { name: p.name, n: 0, close: null }).n++; }); });
+      mine.filter(won).forEach(x => { const margin = x.sd.pts - x.op.pts; starters(x.sd).filter(p => (p.pts || 0) > margin).forEach(p => { (decided[p.id] = decided[p.id] || { ...p, n: 0 }).n++; }); });
       const c = Object.values(decided).sort((a, b) => b.n - a.n)[0], wins = mine.filter(won).length;
-      if (c && c.n >= 3 && c.n >= 0.4 * wins && c.n < wins) add({ key: "clutch", opt: 10 * c.n / wins, theme: "brand", kicker: "Clutch", big: c.name, line: `Without his points you'd have lost ${c.n} of your ${wins} wins.` });
-      else if (c && c.n >= 3 && c.n === wins) add({ key: "clutch", opt: 12, theme: "brand", kicker: "Clutch", big: c.name, line: `Without his points you'd have lost every one of your ${wins} wins. Every one.` });
+      if (c && c.n >= 3 && c.n >= 0.4 * wins) add({ key: "clutch", opt: 10 * c.n / wins, theme: "night", kicker: "Mr. Clutch", big: c.name, face: c,
+        line: c.n === wins ? `Without his points you'd have lost every one of your ${wins} wins. Every one.` : `Without his points you'd have lost ${c.n} of your ${wins} wins.`, stats: tot[c.id] ? starterTiles(tot[c.id]) : null });
     }
-
-    // 7. best move and 8. the one that got away (player stints: [season, team, first, last, started, starts, total, how, out])
     if (P) {
-      const stints = Object.entries(P.players).flatMap(([id, x]) => x.s.filter(s => s[0] === L.season).map(s => ({ id, n: x.n, p: x.p, s })));
-      const moves = stints.filter(x => x.s[1] === t.id && (x.s[7] === "W" || x.s[7] === "T") && !["K", "D/ST"].includes(x.p)).sort((a, b) => b.s[4] - a.s[4]);
-      const bm = moves[0];
-      if (bm && bm.s[4] >= 50) add({ key: "move", opt: bm.s[4] / 25, theme: "sun", kicker: "Your best move", big: bm.n, line: `${bm.s[7] === "T" ? "Traded for" : "Picked up"} in week ${bm.s[2]}, then ${f1(bm.s[4])} points in your lineup.`, sub: `${bm.p} · ${bm.s[5]} starts for you` });
+      const stints = Object.entries(P.players).flatMap(([id, x]) => x.s.filter(s => s[0] === L.season).map(s => ({ id: Number(id), n: x.n, p: x.p, s })));
+      const teamOf = id => { for (const w of D.weeks) for (const g of w.games) for (const sd of g.sides) { const p = sd.lineup.find(q => q.id === id); if (p) return p.team; } return ""; };
+      const bm = stints.filter(x => x.s[1] === t.id && (x.s[7] === "W" || x.s[7] === "T") && !["K", "D/ST"].includes(x.p)).sort((a, b) => b.s[4] - a.s[4])[0];
+      if (bm && bm.s[4] >= 50) add({ key: "move", opt: bm.s[4] / 25, theme: "sun", kicker: "Your best move", big: bm.n, face: { id: bm.id, name: bm.n, pos: bm.p, team: teamOf(bm.id) },
+        line: `${bm.s[7] === "T" ? "Traded for" : "Picked up"} in week ${bm.s[2]}, then ${f1(bm.s[4])} points in your lineup.`,
+        stats: tot[bm.id] ? starterTiles(tot[bm.id]) : [[String(bm.s[5]), "starts for you"]].concat(pline(bm.id, bm.p, range(bm.s[2], bm.s[3])).slice(0, 3)) });
       const gone = stints.filter(x => x.s[1] === t.id && (x.s[8] === "X" || x.s[8] === "T") && !["K", "D/ST"].includes(x.p)).map(x => {
         const after = stints.filter(y => y.id === x.id && y.s[1] !== t.id && y.s[2] > x.s[3]);
         return { x, pts: after.reduce((n, y) => n + y.s[4], 0), to: after[0] };
       }).filter(g => g.to).sort((a, b) => b.pts - a.pts)[0];
       if (gone && gone.pts >= 60) {
         const champ = teamById[gone.to.s[1]] && teamById[gone.to.s[1]].finalRank === 1;
-        add({ key: "away", opt: gone.pts / 20, theme: "coral", kicker: "The one that got away", big: gone.x.n,
-          line: `You ${gone.x.s[8] === "T" ? "traded him away" : "dropped him"} after week ${gone.x.s[3]}. ${tn(gone.to.s[1])} started him for ${f1(gone.pts)} points${champ ? " on the way to the title" : ""}.` });
+        add({ key: "away", opt: gone.pts / 20, theme: "coral", kicker: "The one that got away", big: gone.x.n, face: { id: gone.x.id, name: gone.x.n, pos: gone.x.p, team: teamOf(gone.x.id) },
+          line: `You ${gone.x.s[8] === "T" ? "traded him away" : "dropped him"} after week ${gone.x.s[3]}. ${tn(gone.to.s[1])} started him for ${f1(gone.pts)} points${champ ? " on the way to the title" : ""}.`,
+          stats: [[f1(gone.x.s[4]), "started pts for you"], [f1(gone.pts), "started pts after"]].concat(pline(gone.x.id, gone.x.p, range(gone.x.s[3] + 1, L.finalWeek)).slice(0, 2)) });
       }
     }
-
-    // 9. bench regret (one bench-for-starter swap that would have flipped a loss), or a clean sheet
+    {
+      const close = mine.filter(lost).sort((a, b) => (a.op.pts - a.sd.pts) - (b.op.pts - b.sd.pts))[0];
+      if (close && close.op.pts - close.sd.pts < 5) {
+        const m = close.op.pts - close.sd.pts;
+        const bench = close.sd.lineup.filter(p => p.slot === "BE" && (p.pts || 0) > m).sort((a, b) => b.pts - a.pts)[0];
+        const cg = mine.filter(x => Math.abs(x.sd.pts - x.op.pts) < 10);
+        add({ key: "heart", stats: [[`${cg.filter(won).length}–${cg.filter(lost).length}`, "in games decided by under 10"], [String(mine.filter(lost).length), "losses in all"]], opt: 10 - 1.5 * m + (close.po ? 4 : 0), theme: "berry", kicker: "The heartbreaker", big: m.toFixed(2), count: m, emoji: "💔",
+          sub: "points. That's all it was.",
+          line: `${tn(close.op.team)} beat you ${f1(close.op.pts)}–${f1(close.sd.pts)} in ${wkName(close.w).toLowerCase()}.${bench ? ` Meanwhile ${bench.name} scored ${f1(bench.pts)} on your bench.` : ""}` });
+      }
+    }
     {
       const fits = (bp, slot) => slot === bp.pos || (slot === "FLEX" && ["RB", "WR", "TE"].includes(bp.pos));
       const costly = mine.filter(lost).map(x => {
@@ -3556,110 +3628,176 @@
         return best && { x, ...best };
       }).filter(Boolean).sort((a, b) => (b.x.po - a.x.po) || (b.gain - a.gain));
       const r = costly[0];
-      if (r && (costly.length >= 2 || r.x.po)) add({ key: "bench", opt: 3 * costly.length + (r.x.po ? 6 : 0), theme: "coral", kicker: "Bench regret", big: wkName(r.x.w),
-        line: `Starting ${r.bp.name} (${f1(r.bp.pts)}) over ${r.sp.name} (${f1(r.sp.pts)}) would have beaten ${tn(r.x.op.team)}.${costly.length > 1 ? ` That happened ${costly.length} times.` : " Ouch."}` });
-      else if (!r && mine.filter(lost).length >= 4) add({ key: "bench", opt: 4, theme: "brand", kicker: "Lineup calls", big: "Clean sheet", line: "Not one of your losses would have flipped with a different bench call. You just got outscored." });
+      const benchStats = [t.benchLeft != null ? [f1(t.benchLeft), `left on the bench (#${rankOf(x => x.benchLeft || 0, t)})`] : null, t.efficiency != null ? [`${t.efficiency}%`, `lineup efficiency (#${rankOf(x => x.efficiency || 0, t)})`] : null].filter(Boolean);
+      if (r && (costly.length >= 2 || r.x.po)) add({ key: "bench", stats: benchStats, opt: 3 * costly.length + (r.x.po ? 6 : 0), theme: "coral", kicker: "Bench regret", big: costly.length === 1 ? "1 loss" : `${costly.length} losses`, emoji: "🪑",
+        line: `That's how many games one bench swap would have flipped. The worst: ${r.bp.name} (${f1(r.bp.pts)}) sat while ${r.sp.name} (${f1(r.sp.pts)}) started in ${wkName(r.x.w).toLowerCase()}.`, face: { id: r.bp.id, name: r.bp.name, pos: r.bp.pos, team: r.bp.team } });
+      else if (!r && mine.filter(lost).length >= 4) add({ key: "bench", stats: benchStats, opt: 4, theme: "brand", kicker: "Lineup calls", big: "Clean sheet", emoji: "🧹", line: "Not one of your losses would have flipped with a different bench call. You just got outscored." });
     }
-
-    // 10. luck (only the extremes)
     if (t.luck != null) {
       const byLuck = D.teams.filter(x => x.luck != null).sort((a, b) => b.luck - a.luck), r = byLuck.indexOf(t);
       if (r >= 0 && (r < 3 || r >= byLuck.length - 3) && Math.abs(t.luck) >= 1) {
-        const lucky = r < 3 && t.luck > 0;
-        add({ key: "luck", opt: 4 * Math.abs(t.luck), theme: lucky ? "sun" : "berry", kicker: lucky ? "Luck" : "Bad luck", big: `${signed(t.luck)} wins`,
+        const lucky = t.luck > 0;
+        add({ key: "luck", stats: [t.allPlayW != null ? [`${t.allPlayW}–${t.allPlayL}`, "vs. everyone, every week"] : null, [n0(t.pa), `points against you (#${rankOf(x => x.pa, t)} most)`]].filter(Boolean), opt: 4 * Math.abs(t.luck), theme: lucky ? "sun" : "night", kicker: lucky ? "Luck" : "Bad luck", big: `${signed(t.luck)} wins`, emoji: lucky ? "🍀" : "🌧️",
           line: lucky ? `You won ${t.wins}; your scoring deserved about ${f1(t.expectedWins)}. The ${r === 0 ? "" : ordinal(r + 1) + "-"}luckiest team in the league. We all noticed.`
             : `You won ${t.wins}; your scoring deserved about ${f1(t.expectedWins)}. The ${r === byLuck.length - 1 ? "" : ordinal(byLuck.length - r) + "-"}unluckiest team in the league. The schedule had it out for you.` });
       }
     }
-
-    // 11. nemesis and favorite victim (all-time head to head, plus this season)
     {
       const H = (IDX.history || {}).h2h || {};
-      const rows = Object.entries(H).filter(([k]) => k.split("|")[0] === owner).map(([k, v]) => ({ m: k.split("|")[1], w: v[0], l: v[1], g: v[0] + v[1] + v[2] })).filter(r => r.g >= 3);
+      const rows = Object.entries(H).filter(([k]) => k.split("|")[0] === owner).map(([k, v]) => ({ m: k.split("|")[1], w: v[0], l: v[1], g: v[0] + v[1] + v[2], pf: v[3], pa: v[4] })).filter(r => r.g >= 3);
       const nem = rows.filter(r => r.l > r.w).sort((a, b) => (b.l - b.w) - (a.l - a.w) || b.g - a.g)[0];
       const vic = rows.filter(r => r.w > r.l).sort((a, b) => (b.w - b.l) - (a.w - a.l) || b.g - a.g)[0];
-      const thisYear = m => { const tm = D.teams.find(x => (x.owners || []).includes(m)); const gs = tm ? mine.filter(x => x.op.team === tm.id) : []; return gs.length ? ` (${gs.filter(won).length}–${gs.filter(lost).length} this season)` : ""; };
-      if (nem || vic) add({ key: "rivals", opt: 6, theme: "paper", kicker: "Your rivals", big: nem ? memberName(nem.m) : memberName(vic.m),
-        line: [nem ? `Nemesis: ${memberName(nem.m)}, ${nem.w}–${nem.l} all-time${thisYear(nem.m)}.` : "", vic ? `Favorite victim: ${memberName(vic.m)}, ${vic.w}–${vic.l}${thisYear(vic.m)}.` : ""].filter(Boolean).join(" ") });
+      const thisYear = m => { const tm = D.teams.find(x => (x.owners || []).includes(m)); const gs = tm ? mine.filter(x => x.op.team === tm.id) : []; return gs.length ? `${gs.filter(won).length}–${gs.filter(lost).length} this season` : ""; };
+      if (nem && vic) add({ key: "rivals", opt: 6, theme: "paper", kicker: "Your rivals", big: "Rivals", rivals: [
+        { label: "Your nemesis", name: memberName(nem.m), rec: `${nem.w}–${nem.l} all-time`, yr: thisYear(nem.m), emoji: "😤", avg: `average ${f1(nem.pf / nem.g)}–${f1(nem.pa / nem.g)}` },
+        { label: "Your favorite victim", name: memberName(vic.m), rec: `${vic.w}–${vic.l} all-time`, yr: thisYear(vic.m), emoji: "😈", avg: `average ${f1(vic.pf / vic.g)}–${f1(vic.pa / vic.g)}` }] });
     }
-
-    // 12. manager type (from the moves log)
-    const style = M && M.style && M.style[t.id];
-    if (style && style.type) add({ key: "type", opt: 7, theme: "sky", kicker: "Your manager type", big: style.type,
-      line: (style.traits || []).map(x => x[2].replace(/^./, c => c.toUpperCase())).join(". ") + ((style.traits || []).length ? "." : "From how you ran your team all season.") });
-
-    // 13. superlatives: season awards and badges
     {
       const by = f => D.teams.reduce((m, x) => (m == null || f(x) > f(m) ? x : m), null);
       const aw = [];
-      if (by(x => x.pf) === t) aw.push("Most points in the league");
-      if (D.teams.some(x => x.efficiency != null) && by(x => x.efficiency || 0) === t) aw.push(`Best lineups (${t.efficiency}% efficiency)`);
-      if (D.teams.some(x => x.benchLeft != null) && by(x => x.benchLeft || 0) === t) aw.push("Most points left on the bench");
+      if (by(x => x.pf) === t) aw.push(["💰", "Most points in the league"]);
+      if (D.teams.some(x => x.efficiency != null) && by(x => x.efficiency || 0) === t) aw.push(["🎯", `Best lineups (${t.efficiency}% efficiency)`]);
+      if (D.teams.some(x => x.benchLeft != null) && by(x => x.benchLeft || 0) === t) aw.push(["🪑", "Most points left on the bench"]);
       const B = (IDX.history || {}).badges || {}, defs = Object.fromEntries((B.defs || []).map(d => [d.id, d]));
       const seen = new Set();
       ((B.earned || {})[owner] || []).filter(e => e[1] === L.season && defs[e[0]] && !["champ", "runner"].includes(e[0])).forEach(e => {
         if (seen.has(e[0])) return; seen.add(e[0]);
-        aw.push(`${defs[e[0]].name}${e[4] ? ` (${e[4]})` : ""}`);
+        aw.push([BADGE_ICON[e[0]] || "🏅", `${defs[e[0]].name}${e[4] ? ` (${e[4]})` : ""}`]);
       });
-      if (aw.length) add({ key: "awards", opt: 2 + 2 * aw.length, theme: "berry", kicker: "Your superlatives", big: aw.length === 1 ? "1 award" : `${aw.length} awards`, list: aw.slice(0, 5) });
+      if (aw.length >= 2) add({ key: "awards", opt: 2 + 2 * aw.length, theme: "berry", kicker: "Your superlatives", big: `${aw.length} awards`, list: aw.slice(0, 5) });
+    }
+    {
+      const tw = (D.trades || []).filter(tr => tr.sides && tr.sides.length === 2).map(tr => { const [a, b] = tr.sides.slice().sort((x, y) => (y.started || 0) - (x.started || 0)); return { a, b, edge: (a.started || 0) - (b.started || 0) }; })
+        .sort((x, y) => y.edge - x.edge)[0];
+      if (tw && tw.edge > 0 && (tw.a.team === t.id || tw.b.team === t.id)) {
+        const mineWon = tw.a.team === t.id;
+        add({ key: "ltrade", opt: 7, theme: mineWon ? "sun" : "coral", kicker: "The trade of the year", big: mineWon ? "You won it" : "You lost it", emoji: mineWon ? "🤝" : "🫠",
+          line: `${tn(tw.a.team)} got ${tw.a.gets.map(g => g.name).join(", ")} from ${tn(tw.b.team)}: ${Math.round(tw.a.started || 0)} started points back, against ${Math.round(tw.b.started || 0)} the other way.` });
+      }
     }
 
-    // 14-16. the league's year (the same for everyone)
+    // manager type (from the moves log)
+    const style = M && M.style && M.style[t.id];
+    const rk = k => style && style.ranks && style.ranks[k] ? ` (#${style.ranks[k]})` : "";
+    if (style && style.type) add({ key: "type", theme: "sky", kicker: "Your manager type", big: style.type, emoji: wrTypeIcon(style.type),
+      stats: [[String(style.adds || 0), `pickups${rk("adds")}`], [String(style.trades || 0), `trades${rk("trades")}`], [String(style.acts || 0), "moves in all"], style.days ? [["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][style.days.indexOf(Math.max(...style.days))], "busiest day"] : null].filter(Boolean),
+      chips: (style.traits || []).map(x => x[2].replace(/^./, c => c.toUpperCase())), line: (style.traits || []).length ? "" : "From how you ran your team all season." });
+
+    // the league's year (the same for everyone)
     {
       const champ = D.teams.find(x => x.finalRank === 1);
       const fin = pw.length && champ ? games.find(x => x.w === pw[pw.length - 1].week && x.sd.team === champ.id) : null;
-      if (champ && champ !== t) add({ key: "lchamp", theme: "sun", kicker: `The ${L.season} champion`, big: champ.name, line: fin ? `Beat ${tn(fin.op.team)} ${f1(fin.sd.pts)}–${f1(fin.op.pts)} in the final, after a ${record(champ)} regular season.` : `${record(champ)} in the regular season.`, logo: champ.logo });
+      if (champ && champ !== t) add({ key: "lchamp", theme: "sun", kicker: `Your ${L.season} champion`, big: champ.name, emoji: "🏆", logo: champ.logo,
+        stats: [[champ.seed ? ordinal(champ.seed) : "—", "seed"], [`#${rankOf(x => x.pf, champ)}`, "in points for"], [(() => { const h = ((IDX.history || {}).h2h || {})[`${owner}|${(champ.owners || [])[0]}`]; return h ? `${h[0]}–${h[1]}` : "—"; })(), "your all-time record vs. them"]],
+        line: fin ? `Beat ${tn(fin.op.team)} ${f1(fin.sd.pts)}–${f1(fin.op.pts)} in the final, after a ${record(champ)} regular season.` : `${record(champ)} in the regular season.` });
       const hi = games.reduce((m, x) => (!m || x.sd.pts > m.sd.pts ? x : m), null);
-      if (hi) add({ key: "lweek", theme: "brand", kicker: "The week of the year", big: f1(hi.sd.pts), line: `${tn(hi.sd.team)}, ${wkName(hi.w).toLowerCase()}. Nobody scored more all season.` });
-      const tw = (D.trades || []).filter(tr => tr.sides && tr.sides.length === 2).map(tr => { const [a, b] = tr.sides.slice().sort((x, y) => (y.started || 0) - (x.started || 0)); return { a, b, edge: (a.started || 0) - (b.started || 0) }; })
-        .sort((x, y) => y.edge - x.edge)[0];
-      if (tw && tw.edge > 0 && (tw.a.team === t.id || tw.b.team === t.id)) add({ key: "ltrade", opt: 5, theme: "paper", kicker: "The trade of the year", big: tn(tw.a.team),
-        line: `Got ${tw.a.gets.map(g => g.name).join(", ")} from ${tn(tw.b.team)}: ${Math.round(tw.a.started || 0)} started points back, against ${Math.round(tw.b.started || 0)} the other way.` });
+      if (hi) {
+        const star = starters(hi.sd).sort((a, b) => (b.pts || 0) - (a.pts || 0))[0];
+        add({ key: "lweek", theme: "night", kicker: "The week of the year", big: f1(hi.sd.pts), count: hi.sd.pts,
+          line: `${hi.sd.team === t.id ? "That was you" : tn(hi.sd.team)}, ${wkName(hi.w).toLowerCase()}. Nobody scored more all season.`, sub: star ? `Led by ${star.name}: ${f1(star.pts)} points` : "", face: star ? { id: star.id, name: star.name, pos: star.pos, team: star.team } : null,
+          stats: star ? pline(star.id, star.pos, [hi.w]).slice(0, 3) : null });
+      }
     }
 
-    // 17. summary card
+    // the summary card
     const best = mine.reduce((m, x) => (!m || x.sd.pts > m.sd.pts ? x : m), null);
-    add({ key: "summary", theme: "brand", kicker: `Your ${L.season}, in one card`, big: t.name, summary: [
-      ["Finish", finishText(t.finalRank)], ["Record", record(t)], mvp && ["MVP", mvp.name], best && ["Best week", f1(best.sd.pts)],
-      style && style.type && ["Manager type", style.type], t.luck != null && ["Luck", `${signed(t.luck)} wins`],
-    ].filter(Boolean), logo: t.logo });
-    // keep it to about a minute: the core slides always, plus this team's WR_OPT strongest optional ones (in story order)
+    add({ key: "summary", theme: "brand", kicker: `${L.season} League Wrapped`, big: t.name, logo: t.logo, face: mvp || null, card: {
+      mvp: mvp ? [mvp.name, `${f1(mvp.pts)} pts`] : null,
+      tiles: [["Finish", finishText(t.finalRank)], ["Record", record(t)], ["Best week", best ? f1(best.sd.pts) : "—"], ["Points", fmt(t.pf)],
+        style && style.type ? ["Type", style.type] : null, t.luck != null ? ["Luck", `${signed(t.luck)} W`] : null].filter(Boolean) } });
+
     const keep = new Set(slides.filter(x => x.opt != null).sort((a, b) => b.opt - a.opt).slice(0, WR_OPT));
     return slides.filter(x => x.opt == null || keep.has(x));
   }
 
-  // ---- the story viewer
-  function wrSlideHtml(s) {
-    const th = WR_THEMES[s.theme] || WR_THEMES.brand;
-    const style = `--wr-bg:${th.bg};--wr-ink:${th.ink};--wr-ink2:${th.ink2};--wr-hi:${th.hi}`;
-    const big = esc(s.big), long = String(s.big).length > 16;
-    let viz = "";
-    if (s.strip) viz = `<div class="wr-strip">${s.strip.map(x => `<span class="wr-tile ${x.r}" title="Week ${x.w}: ${x.pts.toFixed(1)}"><b>${x.r}</b><i>${Math.round(x.pts)}</i></span>`).join("")}</div>`;
-    if (s.bars) { const mx = Math.max(...s.bars.map(b => b.v), 1); viz = `<div class="wr-bars-v" aria-hidden="true">${s.bars.map(b => `<span class="${b.hi ? "hi" : ""}" style="height:${Math.max(6, 100 * b.v / mx).toFixed(0)}%"></span>`).join("")}</div>`; }
-    if (s.list) viz = `<ul class="wr-list">${s.list.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`;
-    if (s.summary) viz = `<dl class="wr-sum">${s.summary.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
-    const lg = s.logo !== undefined && (s.cover || s.key === "lchamp") ? `<div class="wr-logo">${logoImg(s.logo, s.big, "wr-lg")}</div>` : "";
-    return `<div class="wr-slide${s.cover ? " cover" : ""}${s.summary ? " summary" : ""}" style="${style}">
-      <p class="wr-kicker">${esc(s.kicker)}</p>${s.cover ? lg : ""}
-      <p class="wr-big${long ? " long" : ""}">${big}</p>
-      ${s.line ? `<p class="wr-line">${esc(s.line)}</p>` : ""}${s.sub ? `<p class="wr-sub">${esc(s.sub)}</p>` : ""}
-      ${viz}${!s.cover && lg ? lg : ""}
-      ${s.summary ? `<p class="wr-site">${esc(SITE_URL)}</p>` : ""}</div>`;
+  // ---- slide markup
+  const wrFace = (p, cls) => p ? `<span class="wr-face ${cls || ""}"><b>${esc(initials(p.name))}</b><img src="${esc(wrPhoto(p))}" alt="" onerror="this.remove()"></span>` : "";
+  function wrRoadSvg(road, cut, th) {
+    const n = road.length, W = 320, H = 170, padX = 14, padY = 16, maxR = L.size;
+    const x = i => padX + i * (W - padX * 2) / Math.max(1, n - 1), y = r => padY + (r - 1) * (H - padY * 2) / Math.max(1, maxR - 1);
+    const pts = road.map((p, i) => `${x(i).toFixed(1)},${y(p.r).toFixed(1)}`).join(" ");
+    const cy = (y(cut) + y(cut + 1)) / 2;
+    return `<svg class="wr-road" viewBox="0 0 ${W} ${H}" role="img" aria-label="Your place in the standings after each week">
+      ${cut && cut < maxR ? `<line x1="0" x2="${W}" y1="${cy}" y2="${cy}" class="wr-cut"/><text x="${W - 2}" y="${cy - 5}" text-anchor="end" class="wr-cut-t">playoff line</text>` : ""}
+      <polyline points="${pts}" class="wr-path" pathLength="1"/>
+      ${road.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.r).toFixed(1)}" r="${i === n - 1 ? 7 : 5}" class="wr-dot ${p.res}" style="--d:${(0.5 + i * 0.06).toFixed(2)}s"/>`).join("")}
+      <text x="${x(n - 1).toFixed(1)}" y="${(y(road[n - 1].r) + (road[n - 1].r > maxR / 2 ? -14 : 24)).toFixed(1)}" text-anchor="end" class="wr-road-t">${ordinal(road[n - 1].r)}</text>
+    </svg>`;
   }
+  function wrSlideHtml(s, idx) {
+    const th = WR_THEMES[s.theme] || WR_THEMES.brand;
+    const style = `--wr-bg:${th.bg};--wr-ink:${th.ink};--wr-ink2:${th.ink2};--wr-hi:${th.hi};--wr-sh:${th.sh}`;
+    const long = String(s.big).length > 18, d = k => `style="--d:${k}s"`;
+    let body = "";
+    if (s.cover) {
+      body = `<div class="wr-a wr-cover-logo" ${d(0.1)}>${logoImg(s.logo, s.big, "wr-lg")}</div>
+        <p class="wr-a wr-kicker" ${d(0.3)}>${esc(s.kicker)}</p><p class="wr-a wr-big${long ? " long" : ""}" ${d(0.45)}>${esc(s.big)}</p><p class="wr-a wr-line" ${d(0.7)}>${esc(s.line)}</p>
+        <p class="wr-a wr-hint" ${d(1.4)}>Tap to start ›</p>`;
+    } else if (s.quiz) {
+      body = `<p class="wr-a wr-kicker" ${d(0.1)}>${esc(s.kicker)}</p><p class="wr-a wr-big long" ${d(0.25)}>${esc(s.big)}</p>
+        <div class="wr-quiz${s.answered ? " done" : ""}">${s.quiz.options.map((p, k) => `<button type="button" class="wr-a wr-opt${s.answered ? (p.id === s.quiz.answer ? " right" : p.id === s.answered ? " wrong" : " dim") : ""}" data-wr-guess="${p.id}" ${d((0.45 + k * 0.1).toFixed(2))}>${wrFace(p)}<span>${esc(p.name)}</span></button>`).join("")}</div>
+        <p class="wr-line wr-reveal"${s.answered ? "" : " hidden"}>${s.answered === s.quiz.answer ? "Nailed it. " : s.answered ? "Not quite. " : ""}${esc(s.reveal)}</p>
+        <div class="wr-reveal-stats"${s.answered ? "" : " hidden"}>${s.stats ? wrTiles(s.stats, 0.1) : ""}</div>`;
+    } else if (s.top5) {
+      body = `<p class="wr-a wr-kicker" ${d(0.1)}>${esc(s.kicker)}</p><p class="wr-a wr-big" ${d(0.25)}>${esc(s.big)}</p>
+        <ol class="wr-top5">${s.top5.map((p, k) => `<li class="wr-a${k === 0 ? " first" : ""}" ${d((0.5 + k * 0.18).toFixed(2))}><span class="wr-rank">${k + 1}</span>${wrFace(p)}<span class="wr-pn"><b>${esc(p.name)}</b><span>${esc(p.pos)} · ${p.share}% of your points · ${(p.pts / Math.max(1, p.starts)).toFixed(1)}/start</span></span><span class="wr-pp">${Math.round(p.pts)}</span></li>`).join("")}</ol>`;
+    } else if (s.card) {
+      body = `<div class="wr-a wr-card" ${d(0.1)}><div class="wr-card-h">${logoImg(s.logo, s.big, "wr-card-logo")}<div><p class="wr-kicker">${esc(s.kicker)}</p><p class="wr-card-name">${esc(s.big)}</p></div></div>
+        ${s.card.mvp ? `<div class="wr-card-mvp">${wrFace(s.face, "lg")}<div><span>MVP</span><b>${esc(s.card.mvp[0])}</b><span>${esc(s.card.mvp[1])}</span></div></div>` : ""}
+        <div class="wr-tiles">${s.card.tiles.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}</div>
+        <p class="wr-site">${esc(SITE_URL)}</p></div>`;
+    } else if (s.rivals) {
+      body = `<p class="wr-a wr-kicker" ${d(0.1)}>${esc(s.kicker)}</p>
+        <div class="wr-rivals">${s.rivals.map((r, k) => `<div class="wr-a wr-rival" ${d((0.3 + k * 0.35).toFixed(2))}><span class="wr-emoji sm">${r.emoji}</span><p class="wr-kicker">${esc(r.label)}</p><p class="wr-big long">${esc(r.name)}</p><p class="wr-line">${esc(r.rec)}${r.yr ? ` · ${esc(r.yr)}` : ""}</p><p class="wr-sub">${esc(r.avg)} in those games</p></div>`).join("")}</div>`;
+    } else {
+      const num = s.count != null ? ` data-count="${s.count}" data-dec="${String(s.big).includes(".") ? String(s.big).split(".")[1].length : 0}"` : "";
+      body = `${s.emoji ? `<span class="wr-a wr-emoji" ${d(0.05)}>${s.emoji}</span>` : ""}${s.face && !s.card ? `<div class="wr-a" ${d(0.05)}>${wrFace(s.face, "hero")}</div>` : ""}
+        ${s.logo && !s.cover ? `<div class="wr-a" ${d(0.05)}>${logoImg(s.logo, s.big, "wr-lg")}</div>` : ""}
+        <p class="wr-a wr-kicker" ${d(0.15)}>${esc(s.kicker)}</p>
+        <p class="wr-a wr-big${long ? " long" : ""}" ${d(0.3)}${num}>${esc(s.big)}</p>
+        ${s.line ? `<p class="wr-a wr-line" ${d(0.55)}>${esc(s.line)}</p>` : ""}${s.sub ? `<p class="wr-a wr-sub" ${d(0.7)}>${esc(s.sub)}</p>` : ""}
+        ${s.chips ? `<div class="wr-chips">${s.chips.map((c, k) => `<span class="wr-a" ${d((0.6 + k * 0.15).toFixed(2))}>${esc(c)}</span>`).join("")}</div>` : ""}
+        ${s.road ? `<div class="wr-a" ${d(0.45)}>${wrRoadSvg(s.road, s.cut, th)}</div>` : ""}
+        ${s.bars ? (() => { const mx = Math.max(...s.bars.map(b => b.v), 1); return `<div class="wr-bars-v" aria-hidden="true">${s.bars.map((b, k) => `<span class="wr-bar${b.hi ? " hi" : ""}${b.lo ? " lo" : ""}" style="height:${Math.max(6, 100 * b.v / mx).toFixed(0)}%;--d:${(0.6 + k * 0.04).toFixed(2)}s"></span>`).join("")}</div>${s.low ? `<p class="wr-a wr-sub" ${d(1.3)}>${esc(s.low)}</p>` : ""}`; })() : ""}
+        ${s.stats && s.stats.length ? wrTiles(s.stats, 0.95) : ""}
+        ${s.list ? `<ul class="wr-list">${s.list.map(([e, x], k) => `<li class="wr-a" ${d((0.5 + k * 0.18).toFixed(2))}><span>${e}</span>${esc(x)}</li>`).join("")}</ul>` : ""}`;
+    }
+    const deco = `<div class="wr-deco p${idx % 4}" aria-hidden="true"><i></i><i></i><i></i></div>`;
+    const confetti = s.confetti ? `<div class="wr-confetti" aria-hidden="true">${Array.from({ length: 36 }, (_, k) => `<i style="left:${(k * 37) % 100}%;--c:${["#2bc47b", "#d9482a", "#1f4fd1", "#ffffff", "#5b2368"][k % 5]};--t:${(1.6 + (k % 7) * 0.25).toFixed(2)}s;--dl:${((k % 9) * 0.12).toFixed(2)}s;--r:${(k * 47) % 360}deg"></i>`).join("")}</div>` : "";
+    return `<div class="wr-slide k-${s.key}${s.cover ? " cover" : ""}" style="${style}">${deco}${confetti}<div class="wr-body">${body}</div></div>`;
+  }
+  const wrTiles = (stats, d0) => `<div class="wr-stats">${stats.slice(0, 4).map(([v, k], i) => `<div class="wr-a" style="--d:${(d0 + i * 0.12).toFixed(2)}s"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("")}</div>`;
+  // numbers count up when their slide appears
+  function wrCount(el) {
+    const n = el.querySelector("[data-count]");
+    if (!n || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const to = Number(n.dataset.count), dec = Number(n.dataset.dec || 0), t0 = performance.now(), dur = 1100, delay = 300;
+    const step = now => {
+      if (!document.body.contains(n)) return;
+      const k = Math.min(1, Math.max(0, (now - t0 - delay) / dur)), e = 1 - Math.pow(1 - k, 3);
+      n.textContent = (to * e).toFixed(dec);
+      if (k < 1) requestAnimationFrame(step);
+    };
+    n.textContent = (0).toFixed(dec);
+    requestAnimationFrame(step);
+  }
+
+  // ---- the story viewer
+  const wrWaiting = () => { const s = WR.slides[WR.i]; return !!(s && s.quiz && !s.answered); };
   function wrShow(i) {
     WR.i = Math.max(0, Math.min(WR.slides.length - 1, i));
     WR.start = performance.now(); WR.pauseAt = 0;
-    const box = WR.el.querySelector(".wr-stage");
-    box.innerHTML = wrSlideHtml(WR.slides[WR.i]);
-    WR.el.querySelector(".wr-story").classList.toggle("light", ["paper", "sun"].includes(WR.slides[WR.i].theme)); // dark top bar on light slides
+    const s = WR.slides[WR.i], box = WR.el.querySelector(".wr-stage");
+    box.innerHTML = wrSlideHtml(s, WR.i);
+    wrCount(box);
+    WR.el.querySelector(".wr-story").classList.toggle("light", WR_LIGHT.includes(s.theme));
     WR.el.querySelectorAll(".wr-prog i").forEach((b, k) => { b.style.width = k < WR.i ? "100%" : "0%"; });
-    const last = WR.i === WR.slides.length - 1;
-    WR.el.querySelector(".wr-end").hidden = !last;
+    WR.el.querySelector(".wr-end").hidden = WR.i !== WR.slides.length - 1;
     WR.el.querySelector(".wr-count").textContent = `${WR.i + 1} / ${WR.slides.length}`;
   }
   function wrTick(now) {
     if (!WR.el) return;
-    const paused = WR.paused || !!document.querySelector(".share-modal") || document.hidden;
+    const paused = WR.paused || wrWaiting() || !!document.querySelector(".share-modal") || document.hidden;
     if (paused) { if (!WR.pauseAt) WR.pauseAt = now; }
     else if (WR.pauseAt) { WR.start += now - WR.pauseAt; WR.pauseAt = 0; }
     const t = paused ? WR.pauseAt - WR.start : now - WR.start;
@@ -3684,6 +3822,20 @@
     else if (e.key === "ArrowLeft") wrShow(WR.i - 1);
     else if (e.key === " ") { e.preventDefault(); WR.paused = !WR.paused; }
   }
+  function wrGuess(id) {
+    const s = WR.slides[WR.i];
+    if (!s || !s.quiz || s.answered) return;
+    s.answered = id;
+    const box = WR.el.querySelector(".wr-stage");
+    box.querySelectorAll(".wr-opt").forEach(b => { const v = Number(b.dataset.wrGuess); b.classList.add(v === s.quiz.answer ? "right" : v === id ? "wrong" : "dim"); });
+    box.querySelector(".wr-quiz").classList.add("done");
+    const rv = box.querySelector(".wr-reveal");
+    rv.textContent = (id === s.quiz.answer ? "Nailed it. " : "Not quite. ") + s.reveal;
+    rv.hidden = false;
+    const rs = box.querySelector(".wr-reveal-stats");
+    if (rs) rs.hidden = false;
+    WR.start = performance.now() - WR_MS * 0.35; // a few seconds to take in the answer, then on
+  }
   function wrOpen(t, slides) {
     wrClose();
     WR.slides = slides; WR.paused = false; WR.pauseAt = 0; WR.team = t;
@@ -3703,19 +3855,19 @@
     WR.el = el;
     document.documentElement.classList.add("wr-open");
     document.addEventListener("keydown", wrKey);
-    // tap left / right to move, hold anywhere on the slide to pause
     const story = el.querySelector(".wr-story");
     story.addEventListener("pointerdown", e => {
       if (e.target.closest("button:not(.wr-tap)")) return;
-      WR.downAt = performance.now();
       WR.holdT = setTimeout(() => { WR.paused = true; WR.holding = true; }, 220);
     });
     const up = () => { clearTimeout(WR.holdT); if (WR.holding) { WR.holding = false; WR.paused = false; WR.suppress = true; } };
     story.addEventListener("pointerup", up); story.addEventListener("pointercancel", up); story.addEventListener("pointerleave", up);
     el.addEventListener("click", e => {
       if (WR.suppress) { WR.suppress = false; if (e.target.closest(".wr-tap")) return; }
+      const g = e.target.closest("[data-wr-guess]");
+      if (g) return wrGuess(Number(g.dataset.wrGuess));
       if (e.target === el || e.target.closest(".wr-x") || e.target.closest('[data-wr="close"]')) return wrClose();
-      if (e.target.closest('[data-wr="replay"]')) return wrShow(0);
+      if (e.target.closest('[data-wr="replay"]')) { WR.slides.forEach(s => { delete s.answered; }); return wrShow(0); }
       if (e.target.closest(".wr-tap.next")) return WR.i === WR.slides.length - 1 ? null : wrShow(WR.i + 1);
       if (e.target.closest(".wr-tap.prev")) return wrShow(WR.i - 1);
     });
@@ -3728,74 +3880,140 @@
     const t = teamById[teamId];
     if (!t || !wrReady()) return;
     if (btn) { btn.disabled = true; btn.dataset.label = btn.innerHTML; btn.textContent = "Loading…"; }
-    const [P, M] = await Promise.all([loadPlayers().catch(() => null), loadMoves(L.season).catch(() => null)]);
+    const [P, M, ST] = await Promise.all([loadPlayers().catch(() => null), loadMoves(L.season).catch(() => null), loadStats(L.season).catch(() => null)]);
     if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.label; }
     if (state.tab !== "history" || state.sub !== "wrapped") return;
-    wrOpen(t, wrSlides(t, P, M));
+    wrOpen(t, wrSlides(t, P, M, ST));
   }
-  // share: the slide on screen, drawn as a 1080x1350 image in its own colors
+
+  // ---- share: the slide on screen as a 1080x1350 image in its own colors (photos included; ESPN serves them openly)
   function wrShareSpec() {
     const s = WR.slides[WR.i], t = WR.team;
     if (!s || !t) return null;
     return { slide: s, file: `${L.season}-wrapped-${t.name}-${s.key}`, title: `${s.kicker}: ${s.big}`, team: t };
   }
+  function wrImg(src) {
+    return new Promise(res => {
+      if (!src) return res(null);
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.onload = () => res(im); im.onerror = () => res(null);
+      im.src = src;
+      setTimeout(() => res(null), 5000);
+    });
+  }
   async function drawSlide(spec) {
     try { await Promise.all(["900 40px Archivo", "800 40px Archivo", "600 20px Inter", "700 20px Inter"].map(f => document.fonts.load(f))); } catch (_) { /* system fonts */ }
-    const s = spec.slide, th = WR_THEMES[s.theme] || WR_THEMES.brand, W = 1080, H = 1350, PAD = 84;
+    let s = spec.slide;
+    if (s.quiz) s = { key: "mvp", theme: s.theme, kicker: "Your MVP", big: s.face.name, line: s.reveal, face: s.face };
+    const th = WR_THEMES[s.theme] || WR_THEMES.brand, W = 1080, H = 1350, PAD = 84;
+    const hasTiles = !!(((spec.slide.quiz ? spec.slide.stats : s.stats) || []).length), bottom = hasTiles ? H - 330 : H - 170;
     const cv = document.createElement("canvas");
     cv.width = W; cv.height = H;
     const c = cv.getContext("2d");
     const font = (w, px, fam) => `${w} ${px}px ${fam === "a" ? "Archivo, Inter, sans-serif" : "Inter, system-ui, sans-serif"}`;
-    const wrap = (text, max, lh, y, f) => {
+    const wrapAt = (text, x, max, lh, y, f) => {
       c.font = f; const words = String(text).split(/\s+/); let line = "", yy = y;
-      for (const w of words) { const t2 = line ? line + " " + w : w; if (c.measureText(t2).width > max && line) { c.fillText(line, PAD, yy); line = w; yy += lh; } else line = t2; }
-      if (line) c.fillText(line, PAD, yy);
+      for (const w of words) { const t2 = line ? line + " " + w : w; if (c.measureText(t2).width > max && line) { c.fillText(line, x, yy); line = w; yy += lh; } else line = t2; }
+      if (line) c.fillText(line, x, yy);
       return yy + lh;
     };
+    const wrap = (text, max, lh, y, f) => wrapAt(text, PAD, max, lh, y, f);
+    const circle = (x, y, r, fill) => { c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fillStyle = fill; c.fill(); };
+    const face = async (p, cx, cy, r) => {
+      circle(cx, cy, r + 8, th.hi); circle(cx, cy, r, th.sh);
+      const im = p ? await wrImg(wrPhoto(p)) : null;
+      c.save(); c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.clip();
+      if (im) { const sc = Math.max(2 * r / im.width, 2 * r / im.height) * 1.05; const w = im.width * sc, h = im.height * sc; c.drawImage(im, cx - w / 2, cy - r * 1.02, w, h); }
+      else if (p) { c.fillStyle = th.ink; c.font = font(900, r * 0.7, "a"); c.textAlign = "center"; c.fillText(initials(p.name), cx, cy + r * 0.25); c.textAlign = "left"; }
+      c.restore();
+    };
+    // background and shapes
     c.fillStyle = th.bg; c.fillRect(0, 0, W, H);
+    c.globalAlpha = 0.9; circle(W - 60, 140, 260, th.sh); circle(80, H - 120, 200, th.sh); c.globalAlpha = 1;
+    c.strokeStyle = th.hi; c.lineWidth = 14; c.globalAlpha = 0.35; c.beginPath(); c.arc(-30, 330, 110, 0, Math.PI * 2); c.stroke(); c.globalAlpha = 1;
     c.fillStyle = th.ink2; c.font = font(800, 26); c.textBaseline = "alphabetic";
-    c.fillText(("League HQ · " + IDX.name).toUpperCase().slice(0, 60), PAD, 110);
-    c.fillStyle = th.hi; c.font = font(800, 34);
-    c.fillText(String(s.kicker).toUpperCase(), PAD, 250);
-    // the big text: as large as fits, up to two lines
-    c.fillStyle = th.ink;
-    let size = 150, lines;
-    const words = String(s.big).split(" ");
-    for (; size > 54; size -= 6) {
-      c.font = font(900, size, "a"); lines = [""];
-      for (const w of words) { const t2 = lines[lines.length - 1] ? lines[lines.length - 1] + " " + w : w; if (c.measureText(t2).width > W - PAD * 2 && lines[lines.length - 1]) lines.push(w); else lines[lines.length - 1] = t2; }
-      if (lines.length <= 2 && lines.every(l => c.measureText(l).width <= W - PAD * 2)) break;
-    }
-    let y = 250 + size + 20;
-    lines.forEach(l => { c.fillText(l, PAD, y); y += size * 1.02; });
-    y += 24;
-    if (s.line) { c.fillStyle = th.ink; y = wrap(s.line, W - PAD * 2, 54, y + 20, font(600, 40)); }
-    if (s.sub) { c.fillStyle = th.ink2; y = wrap(s.sub, W - PAD * 2, 44, y + 6, font(600, 32)); }
-    y += 30;
-    if (s.strip) {
-      const n = s.strip.length, gap = 10, tw = Math.min(110, (W - PAD * 2 - gap * (n - 1)) / n), th2 = 120;
-      s.strip.forEach((x, k) => {
-        const xx = PAD + k * (tw + gap);
-        c.fillStyle = x.r === "W" ? "#2bc47b" : x.r === "L" ? "#e2522f" : "#9aa3a0"; c.fillRect(xx, y, tw, th2);
-        c.fillStyle = "#ffffff"; c.textAlign = "center"; c.font = font(900, Math.min(44, tw * 0.6), "a"); c.fillText(x.r, xx + tw / 2, y + 58);
-        c.font = font(700, Math.min(26, tw * 0.34)); c.fillText(String(Math.round(x.pts)), xx + tw / 2, y + 98); c.textAlign = "left";
+    c.fillText(("League HQ · " + IDX.name).toUpperCase().slice(0, 56), PAD, 100);
+    let y = 210;
+    if (s.card) {
+      const lgo = await wrImg(s.logo ? new URL(s.logo, location.href).href : "");
+      if (lgo) { c.save(); c.beginPath(); c.arc(PAD + 60, y + 40, 60, 0, Math.PI * 2); c.clip(); c.drawImage(lgo, PAD, y - 20, 120, 120); c.restore(); }
+      c.fillStyle = th.hi; c.font = font(800, 30); c.fillText(String(s.kicker).toUpperCase(), PAD + (lgo ? 150 : 0), y + 22);
+      c.fillStyle = th.ink; c.font = font(900, 58, "a"); let nm = String(s.big); while (c.measureText(nm).width > W - PAD * 2 - 150 && nm.length > 3) nm = nm.slice(0, -2) + "…"; c.fillText(nm, PAD + (lgo ? 150 : 0), y + 86);
+      y += 180;
+      if (s.card.mvp) { await face(s.face, PAD + 90, y + 90, 90); c.fillStyle = th.ink2; c.font = font(800, 28); c.fillText("MVP", PAD + 220, y + 60); c.fillStyle = th.ink; c.font = font(900, 54, "a"); c.fillText(s.card.mvp[0].slice(0, 22), PAD + 220, y + 120); c.fillStyle = th.ink2; c.font = font(700, 30); c.fillText(s.card.mvp[1], PAD + 220, y + 162); y += 240; }
+      const tiles = s.card.tiles, tw = (W - PAD * 2 - 24) / 2, thh = 150;
+      tiles.forEach(([k, v], i) => {
+        const x = PAD + (i % 2) * (tw + 24), yy = y + Math.floor(i / 2) * (thh + 20);
+        c.fillStyle = th.sh; c.beginPath(); c.roundRect ? c.roundRect(x, yy, tw, thh, 24) : c.rect(x, yy, tw, thh); c.fill();
+        c.fillStyle = th.ink2; c.font = font(800, 26); c.fillText(k.toUpperCase(), x + 28, yy + 52);
+        c.fillStyle = th.ink; let val = String(v), sz = 52; c.font = font(900, sz, "a"); while (c.measureText(val).width > tw - 56 && sz > 28) { sz -= 4; c.font = font(900, sz, "a"); } c.fillText(val, x + 28, yy + 118);
       });
+    } else {
+      if (s.face) { await face(s.face, W - PAD - 150, 330, 150); }
+      else if (s.emoji) { c.font = font(400, 170); c.fillText(s.emoji, W - PAD - 190, 360); }
+      c.fillStyle = th.hi; c.font = font(800, 34);
+      c.fillText(String(s.kicker).toUpperCase(), PAD, y + 60);
+      const maxW = s.face || s.emoji ? W - PAD * 2 - 330 : W - PAD * 2;
+      c.fillStyle = th.ink;
+      let size = 150, lines;
+      const words = String(s.big).split(" ");
+      for (; size > 50; size -= 6) {
+        c.font = font(900, size, "a"); lines = [""];
+        for (const w of words) { const t2 = lines[lines.length - 1] ? lines[lines.length - 1] + " " + w : w; if (c.measureText(t2).width > (lines.length === 1 ? maxW : W - PAD * 2) && lines[lines.length - 1]) lines.push(w); else lines[lines.length - 1] = t2; }
+        if (lines.length <= 3 && lines.every((l, k) => c.measureText(l).width <= (k === 0 ? maxW : W - PAD * 2))) break;
+      }
+      y += 60 + size;
+      lines.forEach(l => { c.fillText(l, PAD, y); y += size * 1.02; });
+      y = Math.max(y, s.face || s.emoji ? 520 : 0);
+      if (s.line) { c.fillStyle = th.ink; y = wrap(s.line, W - PAD * 2, 54, y + 30, font(600, 40)); }
+      if (s.sub) { c.fillStyle = th.ink2; y = wrap(s.sub, W - PAD * 2, 44, y + 4, font(600, 32)); }
+      y += 24;
+      if (s.top5) {
+        for (const [k, p] of s.top5.entries()) {
+          c.fillStyle = th.hi; c.font = font(900, 64, "a"); c.fillText(String(k + 1), PAD, y + 70);
+          await face(p, PAD + 150, y + 46, 46);
+          c.fillStyle = th.ink; c.font = font(800, 40); c.fillText(p.name.slice(0, 22), PAD + 220, y + 44);
+          c.fillStyle = th.ink2; c.font = font(600, 28); c.fillText(`${p.pos} · ${p.share}% of your points`, PAD + 220, y + 84);
+          c.fillStyle = th.ink; c.font = font(900, 50, "a"); c.textAlign = "right"; c.fillText(String(Math.round(p.pts)), W - PAD, y + 66); c.textAlign = "left";
+          y += 132;
+        }
+      }
+      if (s.road) {
+        const n = s.road.length, x0 = PAD, x1 = W - PAD, y0 = y + 20, y1 = Math.min(bottom, y0 + 420), maxR = L.size;
+        const X = i => x0 + i * (x1 - x0) / Math.max(1, n - 1), Y = r => y0 + (r - 1) * (y1 - y0) / Math.max(1, maxR - 1);
+        if (s.cut && s.cut < maxR) { const cy = (Y(s.cut) + Y(s.cut + 1)) / 2; c.setLineDash([14, 12]); c.strokeStyle = th.ink2; c.lineWidth = 3; c.beginPath(); c.moveTo(x0, cy); c.lineTo(x1, cy); c.stroke(); c.setLineDash([]); c.fillStyle = th.ink2; c.font = font(700, 24); c.textAlign = "right"; c.fillText("PLAYOFF LINE", x1, cy - 10); c.textAlign = "left"; }
+        c.strokeStyle = th.ink; c.lineWidth = 7; c.lineJoin = "round"; c.beginPath(); s.road.forEach((p, i) => (i ? c.lineTo(X(i), Y(p.r)) : c.moveTo(X(i), Y(p.r)))); c.stroke();
+        s.road.forEach((p, i) => circle(X(i), Y(p.r), i === n - 1 ? 18 : 13, p.res === "W" ? "#1f9d60" : p.res === "L" ? "#d9482a" : "#9aa3a0"));
+      }
+      if (s.bars) {
+        const mx = Math.max(...s.bars.map(b => b.v), 1), n = s.bars.length, gap = 10, bw = (W - PAD * 2 - gap * (n - 1)) / n, bh = Math.max(120, bottom - 20 - y);
+        s.bars.forEach((b, k) => { const h = Math.max(8, bh * b.v / mx); c.fillStyle = b.hi ? th.hi : b.lo ? th.ink : th.ink2; c.globalAlpha = b.hi || b.lo ? 1 : 0.45; c.fillRect(PAD + k * (bw + gap), y + bh - h, bw, h); c.globalAlpha = 1; });
+      }
+      if (s.chips) { s.chips.forEach(x => { c.fillStyle = th.ink; y = wrap("• " + x, W - PAD * 2, 50, y + 14, font(700, 38)); }); }
+      if (s.list) { s.list.forEach(([e, x]) => { c.fillStyle = th.ink; y = wrap(`${e}  ${x}`, W - PAD * 2, 50, y + 14, font(700, 38)); }); }
+      if (s.rivals) {
+        s.rivals.forEach(r => {
+          c.fillStyle = th.ink2; c.font = font(800, 30); c.fillText(`${r.emoji}  ${r.label.toUpperCase()}`, PAD, y + 40);
+          c.fillStyle = th.ink; c.font = font(900, 74, "a"); c.fillText(r.name.slice(0, 20), PAD, y + 124);
+          c.fillStyle = th.ink2; c.font = font(700, 34); c.fillText(`${r.rec}${r.yr ? " · " + r.yr : ""}`, PAD, y + 176);
+          y += 240;
+        });
+      }
     }
-    if (s.bars) {
-      const mx = Math.max(...s.bars.map(b => b.v), 1), n = s.bars.length, gap = 10, bw = (W - PAD * 2 - gap * (n - 1)) / n, bh = Math.max(160, H - 170 - y);
-      s.bars.forEach((b, k) => { const h = Math.max(8, bh * b.v / mx); c.fillStyle = b.hi ? th.hi : th.ink2; c.globalAlpha = b.hi ? 1 : 0.45; c.fillRect(PAD + k * (bw + gap), y + bh - h, bw, h); c.globalAlpha = 1; });
-    }
-    if (s.list) { c.fillStyle = th.ink; s.list.forEach(x => { y = wrap("• " + x, W - PAD * 2, 50, y + 10, font(700, 38)); }); }
-    if (s.summary) {
-      s.summary.forEach(([k, v]) => {
-        c.fillStyle = th.ink2; c.font = font(700, 32); c.fillText(k, PAD, y + 10);
-        c.fillStyle = th.ink; c.font = font(800, 38); c.textAlign = "right";
-        let val = String(v); while (c.measureText(val).width > W - PAD * 2 - 330 && val.length > 2) val = val.slice(0, -2) + "…";
-        c.fillText(val, W - PAD, y + 10); c.textAlign = "left"; y += 74;
+    const tiles = (spec.slide.quiz ? spec.slide.stats : s.stats) || [];
+    if (!s.card && tiles.length) {
+      const n = Math.min(4, tiles.length), gap = 18, tw = (W - PAD * 2 - gap * (n - 1)) / n, ty = H - 300;
+      tiles.slice(0, n).forEach(([v, k], i) => {
+        const x = PAD + i * (tw + gap);
+        c.fillStyle = th.sh; c.beginPath(); c.roundRect ? c.roundRect(x, ty, tw, 170, 22) : c.rect(x, ty, tw, 170); c.fill();
+        c.fillStyle = th.ink; let sz = 56; c.font = font(900, sz, "a"); while (c.measureText(String(v)).width > tw - 36 && sz > 26) { sz -= 4; c.font = font(900, sz, "a"); }
+        c.fillText(String(v), x + 18, ty + 72);
+        c.fillStyle = th.ink2; wrapAt(k, x + 18, tw - 36, 30, ty + 112, font(700, 24));
       });
     }
     c.fillStyle = th.ink2; c.font = font(700, 28);
-    c.fillText(`${spec.team.name} · ${L.season}`.slice(0, 48), PAD, H - 70);
+    c.fillText(`${spec.team.name} · ${L.season}`.slice(0, 44), PAD, H - 70);
     c.textAlign = "right"; c.fillText(SITE_URL, W - PAD, H - 70); c.textAlign = "left";
     return new Promise(res => cv.toBlob(res, "image/png"));
   }
@@ -3804,14 +4022,14 @@
   function wrappedPage() {
     const yrs = IDX.seasons.filter(y => y !== IDX.current || (state.season === IDX.current && L.over)).sort((a, b) => b - a);
     const picker = yrs.length ? `<nav class="yb-pick" aria-label="Wrapped seasons">${yrs.map(y => `<a href="${wrLink(y)}"${y === state.season ? ' class="active" aria-current="page"' : ""}>${y}</a>`).join("")}</nav>` : "";
-    if (!wrReady()) return `<div class="panel wr-soon"><p><b>Your ${L.season} Wrapped arrives the day the championship is decided.</b> Your season as a story: how it ended, your peak, your MVP, your best move, the one that got away, your rivals and more.${yrs.length ? " Until then, relive a past season:" : ""}</p>${picker}</div>`;
+    if (!wrReady()) return `<div class="panel wr-soon"><p><b>Your ${L.season} Wrapped arrives the day the championship is decided.</b> Your season as a story: your road through the standings, how it ended, your top 5, your peak, the one that got away, your rivals and more.${yrs.length ? " Until then, relive a past season:" : ""}</p>${picker}</div>`;
     const me = D.teams.find(isMine);
     const order = D.teams.slice().sort((a, b) => (isMine(b) - isMine(a)) || (a.finalRank || 99) - (b.finalRank || 99));
-    const hero = me ? `<div class="panel wr-hero">${logo(me)}<div><p class="kicker">${L.season} League Wrapped</p><h2>${esc(me.name)}</h2><p class="team-mgr">${finishText(me.finalRank)} · ${record(me)}</p></div><button type="button" class="cta" data-wr-play="${me.id}">Watch yours</button></div>`
+    const hero = me ? `<div class="wr-hero" style="--wr-bg:${WR_THEMES.night.bg};--wr-hi:${WR_THEMES.night.hi}"><div class="wr-hero-in">${logo(me)}<div><p class="wr-hero-k">${L.season} League Wrapped</p><h2>${esc(me.name)}</h2><p>${finishText(me.finalRank)} · ${record(me)}</p></div></div><button type="button" class="cta" data-wr-play="${me.id}">▶ Watch yours</button></div>`
       : `<p class="note">Claim your team on My team and yours shows up first. Or pick any team below.</p>`;
     setTimeout(() => { const pl = Number(state.params.get("play")); const id = pl || (state.params.get("play") === "me" && me ? me.id : 0); if (id && teamById[id] && !WR.el) wrPlay(id); }, 0);
-    return section(`${L.season} League Wrapped`, { short: "Every manager's season as a story. Tap through, then share your card.", full: "One fact per slide, from the season's box scores, every player's time on each team, ESPN's log of every move, and the league's history. Slides only show when they're worth showing for that team. Tap the right side to go on, the left to go back, hold to pause; each slide can be saved or shared as an image." },
-      `<div class="yb-bar">${picker}</div>${hero}<div class="wr-teams">${order.map(t => `<button type="button" class="wr-team${isMine(t) ? " mine" : ""}" data-wr-play="${t.id}">${logo(t)}<span><b>${esc(t.name)}</b><span class="team-mgr">${esc(t.manager)} · ${finishText(t.finalRank)}</span></span><span class="wr-go" aria-hidden="true">▶</span></button>`).join("")}</div>`);
+    return section(`${L.season} League Wrapped`, { short: "Every manager's season as a story. Tap through, then share your card.", full: "Built from the season's box scores, every player's time on each team, ESPN's log of every move, and the league's history. Each story picks the slides worth showing for that team. Tap the right side to go on, the left to go back, hold to pause; every slide can be saved or shared as an image." },
+      `<div class="yb-bar">${picker}</div>${hero}<div class="wr-teams">${order.map(t => `<button type="button" class="wr-team${isMine(t) ? " mine" : ""}${t.finalRank === 1 ? " champ" : ""}" data-wr-play="${t.id}">${logo(t)}<span><b>${esc(t.name)}</b><span class="team-mgr">${esc(t.manager)} · ${finishText(t.finalRank)}${t.finalRank === 1 ? " 🏆" : ""}</span></span><span class="wr-go" aria-hidden="true">▶</span></button>`).join("")}</div>`);
   }
   document.addEventListener("click", e => {
     const b = e.target.closest("[data-wr-play]");

@@ -457,28 +457,36 @@ weeks played since. This week's games ESPN has already settled (win probability 
 
 ## League Wrapped
 
-History → Wrapped (`#/history/wrapped`, `wrSlides` / `wrOpen` in app.js; it replaced the Season yearbook, and old
-`#/history/yearbook` links redirect). Each manager's finished season as a full-screen story: tap the right side to go
-on, the left to go back, hold to pause (arrow keys, space and Escape on a computer), with progress bars on top and
-6.5 seconds a slide. One fact per slide, each set against the league or its history:
+History → Wrapped (`#/history/wrapped`, `wrSlides` / `wrOpen` / `drawSlide` in app.js; it replaced the Season yearbook,
+and old `#/history/yearbook` links redirect). Each manager's finished season as a full-screen story: tap the right side
+to go on, the left to go back, hold to pause (arrow keys, space and Escape on a computer), progress bars on top, 6.5
+seconds a slide. Bold colors per slide, moving shapes, staggered entrances, numbers that count up, player photos (ESPN
+headshots, which allow cross-site use, so they also go into the share images), confetti for the champion. Most slides
+carry a row of supporting stats, ranked against the league where that makes sense, and player slides show the
+player's real stat line (passing / rushing / receiving yards and TDs, from `data/<season>-stats.js`).
 
-- Always: cover, how it ended (champion / final / playoff exit / missed by N wins or on points; last place gets a
-  light roast), the season week by week (W/L tiles, best run, any 4+ game skid), your peak (best score and its rank
-  among every score that season), your MVP (points as a starter and share of the team's points), the league's
-  champion (for everyone else) and week of the year, and a summary card.
-- Optional, only when worth showing, and only the team's 4 strongest (`WR_OPT`, scored by `opt`): clutch (a player
-  whose points decided 40%+ of your wins), best move (a pickup or trade worth 50+ started points, from the player
-  stints in `players.js`), the one that got away (a player you dropped or traded who started for 60+ points
-  elsewhere), bench regret (a bench-for-starter swap that would have flipped a loss, twice or in the playoffs; or a
-  clean sheet with 4+ losses), luck (the 3 luckiest / unluckiest, 1+ win either way), rivals (all-time nemesis and
-  favorite victim from the history index, 3+ games), manager type (from the moves log's `style`), superlatives
-  (season awards and badges), and the trade of the year (for the two teams in it).
+- Always: cover; your road (place in the standings after every week as a line with W/L dots and the playoff line;
+  weeks in a playoff spot, highest place, longest win streak); how it ended (champion / final / playoff exit / missed
+  by N wins or on points, last place gets a light roast; rank in points scored and against, all-play record); guess
+  your MVP (four of your top scorers as photos, tap one, then the answer with his stat line); your top 5 (photos,
+  points, share of your points, points per start); your peak (best score and its rank among every score that season,
+  bars for every week; average and its rank, weeks above the league average, weeks with the league's top score); your
+  manager type (from the moves log's `style`: pickups, trades and all moves with ranks, busiest day); the league's
+  champion (for everyone else; seed, points rank, your all-time record against them) and week of the year (with its
+  top player's line); a trading-card summary.
+- Optional, only when worth showing, and only the team's 3 strongest (`WR_OPT`, scored by `opt`): clutch (a player
+  whose points decided 40%+ of your wins), best move (a pickup or trade worth 50+ started points), the one that got
+  away (dropped or traded, then 60+ started points elsewhere), the heartbreaker (a loss by under 5; close-game
+  record), bench regret (a bench swap that would have flipped a loss, twice or in the playoffs; or a clean sheet;
+  points left on the bench and lineup efficiency with ranks), luck (3 luckiest / unluckiest, 1+ win either way),
+  rivals (all-time nemesis and favorite victim, with average scores in those games), superlatives (2+ season awards
+  and badges), and the trade of the year (for the two teams in it).
 
-Every slide has a Share button: `drawSlide` draws it as a 1080x1350 image in the slide's own colors, through the same
-share sheet as the other share cards. Finished seasons only: the current one shows "arrives the day the championship
-is decided". The worker sends one "Your League Wrapped is ready" alert per device (alert kind `wrapped`), once the
-season is over and the site has rebuilt after that, between 10am and 9pm Eastern (`wrappedAlert`); it opens
-`#/history/wrapped?play=me`, which starts the claimed team's story.
+Every slide has a Share button: `drawSlide` draws it as a 1080x1350 image in the slide's colors (photos, the road,
+bars, top 5, the summary card, the stat row) through the same share sheet as the other share cards. Finished seasons
+only: the current one shows "arrives the day the championship is decided". The worker sends one "Your League Wrapped
+is ready" alert per device (alert kind `wrapped`), once the season is over and the site has rebuilt after that,
+between 10am and 9pm Eastern (`wrappedAlert`); it opens `#/history/wrapped?play=me`, which starts your story.
 
 ## Getting-started tour
 
