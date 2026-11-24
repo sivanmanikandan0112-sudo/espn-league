@@ -1002,7 +1002,7 @@ def add_playoff_odds(data, main, teams, regular, current_week):
     track = []
     for w in sorted({g[0] for g in schedule}):
         games = [g for g in schedule if g[0] == w]
-        if any(not (live.get(h) and live.get(a) and live[h][3] is not None and live[h][3] in (0, 1)) for _, h, a in games):
+        if any(not (live.get(h) and live[h][0] == w and live[h][3] is not None and live[h][3] in (0, 1)) for _, h, a in games):
             track = games
             break
     odds = stats.playoff_odds(data, schedule, strength, track)
@@ -1027,15 +1027,16 @@ def add_clinch(data, teams, schedule, live):
     A game already decided in all but name (live win probability 0 or 100) counts as played; "this week" is the
     first week with a game still undecided."""
     wins = {tid: t["wins"] + t.get("ties", 0) / 2 for tid, t in teams.items()}
-    settled = lambda h, a: bool(live.get(h) and live[h][3] is not None and live[h][3] in (0, 1))  # noqa: E731
+    # live win probabilities belong to the week in progress only (live[team][0] is that week)
+    settled = lambda h, a, w: bool(live.get(h) and live[h][0] == w and live[h][3] is not None and live[h][3] in (0, 1))  # noqa: E731
     focus, week_games, later = None, [], []
     for w in sorted({g[0] for g in schedule}):
         gs = [(h, a) for wk, h, a in schedule if wk == w]
         if focus is None:
             for h, a in gs:
-                if settled(h, a):
+                if settled(h, a, w):
                     wins[h if live[h][3] == 1 else a] += 1
-            open_games = [(h, a) for h, a in gs if not settled(h, a)]
+            open_games = [(h, a) for h, a in gs if not settled(h, a, w)]
             if open_games:
                 focus, week_games = w, open_games
             continue
