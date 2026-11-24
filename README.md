@@ -37,8 +37,13 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   Position bars rate each position group on its own, by player position, on the same spots for every team:
   best QB, best 3 RBs, best 3 WRs (their two spots + FLEX) and best TE each week, in the same simulation. They
   rate the groups, so they don't sum to the power value (a FLEX-capable player counts in his own group).
-- **Insights** (6 pages, code in `stats.py`): *Playoff race* (`race`, with Hot & cold), *Luck* (`luck`: Luck, Close
-  games, Upset tracker, Vs. projection, Injury toll), *Schedule* (`schedule`: strength of schedule, Byes ahead), *Lineups* (`lineups`: Efficiency,
+- **Playoffs** (`#/playoffs`, `renderPlayoffs` / `playoffTabs` in app.js, right of Standings): *Picture* (the playoff
+  picture and the tiebreaker race, which used to sit under the standings), *Odds* (playoff / bye / title odds; past
+  seasons: final results), *Seed odds*, *Scenario builder* and *Bracket*. Opens on Picture during the regular season
+  and on Bracket once the playoffs start or for a finished season. Old links redirect: `#/insights/race` (and its
+  `?at=seeds` / `?at=build` views) and `#/matchups/bracket`; `?at=form` goes to Insights → Hot & cold.
+- **Insights** (6 pages, code in `stats.py`): *Luck* (`luck`: Luck, Close
+  games, Upset tracker, Vs. projection, Injury toll), *Hot & cold* (`form`), *Schedule* (`schedule`: strength of schedule, Byes ahead), *Lineups* (`lineups`: Efficiency,
   You vs. autopilot), *Draft* (`draft`, `?view=redraft` for the hindsight redraft) and *What ifs* (`whatif`: Rules lab,
   Schedule swap). A page with several views shows one at a time, with a pill switch at the top (like Pick 4's);
   `?at=<view>` picks it. Old single-view links (`#/insights/close`, `/rules`, `/byes`, ...) redirect to their page
@@ -47,9 +52,9 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
     `stats.py`). A miss = on the roster, NFL team not on bye, empty stat line; only players in that team's starting
     lineup in at least half the games they played for it; valued at their average before the miss (or healthy
     average). Regular season.
-  - *Seed odds* (on Playoff race): each team's chance of every seed 1-N from the same simulations (`odds.seeds`),
+  - *Seed odds* (Playoffs → Seed odds): each team's chance of every seed 1-N from the same simulations (`odds.seeds`),
     as a shaded grid with divider lines at the bye and playoff cuts.
-  - *Playoff race*: playoff / bye / title odds from 10,000 simulated finishes (team strengths shrunk halfway to
+  - *Playoff odds* (Playoffs → Odds): playoff / bye / title odds from 10,000 simulated finishes (team strengths shrunk halfway to
     the league average, `STRENGTH_SHRINK`; the week in progress uses ESPN's live win probabilities).
     Past seasons show final results.
   - *Luck* (actual vs. all-play expected wins), *Close games* (record in games decided by under 10 points), *Schedule* (opponent strength so far and remaining),
@@ -74,7 +79,7 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
     biggest climbs/falls and undrafted players the redraft takes. Kickers and defenses aren't redrafted.
 - **Matchups**: box scores for every week, plus a recap of each completed week (top/low score, blowout, closest
   game, player of the week, most points left on the bench, best bench performance).
-- **Playoff bracket** (Matchups → Playoff bracket): every season's bracket with seeds, byes and scores; live during
+- **Playoff bracket** (Playoffs → Bracket): every season's bracket with seeds, byes and scores; live during
   the playoffs; before them, "if the season ended today" with each team's playoff odds.
 - **Player stat lines**: tap any player in a box score for his real stat line and the fantasy points each stat earned
   under that season's scoring. Stored per season in `data/<season>-stats.js`, loaded only when a player is opened.
@@ -385,7 +390,7 @@ Both come from ESPN's transaction log (`mTransactions2`, every scoring period; `
 
 ## Playoff picture (clinch and elimination)
 
-Standings (IN / BYE / OUT tags and a Playoff picture section) and My team. `add_clinch` in build.py runs after the
+Standings (IN / BYE / OUT tags), Playoffs → Picture (the Playoff picture section) and My team. `add_clinch` in build.py runs after the
 playoff odds; `stats.clinch_scenarios` works it out exactly from the remaining schedule, with points tiebreakers
 treated as unknown (against a team for clinching, for it for elimination): clinched = no outcome lets enough other
 teams reach its win total when it loses out (a Hall's-condition check over the games among them), eliminated = no
@@ -396,7 +401,7 @@ on thousands of random small leagues.
 
 ## Tiebreaker race
 
-Standings (a Tiebreaker race section after the Playoff picture) and a line in My team's Playoff picture. The league
+Playoffs → Picture (a Tiebreaker race section after the Playoff picture) and a line in My team's Playoff picture. The league
 breaks standings ties on total points, so `stats.playoff_odds` also tracks, in each of its 10,000 simulated finishes,
 whether teams level on wins sit on both sides of a cut (the bye line and the playoff line). Per team, in
 `odds.ties[cut]`: % of finishes in such a tie and % of those where it ends up on the right side (null under 50
@@ -439,7 +444,7 @@ depends on the phone.
 
 ## Scenario builder
 
-Insights → Playoff race → Scenario builder (`scnBody` in app.js), linked from the Playoff picture on Standings and
+Playoffs → Scenario builder (`#/playoffs/scenarios`, `scnBody` in app.js), linked from the Playoff picture and
 My team. Every regular-season game left (this week's from the week's matchups, later ones from `upcoming`) is a pair
 of buttons; tap the winner. It starts on the favorites: ESPN's live win probability this week, then the playoff
 odds' weekly scoring model (`odds.wk` = mean and spread per team, from `team_strengths`). The standings are worked

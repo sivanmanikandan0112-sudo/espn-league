@@ -87,7 +87,7 @@ async function run({ viewport, claim, label, cap }) {
   };
   const queue = ["#/"], seen = new Set([key("#/")]);
   for (const s of idx.seasons.filter(s => s !== idx.current)) {
-    for (const t of ["", "matchups", "insights", "trades", "history", "history/yearbook", "myteam"]) {
+    for (const t of ["", "playoffs", "matchups", "insights", "trades", "history", "history/yearbook", "myteam"]) {
       const h = `#/${t}?season=${s}`;
       if (!seen.has(key(h))) { seen.add(key(h)); queue.push(h); }
     }
@@ -132,7 +132,7 @@ try {
 }
 // ---- report only (never blocks): accessibility of the main pages, and a cold first load on a slow phone
 const report = [];
-const MAIN_PAGES = ["#/", "#/myteam", "#/matchups", "#/matchups/watch", "#/games", "#/insights", "#/trades", "#/history", "#/settings", "#/whatsnew", "#/glossary"];
+const MAIN_PAGES = ["#/", "#/playoffs", "#/playoffs/odds", "#/myteam", "#/matchups", "#/matchups/watch", "#/games", "#/insights", "#/trades", "#/history", "#/settings", "#/whatsnew", "#/glossary"];
 try {
   const axeSrc = await readFile(join(dirname(fileURLToPath(import.meta.url)), "node_modules/axe-core/axe.min.js"), "utf8");
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });

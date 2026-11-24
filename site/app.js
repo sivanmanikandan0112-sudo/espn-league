@@ -110,7 +110,7 @@
     const hash = location.hash.replace(/^#/, "") || "/";
     const [path, qs] = hash.split("?");
     const params = new URLSearchParams(qs || "");
-    const tab = ["myteam", "matchups", "games", "insights", "trades", "history", "settings", "whatsnew", "glossary", "feedback"].find(t => path.startsWith("/" + t)) || "standings";
+    const tab = ["playoffs", "myteam", "matchups", "games", "insights", "trades", "history", "settings", "whatsnew", "glossary", "feedback"].find(t => path.startsWith("/" + t)) || "standings";
     const season = Number(params.get("season")) || IDX.current;
     state.tab = tab;
     state.sub = path.split("/")[2] || "";
@@ -136,7 +136,8 @@
     renderChrome();
     renderTicker();
     updateWhatsNewDot();
-    if (tab === "matchups") renderMatchups();
+    if (tab === "playoffs") renderPlayoffs();
+    else if (tab === "matchups") renderMatchups();
     else if (tab === "games") renderGames();
     else if (tab === "insights") renderInsights();
     else if (tab === "trades") renderTrades();
@@ -182,6 +183,9 @@
     if (state.tab === "history") {
       return `<p><strong>All-time records</strong> follow each member's ESPN account, not the team slot, so people who left keep their history and new members start fresh.
         Head-to-head counts regular-season and championship-bracket games; consolation games are left out.</p>`;
+    }
+    if (state.tab === "playoffs") {
+      return `<p>Playoff, bye and title odds, seed odds and the tiebreaker race come from 10,000 simulated finishes of the rest of the regular season and the bracket; this week's games use ESPN's live win probabilities. Clinched and eliminated are exact, worked out from every possible result left. Ties in the standings go to total points.</p>`;
     }
     if (state.tab === "insights") {
       return `<p>Each insight explains its method at the top. Unless noted, stats use regular-season games only${L.over ? "" : ", and update with every refresh"}.</p>`;
@@ -382,7 +386,7 @@
     if (!head.length && !rows.length) return "";
     return section(`Playoff picture <span class="muted">· week ${C.week}</span>`, { short: "Who's clinched, who's out, and what this week's results can settle.",
       full: `Worked out exactly from the remaining schedule: a team has clinched only if no combination of results can push it out of the top ${L.playoffTeams || 6}, and it's eliminated only if none can get it in. Ties in the standings are broken by total points, which can't be known ahead of time, so they're treated as going against a team for clinching and in its favor for elimination; a team can still get in (or out) on points beyond what's shown (the Tiebreaker race below has the odds on that). The scenarios list the fewest results this week that settle it, whatever happens after.${C.byes ? ` The top ${C.byes} get a first-round bye.` : ""}` },
-      `<div class="panel cl-pic">${head.length ? `<p class="cl-head">${head.join("<br>")}</p>` : ""}${rows.map(r => `<div class="cl-row"><div class="cl-team">${logo(r.t)}<b>${esc(r.t.name)}</b>${clinchTag(r.t)}</div>${r.lines.map(l => `<p class="cl-line ${l.goal}">${l.html}</p>`).join("")}</div>`).join("")}${insightHas("build") ? `<p class="cl-more"><a class="wk-link" href="${href("insights", { at: "build" }, "race")}">Build your own scenario ›</a></p>` : ""}</div>`);
+      `<div class="panel cl-pic">${head.length ? `<p class="cl-head">${head.join("<br>")}</p>` : ""}${rows.map(r => `<div class="cl-row"><div class="cl-team">${logo(r.t)}<b>${esc(r.t.name)}</b>${clinchTag(r.t)}</div>${r.lines.map(l => `<p class="cl-line ${l.goal}">${l.html}</p>`).join("")}</div>`).join("")}${insightHas("build") ? `<p class="cl-more"><a class="wk-link" href="${href("playoffs", {}, "scenarios")}">Build your own scenario ›</a></p>` : ""}</div>`);
   }
 
   // ---------------------------------------------------------------- tiebreaker race (league.tieRace + team.odds.ties/projPF, build)
@@ -596,7 +600,7 @@
     let oddsLead = "";
     if (D.teams.some(t => t.odds)) {
       const fav = D.teams.slice().sort((a, b) => b.odds.titlePct - a.odds.titlePct)[0];
-      oddsLead = `<div class="leader"><span class="kicker">Title favorite</span><span class="crown">01</span><span><div class="mini-team">${logo(fav)}${esc(fav.name)}</div><div class="val">${pct(fav.odds.titlePct)} to win it all · <a href="${href("insights", {}, "race")}">all odds</a></div></span></div>`;
+      oddsLead = `<div class="leader"><span class="kicker">Title favorite</span><span class="crown">01</span><span><div class="mini-team">${logo(fav)}${esc(fav.name)}</div><div class="val">${pct(fav.odds.titlePct)} to win it all · <a href="${href("playoffs", {}, "odds")}">all odds</a></div></span></div>`;
     }
     return `<aside class="side">
       <section>
@@ -687,7 +691,7 @@
     if (cur.teams.some(t => t.odds)) {
       if (me != null && prev.odds[me] != null) {
         const a = prev.odds[me], b = tb(me).odds.playoffPct;
-        if (Math.abs(b - a) >= 1) items.push(`Your playoff odds: <b>${pct(a)} → ${pct(b)}</b>. <a class="wk-link" href="${href("insights", {}, "race")}">playoff race</a>`);
+        if (Math.abs(b - a) >= 1) items.push(`Your playoff odds: <b>${pct(a)} → ${pct(b)}</b>. <a class="wk-link" href="${href("playoffs", {}, "odds")}">playoff race</a>`);
       } else {
         const mv = cur.teams.filter(t => t.odds && prev.odds[t.id] != null).map(t => ({ t, d: t.odds.playoffPct - prev.odds[t.id] })).sort((a, b) => Math.abs(b.d) - Math.abs(a.d))[0];
         if (mv && Math.abs(mv.d) >= 3) items.push(`Biggest playoff-odds swing: <b>${esc(mv.t.name)}</b> ${pct(prev.odds[mv.t.id])} → ${pct(mv.t.odds.playoffPct)}.`);
@@ -722,14 +726,14 @@
     }
     if (L.over) {
       const c = D.teams.find(t => t.finalRank === 1);
-      if (c) items.push(tile("Champion", record(c), esc(c.name), href("insights", {}, "race")));
+      if (c) items.push(tile("Champion", record(c), esc(c.name), href("playoffs", {}, "bracket")));
     } else {
       const pl = D.teams.slice().sort((a, b) => a.powerRank - b.powerRank)[0];
       items.push(tile("Power leader", pl.power.toLocaleString(), esc(pl.name), href("standings")));
     }
     if (D.teams.some(t => t.odds)) {
       const fav = D.teams.slice().sort((a, b) => b.odds.titlePct - a.odds.titlePct)[0];
-      items.push(tile("Title favorite", pct(fav.odds.titlePct), esc(fav.name), href("insights", {}, "race")));
+      items.push(tile("Title favorite", pct(fav.odds.titlePct), esc(fav.name), href("playoffs", {}, "odds")));
     }
     const pf = D.teams.slice().sort((a, b) => b.pf - a.pf)[0];
     items.push(tile("Most points", Math.round(pf.pf).toLocaleString(), esc(pf.name), href("insights", {}, "luck")));
@@ -816,8 +820,6 @@
         </div>
         <div class="legend"><span>Team / ${esc(S[state.sort][0])}</span>${SEGS().map(p => `<span><i class="dot ${p}"></i>${p}</span>`).join("")}<span class="right">Bar numbers = position rank</span></div>
         <div class="teams" id="teams">${shown.length ? shown.map(([t, i]) => teamCard(t, i, maxPos)).join("") : '<div class="empty">No team, manager or player matches that.</div>'}</div>
-        ${clinchSection()}
-        ${tieRaceSection()}
         ${storyline()}
         <div class="pulse-phone">${pulseSection()}</div>
       </section>
@@ -865,7 +867,7 @@
     return `<section class="recap"><div class="section-head"><h2>Week ${w} recap</h2><button type="button" class="share-btn" data-share="recap" data-week="${w}">${SHARE_ICON}Share</button></div><div class="recap-grid">${items.join("")}</div>${talkRow("w" + w, "r:" + w)}</section>`;
   }
 
-  const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"], ["bracket", "Playoff bracket"]];
+  const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"]];
   // Games: pick'em and league trivia (name + PIN), separate from the stats tabs
   const GAMES_TABS = [["", "Pick'em"], ["pick4", "Pick 4"], ["rankem", "Rank 'em"], ["graph", "Guess the graph"], ["trivia", "League trivia"]];
   function renderGames() {
@@ -1125,7 +1127,7 @@
   }
 
   function renderMatchups() {
-    if (state.sub === "bracket") return renderBracket();
+    if (state.sub === "bracket") { location.replace(href("playoffs", {}, "bracket")); return; } // the bracket moved to Playoffs
     if (state.sub === "pickem") { location.replace("#/games"); return; } // old link: pick'em moved to Games
     if (state.sub === "watch") return renderWatch();
     if (state.sub === "plays") return renderPlays();
@@ -1261,8 +1263,7 @@
     const sub = M.projected
       ? `If the season ended today. Top ${L.playoffTeams} make it${M.byes ? `; top ${M.byes} get a first-round bye` : ""}, reseeded each round so the best seed left plays the worst. Percentages are each team's playoff odds.`
       : L.over ? `How the ${L.season} playoffs played out.` : "The playoffs are underway. Live scores update with every refresh.";
-    main.innerHTML = `<div class="section-head"><div><h1>Playoff bracket</h1><p class="sub">${sub}</p></div>${M.started || L.over ? `<button type="button" class="share-btn" data-share="bracket">${SHARE_ICON}Share</button>` : ""}</div>
-      ${subnav("matchups", MATCHUP_TABS, "bracket")}
+    main.innerHTML = `${playoffsHead("bracket", sub, M.started || L.over ? `<button type="button" class="share-btn" data-share="bracket">${SHARE_ICON}Share</button>` : "")}
       <div class="bracket">${cols}${champCol}</div>`;
   }
 
@@ -2295,14 +2296,14 @@
   // Insights pages. Each groups related views, shown one at a time with a switch at the top; the old one-view
   // sub-tabs still work as links (they open the page that holds them now, on that view).
   const INSIGHT_GROUPS = [
-    ["race", "Playoff race", ["race", "build", "seeds", "form"]],
     ["luck", "Luck", ["luck", "close", "upsets", "projection", "usage", "injury"]],
+    ["form", "Hot & cold", ["form"]],
     ["schedule", "Schedule", ["schedule", "byes"]],
     ["lineups", "Lineups", ["efficiency", "autopilot"]],
     ["draft", "Draft", ["draft"]],
     ["whatif", "What ifs", ["rules", "swap", "butterfly"]],
   ];
-  const INSIGHT_ALIAS = { build: "race", seeds: "race", form: "race", close: "luck", upsets: "luck", projection: "luck", usage: "luck", injury: "luck", byes: "schedule", efficiency: "lineups", autopilot: "lineups", redraft: "draft", rules: "whatif", swap: "whatif", butterfly: "whatif" };
+  const INSIGHT_ALIAS = { close: "luck", upsets: "luck", projection: "luck", usage: "luck", injury: "luck", byes: "schedule", efficiency: "lineups", autopilot: "lineups", redraft: "draft", rules: "whatif", swap: "whatif", butterfly: "whatif" };
   function insightHas(k) {
     return ({
       build: () => scnGames().length > 0, form: () => D.teams.some(x => x.form), seeds: () => D.teams.some(x => x.odds && x.odds.seeds), projection: () => D.teams.some(x => x.vsProj), upsets: () => upsetModel().games > 0, injury: () => D.teams.some(x => x.injuries), usage: () => !!(D.nfl && D.nfl.teams && Object.keys(D.nfl.teams).length), autopilot: () => D.teams.some(x => x.autopilot && x.autopilot.weeks),
@@ -2318,12 +2319,10 @@
       injury: "Injury toll", schedule: "Strength of schedule", byes: "Byes ahead", efficiency: "Efficiency", autopilot: "You vs. autopilot", rules: "Rules lab", swap: "Schedule swap", butterfly: "Butterfly effect" }[k] || k;
   }
   function insightTabs() {
-    const hasOdds = D.teams.some(t => t.odds);
-    return INSIGHT_GROUPS.filter(([, , keys]) => keys.some(insightHas))
-      .map(([k, label]) => [k, k === "race" && !(hasOdds || !L.over) ? "Final results" : label]);
+    return INSIGHT_GROUPS.filter(([, , keys]) => keys.some(insightHas)).map(([k, label]) => [k, label]);
   }
 
-  // ---------------------------------------------------------------- scenario builder (Insights → Playoff race)
+  // ---------------------------------------------------------------- scenario builder (Playoffs → Scenario builder)
   // Pick the winner of every regular-season game left; the standings, seeds, byes and first round update as you go.
   // Ties in the standings go to total points: each team's projected final points (the playoff simulations' average,
   // this week's live projection included), which can be nudged. Favorites come from ESPN's live win probability this
@@ -2370,7 +2369,7 @@
     (state.params.get("adj") || "").split(",").forEach(x => { const [id, v] = x.split(":"); if (teamById[id] && isFinite(+v)) SCN.adj[id] = +v; });
   }
   function scnParams(games) {
-    const p = { at: "build" };
+    const p = {};
     if (games.length && SCN.picks.some((x, i) => x !== scnFav(games)[i])) p.s = games[0].week + "." + SCN.picks.map(x => x ? "a" : "h").join("");
     const adj = Object.entries(SCN.adj).filter(([, v]) => v).map(([k, v]) => k + ":" + v).join(",");
     if (adj) p.adj = adj;
@@ -2441,7 +2440,7 @@
     const games = scnGames(), p = scnParams(games);
     state.params = new URLSearchParams(Object.assign(state.season !== IDX.current ? { season: state.season } : {}, p));
     SCN.src = (p.s || "") + "|" + (p.adj || "");
-    history.replaceState(null, "", href("insights", p, "race"));
+    history.replaceState(null, "", href("playoffs", p, "scenarios"));
     box.innerHTML = scnBody();
   }
   document.addEventListener("click", async e => {
@@ -2455,7 +2454,7 @@
       if (mine != null) SCN.picks[i] = v === "winout" ? mine : 1 - mine;
     });
     else if (v === "share") {
-      const url = location.origin + location.pathname + href("insights", scnParams(games), "race");
+      const url = location.origin + location.pathname + href("playoffs", scnParams(games), "scenarios");
       try {
         if (navigator.share && matchMedia("(pointer: coarse)").matches) await navigator.share({ title: `${IDX.name}: my playoff scenario`, url });
         else { await navigator.clipboard.writeText(url); b.textContent = "Link copied"; setTimeout(() => { b.textContent = "Share this scenario"; }, 2000); }
@@ -2618,7 +2617,7 @@
             { label: "Title", num: 1, cell: t => barCell(t.odds.titlePct, "title") },
           ], rows));
       }
-      if (!L.over) return `<div class="empty">Playoff odds appear during the regular season. The bracket is set; follow it on the Matchups tab.</div>`;
+      if (!L.over) return `<div class="empty">Playoff odds appear during the regular season. The bracket is set; follow it under Bracket.</div>`;
       const rows = D.teams.slice().sort((a, b) => (a.finalRank || 99) - (b.finalRank || 99));
       return section("Final results", `How the ${L.season} season ended.`, table([
         { label: "Finish", num: 1, cell: t => `<b class="${t.finalRank === 1 ? "champ" : ""}">${finishText(t.finalRank)}</b>` },
@@ -2865,6 +2864,14 @@
     const extra = Object.fromEntries([...state.params].filter(([k]) => k !== "season"));
     if (state.sub === "trades") { location.replace(href("trades")); return; } // trade grades moved to the Trades tab
     if (state.sub === "players") { location.replace(href("history", extra, "players")); return; } // player history moved to History
+    // the playoff race (odds, seed odds, scenario builder) moved to the Playoffs tab; Hot & cold stayed here
+    const at = state.sub === "race" ? state.params.get("at") || "odds" : state.sub;
+    if (["race", "seeds", "build"].includes(state.sub)) {
+      if (at === "form") { location.replace(href("insights", {}, "form")); return; }
+      delete extra.at;
+      location.replace(href("playoffs", extra, at === "build" ? "scenarios" : at === "seeds" ? "seeds" : "odds"));
+      return;
+    }
     if (INSIGHT_ALIAS[state.sub]) { // an old single-view link: open its page at that section
       const to = Object.assign(extra, state.sub === "redraft" ? { view: "redraft" } : { at: state.sub });
       location.replace(href("insights", to, INSIGHT_ALIAS[state.sub]));
@@ -2895,6 +2902,41 @@
     if (a) a.scrollIntoView({ block: "nearest", inline: "center" });
     const b = main.querySelector(".ins-switch .active");
     if (b) b.scrollIntoView({ block: "nearest", inline: "center" });
+    window.scrollTo(0, 0);
+  }
+
+  // ---------------------------------------------------------------- playoffs
+  // Everything about who makes it and who wins it: the playoff picture (clinch / eliminate scenarios) and tiebreaker
+  // race, playoff and title odds, seed odds, the scenario builder, and the bracket. Opens on the picture during the
+  // regular season and on the bracket once the playoffs start (or for a finished season).
+  function playoffTabs() {
+    const hasOdds = D.teams.some(t => t.odds);
+    return [
+      ["picture", "Picture", !!(clinchSection() || tieRaceSection())],
+      ["odds", hasOdds || !L.over ? "Odds" : "Final results", true],
+      ["seeds", "Seed odds", insightHas("seeds")],
+      ["scenarios", "Scenario builder", insightHas("build")],
+      ["bracket", "Bracket", true],
+    ].filter(x => x[2]).map(([k, label]) => [k, label]);
+  }
+  function playoffsHead(sub, text, extra) {
+    const line = text != null ? text : L.over ? `How the ${L.season} playoffs played out.`
+      : `Top ${L.playoffTeams} make it${L.playoffTeams < 2 ** L.playoffRounds ? `, top ${2 ** L.playoffRounds - L.playoffTeams} get a first-round bye` : ""}. Ties in the standings go to total points.`;
+    return `<div class="section-head"><div><h1>Playoffs</h1><p class="sub">${line}</p></div>${extra || ""}</div>${subnav("playoffs", playoffTabs(), sub)}`;
+  }
+  function renderPlayoffs() {
+    const tabs = playoffTabs();
+    const started = bracketModel().started;
+    const first = L.over || started ? "bracket" : tabs[0][0];
+    const sub = tabs.some(([k]) => k === state.sub) ? state.sub : first;
+    if (sub === "bracket") renderBracket();
+    else {
+      const body = sub === "picture" ? clinchSection() + tieRaceSection()
+        : sub === "seeds" ? INSIGHTS.seeds() : sub === "scenarios" ? INSIGHTS.build() : INSIGHTS.race();
+      main.innerHTML = playoffsHead(sub) + body;
+    }
+    const a = main.querySelector(".subnav .active");
+    if (a) a.scrollIntoView({ block: "nearest", inline: "center" });
     window.scrollTo(0, 0);
   }
 
@@ -4045,7 +4087,7 @@
             const c = clinchOf(t.id), lines = clinchLines(t.id, true), n = (c || {}).now || {};
             const status = n.bye === "in" ? "You've clinched a first-round bye." : n.po === "in" ? "You've clinched a playoff spot." : n.po === "out" ? "You've been eliminated from the playoffs." : "";
             const tie = tieRaceMine(t);
-            return status || lines.length || tie ? `<div class="me-fix prac"><span><b>Playoff picture:</b> ${[status].concat(lines.map(l => l.html), [tie]).filter(Boolean).join(" ")} <a class="wk-link" href="${href("standings")}">All scenarios ›</a>${insightHas("build") ? ` <a class="wk-link" href="${href("insights", { at: "build" }, "race")}">Build your own ›</a>` : ""}</span></div>` : "";
+            return status || lines.length || tie ? `<div class="me-fix prac"><span><b>Playoff picture:</b> ${[status].concat(lines.map(l => l.html), [tie]).filter(Boolean).join(" ")} <a class="wk-link" href="${href("playoffs")}">All scenarios ›</a>${insightHas("build") ? ` <a class="wk-link" href="${href("playoffs", {}, "scenarios")}">Build your own ›</a>` : ""}</span></div>` : "";
           })()}`);
       }
     }
@@ -4325,14 +4367,17 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-24", [
+      ["Playoffs tab", "Playoffs", "Everything about who makes it now lives in its own tab, right of Standings: the playoff picture and tiebreaker race (moved off Standings), playoff and seed odds and the scenario builder (from Insights), and the bracket (from Matchups). It opens on the bracket once the playoffs start.", "#/playoffs"],
+      ["Games open Monday night", "Games", "Next week's pick'em, Pick 4, waiver wire challenge, Rank 'em, trivia and Guess the graph now open as soon as the week's last NFL game ends, instead of early Wednesday.", "#/games"],
+      ["Bullseye retired", "Games", "Bullseye has been removed from Games.", "#/games"],
       ["Rain from ESPN", "Watch guide, player card, lineup check", "Game conditions now include the condition ESPN reports (such as Showers or Rain), and flag Rain or Snow from it even when the hourly forecast numbers miss it.", "#/matchups/watch"],
-      ["Seed odds on phones", "Insights → Playoff race", "The seed odds grid was hidden on phones; it now shows, with a narrower team column so seeds 1 through 8 fit on screen.", "#/insights/race?at=seeds"],
-      ["Scenario builder", "Insights → Playoff race, Standings", "Pick the winner of every game left and watch the standings, seeds, byes and first round update, with ties going to projected points (adjustable). Share a scenario as a link.", "#/insights/race?at=build"],
+      ["Seed odds on phones", "Playoffs → Seed odds", "The seed odds grid was hidden on phones; it now shows, with a narrower team column so seeds 1 through 8 fit on screen.", "#/insights/race?at=seeds"],
+      ["Scenario builder", "Playoffs → Scenario builder", "Pick the winner of every game left and watch the standings, seeds, byes and first round update, with ties going to projected points (adjustable). Share a scenario as a link.", "#/insights/race?at=build"],
       ["Season yearbook", "History → Yearbook", "A keepsake for every finished season: the champion, final standings, the bracket, the season's extremes and awards, its spots in the all-time record book, and a page per team. Save it as a PDF or print it.", "#/history/yearbook?season=2025"],
-      ["Tiebreaker race", "Standings, My team", "Ties in the standings go to total points. How often the playoff and bye lines come down to points, who's usually in that tie, who wins it, and the points gap now and at projections.", "#/"],
+      ["Tiebreaker race", "Playoffs → Picture, My team", "Ties in the standings go to total points. How often the playoff and bye lines come down to points, who's usually in that tie, who wins it, and the points gap now and at projections.", "#/"],
     ]],
     ["2026-11-23", [
-      ["Playoff picture", "Standings, My team", "Who's clinched a playoff spot or a bye (IN / BYE tags), who's eliminated (OUT), and exactly which of this week's results would settle it, in plain words.", "#/"],
+      ["Playoff picture", "Playoffs → Picture, My team", "Who's clinched a playoff spot or a bye (IN / BYE tags), who's eliminated (OUT), and exactly which of this week's results would settle it, in plain words.", "#/"],
       ["Red zone alerts", "Settings → Alerts → Live games", "A notification when one of your starters' NFL teams gets inside the 20, once per drive, with the down and distance.", "#/settings?at=alerts"],
       ["Left the game", "Player card, box scores, Settings → Alerts", "When a starter is hurt during his game (questionable to return, ruled out, being evaluated), an alert, a HURT tag in box scores and the news on his player card; another alert if he comes back.", "#/settings?at=alerts"],
       ["Game conditions", "Watch guide, player card, lineup check", "Weather at kickoff for outdoor games (temperature, wind, rain, snow), flagged when it's bad enough to matter for kickers, passing or everyone.", "#/matchups/watch"],
@@ -4461,9 +4506,9 @@
       ["posbars", "Position bars", "Standings", "#/", "Each team's rank at QB, RB, WR and TE: expected points from its best QB, 3 RBs, 3 WRs (two spots plus FLEX) and TE each week. After the season, what those groups actually produced.", []],
       ["moved", "Why you moved", "Standings → team cards, My team", "#/myteam", "How much each change since the current power window started (about once a week) added to or cost a team's power value: injuries, roster moves (added, dropped, traded), ESPN projection changes, and the lineup reshuffle those cause. ▲/▼ next to a power rank is the change over the same stretch.", ["Why your power moved"]],
       ["starts", "Starts X of Y wks", "Standings → team cards", "#/", "How often a player makes his team's best projected lineup in the weeks left.", []],
-      ["odds", "Playoff and title odds", "Insights → Playoff race", "#/insights/race", "From 10,000 simulated finishes of the regular season and the bracket. This week's games use ESPN's live win probabilities.", ["Playoff race"]],
-      ["seeds", "Seed odds", "Insights → Playoff race", "#/insights/race?at=seeds", "Each team's chance of finishing the regular season at every seed, from the same 10,000 simulations as the playoff odds. Darker cells are likelier; lines mark the bye and playoff cuts.", ["Seed odds"]],
-      ["form", "Hot & cold", "Insights → Playoff race", "#/insights/race?at=form", "Each team's average over the last few completed weeks vs. its season average, with the league-wide swing taken out (Trend).", ["Hot & cold"]],
+      ["odds", "Playoff and title odds", "Playoffs → Odds", "#/playoffs/odds", "From 10,000 simulated finishes of the regular season and the bracket. This week's games use ESPN's live win probabilities.", ["Playoff race"]],
+      ["seeds", "Seed odds", "Playoffs → Seed odds", "#/playoffs/seeds", "Each team's chance of finishing the regular season at every seed, from the same 10,000 simulations as the playoff odds. Darker cells are likelier; lines mark the bye and playoff cuts.", ["Seed odds"]],
+      ["form", "Hot & cold", "Insights → Hot & cold", "#/insights/form", "Each team's average over the last few completed weeks vs. its season average, with the league-wide swing taken out (Trend).", ["Hot & cold"]],
     ]],
     ["Luck & schedule", [
       ["allplay", "All-play record", "Insights → Luck", "#/insights/luck", "The record a team would have if it played every other team every week.", []],
@@ -4502,9 +4547,9 @@
       ["winprob", "Win probability", "Matchups", "#/matchups", "ESPN's live chance each team wins its matchup, shown while the week is in progress.", []],
       ["bigplays", "Big plays", "Matchups → Big plays", "#/matchups/plays", "Touchdowns, 5+ point field goals, turnovers, big defensive plays and 30+ yard gains (50+ for a pass) by league players, caught from ESPN every minute during games, with the fantasy points that play was worth. The Season view adds them up by team and player since the feed started.", ["Team leaderboard"]],
       ["monday", "Monday-night math", "Matchups", "#/matchups", "Once a matchup is down to players in games that haven't started, what each side needs and a win chance from those players' own game logs.", []],
-      ["build", "Scenario builder", "Insights → Playoff race", "#/insights/race?at=build", "Pick a winner for every regular-season game left and see the final standings, seeds, byes and first round. It starts from the favorites (ESPN's live win odds this week, the playoff odds' scoring model after). Teams level on wins are ordered by projected final points, which can be adjusted. The picks are saved in the link, so a scenario can be shared.", ["Scenario builder"]],
-      ["tierace", "Tiebreaker race", "Standings, My team", "#/", "Teams level on wins are separated by total points. From the playoff-odds simulations: how often a team ends level on wins with someone across the playoff (or bye) line (In a tie), how often it comes out ahead when that happens (Wins it), its projected final points, and the pairs that meet in that tie most often, with the gap now and at projections.", ["Tiebreaker race"]],
-      ["clinch", "Clinched / eliminated", "Standings, My team", "#/", "Exact, from the remaining schedule: clinched only if no combination of results can push a team out of the playoff spots (or bye spots), eliminated only if none can get it in. Points tiebreakers are treated as unknown (against a team for clinching, for it for elimination). The week's scenarios are the fewest results that settle it, whatever happens after.", ["Playoff picture"]],
+      ["build", "Scenario builder", "Playoffs → Scenario builder", "#/playoffs/scenarios", "Pick a winner for every regular-season game left and see the final standings, seeds, byes and first round. It starts from the favorites (ESPN's live win odds this week, the playoff odds' scoring model after). Teams level on wins are ordered by projected final points, which can be adjusted. The picks are saved in the link, so a scenario can be shared.", ["Scenario builder"]],
+      ["tierace", "Tiebreaker race", "Playoffs → Picture, My team", "#/playoffs/picture", "Teams level on wins are separated by total points. From the playoff-odds simulations: how often a team ends level on wins with someone across the playoff (or bye) line (In a tie), how often it comes out ahead when that happens (Wins it), its projected final points, and the pairs that meet in that tie most often, with the gap now and at projections.", ["Tiebreaker race"]],
+      ["clinch", "Clinched / eliminated", "Playoffs → Picture, My team", "#/playoffs/picture", "Exact, from the remaining schedule: clinched only if no combination of results can push a team out of the playoff spots (or bye spots), eliminated only if none can get it in. Points tiebreakers are treated as unknown (against a team for clinching, for it for elimination). The week's scenarios are the fewest results that settle it, whatever happens after.", ["Playoff picture"]],
       ["conditions", "Game conditions", "Watch guide, player card, lineup check", "#/matchups/watch", "Forecast for the first 3 hours of each outdoor game (Open-Meteo): temperature, wind and gusts, chance and amount of rain or snow, plus the condition ESPN reports (such as Showers). Flags: Windy (15+ mph or gusts 25+; hurts kickers and passing), Rain (likely, 0.1+ inch, or ESPN reports rain, showers or storms), Snow (0.2+ inch, or ESPN reports snow, flurries or sleet), Frigid (25°F or colder), Hot (88°F+). Domes and roofed stadiums show Indoors.", []],
       ["rootfor", "Who to root for", "Matchups, My team", "#/matchups", "For each of this week's other games, your playoff chance in the simulated seasons where each team won (the same 10,000 seasons as the playoff odds). Root for the team whose win helps you; the number is how many percentage points it's worth. Bye odds instead once you're all but in.", []],
       ["mstyle", "Manager style", "My team", "#/myteam", "How each manager runs a team, from ESPN's log of every move and lineup: pickups, lineup changes, gut calls (starting someone ESPN projected 2+ points below an eligible bench player), how fast pickups get cut, trades, and when moves happen (Eastern time). The type names the two habits that stand out most against the rest of the league.", []],
@@ -5479,7 +5524,8 @@
       await checkNflStatus();
       renderTicker();
       const typing = document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
-      if (state.season === IDX.current && ["standings", "matchups"].includes(state.tab) && state.sub !== "pickem" && !typing) {
+      const building = state.tab === "playoffs" && state.sub === "scenarios"; // don't redraw the scenario builder mid-pick
+      if (state.season === IDX.current && ["standings", "matchups", "playoffs"].includes(state.tab) && state.sub !== "pickem" && !building && !typing) {
         const y = window.scrollY;
         await route();
         window.scrollTo(0, y);
@@ -5627,10 +5673,11 @@
     } catch (_) { return false; }
   }
   const TOUR_TABS = [["Standings", "#/", "The table, power rankings, League pulse (what everyone's been up to) and what changed since your last visit."],
+    ["Playoffs", "#/playoffs", "Who's clinched and who's out, playoff and seed odds, the tiebreaker race, a scenario builder, and the bracket."],
     ["My team", "#/myteam", "Built around your team: this week's matchup, lineup problems, player news, waiver targets and your record book."],
-    ["Matchups", "#/matchups", "Live scores every minute on game day, box scores, every big play, a watch guide and the playoff bracket."],
+    ["Matchups", "#/matchups", "Live scores every minute on game day, box scores, every big play and a watch guide."],
     ["Games", "#/games", "Weekly pick'em, Pick 4, trivia and puzzles about this league, with season leaderboards."],
-    ["Insights", "#/insights", "Playoff odds, luck, lineups, schedule and what-ifs. Each tab has a switch at the top for its views."],
+    ["Insights", "#/insights", "Luck, hot and cold teams, lineups, schedule, the draft and what-ifs. Each tab has a switch at the top for its views."],
     ["Trades", "#/trades", "Every trade with grades, the trade block, and side-by-side player comparisons."],
     ["History", "#/history", "Every past season, the record book, player history and Tale of the tape for any two managers."]];
   function tourSteps() {
