@@ -87,7 +87,7 @@ async function run({ viewport, claim, label, cap }) {
   };
   const queue = ["#/"], seen = new Set([key("#/")]);
   for (const s of idx.seasons.filter(s => s !== idx.current)) {
-    for (const t of ["", "playoffs", "matchups", "insights", "trades", "history", "history/yearbook", "myteam"]) {
+    for (const t of ["", "playoffs", "matchups", "insights", "trades", "history", "history/wrapped", "myteam"]) {
       const h = `#/${t}?season=${s}`;
       if (!seen.has(key(h))) { seen.add(key(h)); queue.push(h); }
     }

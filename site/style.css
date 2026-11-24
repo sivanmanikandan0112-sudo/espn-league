@@ -1620,57 +1620,80 @@ body.has-ticker .tour-pill { bottom: calc(50px + env(safe-area-inset-bottom)); }
 .tr-h { font-size: 15px; font-weight: 600; margin: 0 0 8px; line-height: 1.4; }
 .tr-pair { margin: 8px 0 0; font-size: 13.5px; line-height: 1.5; padding-left: 10px; border-left: 3px solid var(--line); }
 
-/* Season yearbook (History → Yearbook) */
+/* Season picker (History → Wrapped) and small uppercase labels (also used by the scenario builder) */
 .yb-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0 16px; }
 .yb-pick { display: flex; flex-wrap: wrap; gap: 6px; }
 .yb-pick a { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; color: var(--ink-2); font-weight: 600; font-size: 13px; }
 .yb-pick a.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-.yb-soon .yb-pick { margin-top: 10px; }
-.yb-bar .btn { border: 0; border-radius: 10px; padding: 9px 14px; background: var(--accent); color: #fff; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; }
-.yb-page { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
 .yb-kicker, .yb-label { margin: 0; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
-.yb-cover { text-align: center; padding: 34px 20px; }
-.yb-champ { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: 22px 0 12px; }
-.yb-champ h2 { margin: 2px 0 4px; font-size: clamp(24px, 6vw, 36px); line-height: 1.15; overflow-wrap: anywhere; }
-.yb-cover .yb-logo, .yb-cover .logo { width: 96px; height: 96px; border-radius: 50%; }
-.yb-final { font-size: 16px; margin: 4px 0 10px; }
-.yb-h { margin: 0 0 12px; font-size: 17px; }
-.yb-page .yb-h:not(:first-child) { margin-top: 22px; }
-.yb-round + .yb-round { margin-top: 14px; }
-.yb-game { margin: 4px 0 0; font-size: 14px; }
-.yb-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
-.yb-fact { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
-.yb-fact .yb-v { margin: 2px 0; font-size: 22px; font-weight: 800; }
-.yb-fact .muted, .yb-award .muted { margin: 0; font-size: 13px; }
-.yb-awards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-.yb-award { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
-.yb-award p { margin: 0; overflow-wrap: anywhere; }
-.yb-recs, .yb-list { margin: 6px 0 0; padding-left: 18px; line-height: 1.55; font-size: 14px; }
-.yb-thead { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
-.yb-thead h3 { margin: 2px 0; font-size: 20px; overflow-wrap: anywhere; }
-.yb-thead p { margin: 0; }
-.yb-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0 0 12px; font-size: 14px; }
-.yb-dl dt { color: var(--ink-2); font-weight: 600; }
-.yb-dl dd { margin: 0; }
-.yb-team .yb-list + .yb-label, .yb-team .yb-dl + .yb-label { margin-top: 14px; }
-.yb-badges { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13.5px; margin: 6px 0 0; }
-@media (max-width: 560px) {
-  .yb-page { padding: 16px; }
-  .yb-dl { grid-template-columns: 1fr; gap: 0; }
-  .yb-dl dd { margin-bottom: 8px; }
-}
-/* printed / saved as PDF: just the yearbook, one section per page, ink on white */
-@media print {
-  body:has(.yearbook) .masthead, body:has(.yearbook) .tabs, body:has(.yearbook) .season-pick, body:has(.yearbook) .bottom-nav,
-  body:has(.yearbook) .ticker, body:has(.yearbook) .footer, body:has(.yearbook) .subnav, body:has(.yearbook) .yb-bar,
-  body:has(.yearbook) #banner, body:has(.yearbook) main > .section-head, body:has(.yearbook) .skip { display: none !important; }
-  body:has(.yearbook) { background: #fff !important; color: #111 !important; padding: 0 !important; }
-  .yearbook { --surface: #fff; --surface-2: #f4f4f4; --ink: #111; --ink-2: #555; --line: #ccc; --bg: #fff; color: #111; }
-  .yb-page { border: 0; border-radius: 0; padding: 0; margin: 0; break-after: page; }
-  .yb-page:last-child { break-after: auto; }
-  .yb-cover { padding-top: 30vh; }
-  .yb-fact, .yb-award, tr, li { break-inside: avoid; }
-}
+
+/* League Wrapped (History → Wrapped): the page, then the full-screen story */
+.wr-soon .yb-pick { margin-top: 10px; }
+.wr-soon p { margin: 0; }
+.wr-hero { display: flex; align-items: center; gap: 14px; margin: 0 0 14px; flex-wrap: wrap; }
+.wr-hero .logo { width: 56px; height: 56px; flex: none; }
+.wr-hero h2 { margin: 2px 0; font-size: 20px; overflow-wrap: anywhere; }
+.wr-hero > div { flex: 1 1 180px; min-width: 0; }
+.wr-hero .cta { margin: 0; border: 0; cursor: pointer; font: inherit; font-weight: 700; }
+.wr-teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.wr-team { display: flex; align-items: center; gap: 10px; text-align: left; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; cursor: pointer; min-width: 0; }
+.wr-team:hover { border-color: var(--ink-2); }
+.wr-team.mine { border-color: var(--accent); }
+.wr-team .logo { width: 34px; height: 34px; flex: none; }
+.wr-team > span:nth-child(2) { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.wr-team b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wr-go { color: var(--accent); font-size: 14px; }
+html.wr-open { overflow: hidden; }
+.wr-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(4, 12, 9, .82); display: grid; place-items: center; }
+.wr-story { position: relative; width: min(440px, 100vw); height: min(820px, 100dvh); background: #0c2a20; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+@media (max-width: 640px) { .wr-story { width: 100vw; height: 100dvh; border-radius: 0; } }
+.wr-prog { position: absolute; top: calc(10px + env(safe-area-inset-top)); left: 12px; right: 12px; display: flex; gap: 4px; z-index: 3; }
+.wr-prog span { flex: 1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .3); overflow: hidden; }
+.wr-prog i { display: block; height: 100%; width: 0; background: #fff; }
+.wr-top { position: absolute; top: calc(20px + env(safe-area-inset-top)); left: 12px; right: 8px; display: flex; align-items: center; gap: 6px; z-index: 4; }
+.wr-who { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; color: #fff; font-size: 13px; text-shadow: 0 1px 2px rgba(0, 0, 0, .3); }
+.wr-who b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wr-who .logo { width: 26px; height: 26px; flex: none; }
+.wr-count { opacity: .8; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wr-ic { width: 38px; height: 38px; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .22); color: #fff; cursor: pointer; font: inherit; font-size: 16px; padding: 0; }
+.wr-ic svg { width: 18px; height: 18px; margin: 0; }
+.wr-story.light .wr-prog span { background: rgba(0, 0, 0, .16); }
+.wr-story.light .wr-prog i { background: #0f1a16; }
+.wr-story.light .wr-who { color: #0f1a16; text-shadow: none; }
+.wr-story.light .wr-ic { background: rgba(0, 0, 0, .1); color: #0f1a16; }
+.wr-story.light .wr-end .linkbtn { color: #0f1a16; }
+.wr-stage { flex: 1; display: flex; }
+.wr-slide { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 10px; padding: 84px 26px 40px; background: var(--wr-bg); color: var(--wr-ink); animation: wr-in .35s ease-out; min-height: 0; overflow: hidden; }
+@keyframes wr-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .wr-slide { animation: none; } }
+.wr-kicker { margin: 0; font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--wr-hi); }
+.wr-big { margin: 0; font-family: Archivo, Inter, sans-serif; font-weight: 900; font-size: clamp(44px, 13vw, 64px); line-height: 1.02; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.wr-big.long { font-size: clamp(32px, 9vw, 44px); }
+.wr-line { margin: 4px 0 0; font-size: 19px; line-height: 1.45; font-weight: 600; }
+.wr-sub { margin: 0; font-size: 15px; color: var(--wr-ink2); }
+.wr-logo .wr-lg, .wr-logo .logo, .wr-logo img { width: 88px; height: 88px; border-radius: 50%; }
+.wr-slide.cover { justify-content: center; text-align: left; }
+.wr-strip { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 12px; }
+.wr-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 8px; padding: 6px 0; color: #fff; background: #9aa3a0; }
+.wr-tile.W { background: #1f9d60; } .wr-tile.L { background: #d9482a; }
+.wr-tile b { font-size: 17px; font-family: Archivo, Inter, sans-serif; } .wr-tile i { font-style: normal; font-size: 11.5px; opacity: .9; }
+.wr-bars-v { display: flex; align-items: flex-end; gap: 4px; height: 140px; margin-top: 14px; }
+.wr-bars-v span { flex: 1; background: var(--wr-ink2); opacity: .45; border-radius: 3px 3px 0 0; }
+.wr-bars-v span.hi { background: var(--wr-hi); opacity: 1; }
+.wr-list { margin: 8px 0 0; padding-left: 20px; font-size: 18px; line-height: 1.5; font-weight: 700; }
+.wr-sum { display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; margin: 10px 0 0; font-size: 16px; }
+.wr-sum dt { color: var(--wr-ink2); font-weight: 600; }
+.wr-sum dd { margin: 0; font-weight: 800; text-align: right; overflow-wrap: anywhere; }
+.wr-site { margin: 14px 0 0; font-size: 13px; color: var(--wr-ink2); }
+.wr-tap { position: absolute; top: 70px; bottom: 0; z-index: 2; border: 0; background: transparent; cursor: pointer; padding: 0; }
+.wr-tap.prev { left: 0; width: 32%; }
+.wr-tap.next { right: 0; width: 68%; }
+.wr-tap:focus-visible { outline: 2px solid #fff; outline-offset: -6px; }
+.wr-end { position: absolute; left: 0; right: 0; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 4; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 0 16px; }
+.wr-end[hidden] { display: none; }
+.wr-end .cta { margin: 0; border: 0; cursor: pointer; font: inherit; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.wr-end .linkbtn { color: #fff; }
+.wr-slide.summary { padding-bottom: 120px; }
 
 /* Scenario builder (Insights → Playoff race) */
 .scn-note { margin: 0 0 10px; font-size: 13.5px; color: var(--ink-2); }

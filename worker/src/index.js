@@ -1646,7 +1646,7 @@ async function watchdog(env, now, ctx) {
 const ALERT_CRON = "0-59 * * * *";
 const ALERT_KINDS = { lead: true, wire: true, final: true, plays: true, playsAgainst: false, playsAll: false, trouble: true,
   waivers: true, trades: true, tradesAll: false, picks: false, talk: true, practice: true,
-  redzone: true, redzoneAgainst: false, hurt: true, hurtAgainst: false };
+  redzone: true, redzoneAgainst: false, hurt: true, hurtAgainst: false, wrapped: true };
 const SUBS_KEY = "push:subs";
 const SUBS_MAX = 36; // each alert is one request; this keeps a busy minute inside the worker's per-run limit
 const LEAD_GAP_MS = 10 * 60e3;   // at most one lead-change alert per matchup every 10 minutes
@@ -2110,12 +2110,34 @@ async function moveAlerts(env, box, info, yr) {
   await env.PICKEM.put("push:tx", JSON.stringify({ fp: fp.hash, seen: keep }));
 }
 
+// League Wrapped: one alert per device, once a season, after the championship. ESPN marks the season over first; the
+// alert waits until the site has rebuilt after that (status.json's "updated" is newer than the moment the worker first
+// saw it over), so the link opens a finished season, and only goes out between 10am and 9pm Eastern.
+async function wrappedAlert(env, subs, season, now) {
+  const sentKey = `wrapped-sent:${season}`, dueKey = `wrapped-due:${season}`;
+  if (await env.PICKEM.get(sentKey)) return;
+  let due = Number(await env.PICKEM.get(dueKey));
+  if (!due) { due = now; await env.PICKEM.put(dueKey, String(due)); return; }
+  const h = Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hourCycle: "h23", timeZone: "America/New_York" }).format(now)) % 24;
+  if (h < 10 || h >= 21) return;
+  const st = await cached("site-status", 300, async () => { const r = await fetch(SITE_DATA(env) + "status.json?t=" + now); return r.ok ? r.json() : {}; });
+  if (!(Date.parse(st.updated || "") > due)) return;
+  const info = await teamInfo(env, season);
+  const teamOf = {};
+  for (const [id, t] of Object.entries(info.teams)) for (const o of t.owners) teamOf[o] = +id;
+  const box = outbox(subs, teamOf);
+  box.add("wrapped", () => true, () => ({ title: `Your ${season} League Wrapped is ready`, tag: `wrapped-${season}`, url: "#/history/wrapped?play=me",
+    body: "Your season as a story: how it ended, your peak, your MVP, your best move, your rivals. Tap to watch, then share your card." }));
+  await env.PICKEM.put(sentKey, new Date(now).toISOString());
+  if (box.size()) await box.flush(env, now);
+}
+
 async function runAlerts(env, now = Date.now()) {
   if (!env.PICKEM || !vapidPublic(env)) return;
   const subs = await loadSubs(env);
   if (!Object.keys(subs).length) return;
   const wk = await pickemWeek(env);
-  if (wk.over) return;
+  if (wk.over) return wrappedAlert(env, subs, wk.season, now).catch(e => console.log("alerts: wrapped failed", String(e)));
   const info = await teamInfo(env, wk.season);
   const teamOf = {};
   for (const [id, t] of Object.entries(info.teams)) for (const o of t.owners) teamOf[o] = +id;
