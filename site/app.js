@@ -3562,6 +3562,18 @@
         reveal: `${mvp.name}: ${f1(mvp.pts)} points, ${Math.round(100 * mvp.pts / Math.max(1, all))}% of everything you scored.`, face: mvp, stats: starterTiles(mvp) });
     }
     if (ranked.length >= 3) add({ key: "top5", theme: "brand", kicker: "Your top players", big: "Your top 5", top5: ranked.slice(0, 5).map(p => ({ ...p, share: Math.round(100 * p.pts / Math.max(1, all)) })) });
+    // this or that: the two players (after the MVP, top 8) closest in points, ideally at different positions
+    {
+      const pool = ranked.slice(1, 8), pairs = [];
+      pool.forEach((a, i) => pool.slice(i + 1).forEach(b => pairs.push([a, b, Math.abs(a.pts - b.pts) / Math.max(a.pts, b.pts) + (a.pos === b.pos ? 0.04 : 0)])));
+      const pr = pairs.sort((x, y) => x[2] - y[2])[0];
+      if (pr && pr[2] < 0.25) {
+        const [a, b] = rand() < 0.5 ? [pr[0], pr[1]] : [pr[1], pr[0]], win = a.pts >= b.pts ? a : b, lose = win === a ? b : a;
+        add({ key: "duel", theme: "coral", kicker: "This or that", big: "Who scored more for you?", quiz: { options: [a, b], answer: win.id, duel: true }, face: win,
+          reveal: `${win.name}, by ${f1(win.pts - lose.pts)}: ${f1(win.pts)} to ${f1(lose.pts)}${win.starts !== lose.starts ? `, in ${win.starts} starts to ${lose.starts}` : ""}.`,
+          stats: [[f1(win.pts / Math.max(1, win.starts)), `${win.name.split(" ").slice(-1)[0]} per start`], [f1(lose.pts / Math.max(1, lose.starts)), `${lose.name.split(" ").slice(-1)[0]} per start`], [win.best.toFixed(1), `${win.name.split(" ").slice(-1)[0]}'s best game`]] });
+      }
+    }
 
     // 6. peak and valley
     {
@@ -3580,7 +3592,51 @@
       }
     }
 
+    // your position rooms: regular-season starter points by position, ranked
+    {
+      const POSN = [["QB", "quarterbacks"], ["RB", "running backs"], ["WR", "receivers"], ["TE", "tight ends"], ["K", "kickers"], ["D/ST", "defense"]];
+      const room = {};
+      games.filter(x => !x.po).forEach(x => starters(x.sd).forEach(p => { const r = room[x.sd.team] || (room[x.sd.team] = {}); r[p.pos] = (r[p.pos] || 0) + (p.pts || 0); }));
+      const rows = POSN.filter(([k]) => D.teams.some(o => (room[o.id] || {})[k])).map(([k, word]) => {
+        const v = (room[t.id] || {})[k] || 0, all2 = D.teams.map(o => (room[o.id] || {})[k] || 0);
+        return { k, word, v, rank: 1 + all2.filter(x => x > v).length, max: Math.max(...all2) };
+      });
+      if (rows.length >= 4) {
+        const bestR = rows.slice().sort((a, b) => a.rank - b.rank || b.v - a.v)[0], worstR = rows.slice().sort((a, b) => b.rank - a.rank || a.v - b.v)[0];
+        add({ key: "rooms", theme: "night", kicker: "Your position rooms", big: `${bestR.k} room: #${bestR.rank}`, rooms: rows,
+          line: `Your ${bestR.word} scored ${n0(bestR.v)} points, ${bestR.rank === 1 ? "the most in the league" : `#${bestR.rank} in the league`}. Your ${worstR.word}: #${worstR.rank}${worstR.rank >= L.size - 1 ? ". Yikes" : ""}.` });
+      }
+    }
     // optional slides (the team's strongest WR_OPT, kept in story order)
+    {
+      const pg = [];
+      games.forEach(x => starters(x.sd).forEach(p => pg.push({ p, x })));
+      const myBest = pg.filter(g => g.x.sd.team === t.id).sort((a, b) => (b.p.pts || 0) - (a.p.pts || 0))[0];
+      if (myBest) {
+        const rank = 1 + pg.filter(g => (g.p.pts || 0) > (myBest.p.pts || 0)).length;
+        if (rank <= 10) add({ key: "game", opt: 11 - rank, theme: "sun", kicker: "Your best single game", big: f1(myBest.p.pts), count: myBest.p.pts, face: myBest.p,
+          line: `${myBest.p.name}, ${wkName(myBest.x.w).toLowerCase()}. ${rank === 1 ? "The best game by any player in the league all season." : `The ${ordinal(rank)}-best game by any player in the league all season.`}`,
+          stats: pline(myBest.p.id, myBest.p.pos, [myBest.x.w]).slice(0, 3).concat([[won(myBest.x) ? "W" : "L", `vs. ${tn(myBest.x.op.team)}`]]) });
+      }
+    }
+    {
+      const losses = mine.filter(lost), winsG = mine.filter(won);
+      const hiL = losses.sort((a, b) => b.sd.pts - a.sd.pts)[0], loW = winsG.sort((a, b) => a.sd.pts - b.sd.pts)[0];
+      const rkL = hiL ? 1 + games.filter(x => lost(x) && x.sd.pts > hiL.sd.pts).length : 99, rkW = loW ? 1 + games.filter(x => won(x) && x.sd.pts < loW.sd.pts).length : 99;
+      if ((hiL && rkL <= 3) || (loW && rkW <= 3)) add({ key: "weird", opt: 9 - Math.min(rkL, rkW) * 2, theme: "paper", kicker: "Football is weird", big: "Weird results", rivals: [
+        hiL && { label: "Most points in a loss", name: f1(hiL.sd.pts), rec: `lost to ${tn(hiL.op.team)} in ${wkName(hiL.w).toLowerCase()}`, yr: rkL === 1 ? "the most in a loss all season" : `#${rkL} in a loss all season`, emoji: "🤦", avg: `they scored ${f1(hiL.op.pts)}` },
+        loW && { label: "Fewest points in a win", name: f1(loW.sd.pts), rec: `beat ${tn(loW.op.team)} in ${wkName(loW.w).toLowerCase()}`, yr: rkW === 1 ? "the fewest in a win all season" : `#${rkW} fewest in a win`, emoji: "🥷", avg: `they scored ${f1(loW.op.pts)}` }].filter(Boolean) });
+    }
+    if (t.sos && t.sos.facedVsAvg != null) {
+      const byF = D.teams.filter(o => o.sos && o.sos.facedVsAvg != null).sort((a, b) => b.sos.facedVsAvg - a.sos.facedVsAvg), r = byF.indexOf(t);
+      if (r >= 0 && (r < 2 || r >= byF.length - 2) && Math.abs(t.sos.facedVsAvg) >= 3) {
+        const up = t.sos.facedVsAvg > 0;
+        add({ key: "sched", opt: Math.abs(t.sos.facedVsAvg) / 1.5, theme: up ? "coral" : "sky", kicker: up ? "Everyone brought it against you" : "Opponents went quiet", big: `${signed(t.sos.facedVsAvg)} a week`, emoji: up ? "😠" : "😴",
+          line: up ? `Your opponents scored ${f1(t.sos.facedVsAvg)} more a week against you than they did on average. ${r === 0 ? "No one in the league got that treatment more." : "Almost nobody got it worse."}`
+            : `Your opponents scored ${f1(-t.sos.facedVsAvg)} less a week against you than they usually did. ${r === byF.length - 1 ? "The kindest schedule in the league." : "One of the kindest schedules in the league."}`,
+          stats: [[f1(t.sos.faced), "scored against you a week"], [f1(t.sos.oppPpg), "your opponents' usual average"]] });
+      }
+    }
     {
       const decided = {};
       mine.filter(won).forEach(x => { const margin = x.sd.pts - x.op.pts; starters(x.sd).filter(p => (p.pts || 0) > margin).forEach(p => { (decided[p.id] = decided[p.id] || { ...p, n: 0 }).n++; }); });
@@ -3628,10 +3684,18 @@
         return best && { x, ...best };
       }).filter(Boolean).sort((a, b) => (b.x.po - a.x.po) || (b.gain - a.gain));
       const r = costly[0];
+      const all3 = D.teams.map(o => o.benchLeft).filter(v => v != null);
+      if (t.benchLeft != null && all3.length > 2) {
+        const max = Math.ceil(Math.max(...all3) * 1.3 / 50) * 50, rk = 1 + all3.filter(v => v > t.benchLeft).length;
+        add({ key: "guess", theme: "berry", kicker: "Guess the number", big: "How many points did you leave on your bench?",
+          slider: { min: 0, max, step: 5, answer: t.benchLeft, start: Math.round(max / 2 / 5) * 5 },
+          reveal: `${f1(t.benchLeft)} points sat on your bench all season, ${rk === 1 ? "the most in the league" : rk === all3.length ? "the fewest in the league" : `#${rk} in the league`}.${r ? ` The costliest call: ${r.bp.name} (${f1(r.bp.pts)}) on the bench while ${r.sp.name} (${f1(r.sp.pts)}) started in ${wkName(r.x.w).toLowerCase()}, a game you lost.` : ""}`,
+          stats: [[n0(t.benchLeft), "bench points"], [`#${rk}`, "most in league"], t.efficiency != null ? [`${Math.round(t.efficiency)}%`, `lineups (#${rankOf(x => x.efficiency || 0, t)})`] : [String(costly.length), "losses a swap flips"]] });
+      }
       const benchStats = [t.benchLeft != null ? [f1(t.benchLeft), `left on the bench (#${rankOf(x => x.benchLeft || 0, t)})`] : null, t.efficiency != null ? [`${t.efficiency}%`, `lineup efficiency (#${rankOf(x => x.efficiency || 0, t)})`] : null].filter(Boolean);
-      if (r && (costly.length >= 2 || r.x.po)) add({ key: "bench", stats: benchStats, opt: 3 * costly.length + (r.x.po ? 6 : 0), theme: "coral", kicker: "Bench regret", big: costly.length === 1 ? "1 loss" : `${costly.length} losses`, emoji: "🪑",
+      if (t.benchLeft == null && r && (costly.length >= 2 || r.x.po)) add({ key: "bench", stats: benchStats, opt: 3 * costly.length + (r.x.po ? 6 : 0), theme: "coral", kicker: "Bench regret", big: costly.length === 1 ? "1 loss" : `${costly.length} losses`, emoji: "🪑",
         line: `That's how many games one bench swap would have flipped. The worst: ${r.bp.name} (${f1(r.bp.pts)}) sat while ${r.sp.name} (${f1(r.sp.pts)}) started in ${wkName(r.x.w).toLowerCase()}.`, face: { id: r.bp.id, name: r.bp.name, pos: r.bp.pos, team: r.bp.team } });
-      else if (!r && mine.filter(lost).length >= 4) add({ key: "bench", stats: benchStats, opt: 4, theme: "brand", kicker: "Lineup calls", big: "Clean sheet", emoji: "🧹", line: "Not one of your losses would have flipped with a different bench call. You just got outscored." });
+      else if (t.benchLeft == null && !r && mine.filter(lost).length >= 4) add({ key: "bench", stats: benchStats, opt: 4, theme: "brand", kicker: "Lineup calls", big: "Clean sheet", emoji: "🧹", line: "Not one of your losses would have flipped with a different bench call. You just got outscored." });
     }
     if (t.luck != null) {
       const byLuck = D.teams.filter(x => x.luck != null).sort((a, b) => b.luck - a.luck), r = byLuck.indexOf(t);
@@ -3649,8 +3713,8 @@
       const vic = rows.filter(r => r.w > r.l).sort((a, b) => (b.w - b.l) - (a.w - a.l) || b.g - a.g)[0];
       const thisYear = m => { const tm = D.teams.find(x => (x.owners || []).includes(m)); const gs = tm ? mine.filter(x => x.op.team === tm.id) : []; return gs.length ? `${gs.filter(won).length}–${gs.filter(lost).length} this season` : ""; };
       if (nem && vic) add({ key: "rivals", opt: 6, theme: "paper", kicker: "Your rivals", big: "Rivals", rivals: [
-        { label: "Your nemesis", name: memberName(nem.m), rec: `${nem.w}–${nem.l} all-time`, yr: thisYear(nem.m), emoji: "😤", avg: `average ${f1(nem.pf / nem.g)}–${f1(nem.pa / nem.g)}` },
-        { label: "Your favorite victim", name: memberName(vic.m), rec: `${vic.w}–${vic.l} all-time`, yr: thisYear(vic.m), emoji: "😈", avg: `average ${f1(vic.pf / vic.g)}–${f1(vic.pa / vic.g)}` }] });
+        { label: "Your nemesis", name: memberName(nem.m), rec: `${nem.w}–${nem.l} all-time`, yr: thisYear(nem.m), emoji: "😤", avg: `average ${f1(nem.pf / nem.g)}–${f1(nem.pa / nem.g)} in those games` },
+        { label: "Your favorite victim", name: memberName(vic.m), rec: `${vic.w}–${vic.l} all-time`, yr: thisYear(vic.m), emoji: "😈", avg: `average ${f1(vic.pf / vic.g)}–${f1(vic.pa / vic.g)} in those games` }] });
     }
     {
       const by = f => D.teams.reduce((m, x) => (m == null || f(x) > f(m) ? x : m), null);
@@ -3733,9 +3797,20 @@
       body = `<div class="wr-a wr-cover-logo" ${d(0.1)}>${logoImg(s.logo, s.big, "wr-lg")}</div>
         <p class="wr-a wr-kicker" ${d(0.3)}>${esc(s.kicker)}</p><p class="wr-a wr-big${long ? " long" : ""}" ${d(0.45)}>${esc(s.big)}</p><p class="wr-a wr-line" ${d(0.7)}>${esc(s.line)}</p>
         <p class="wr-a wr-hint" ${d(1.4)}>Tap to start ›</p>`;
+    } else if (s.slider) {
+      const g = s.answered != null ? s.answered : s.slider.start;
+      body = `<p class="wr-a wr-kicker" ${d(0.1)}>${esc(s.kicker)}</p><p class="wr-a wr-big long" ${d(0.25)}>${esc(s.big)}</p>
+        <div class="wr-a wr-slider${s.answered != null ? " done" : ""}" ${d(0.45)}>
+          <output class="wr-guess-v">${g}</output>
+          <input type="range" min="${s.slider.min}" max="${s.slider.max}" step="${s.slider.step}" value="${g}" aria-label="Your guess"${s.answered != null ? " disabled" : ""}>
+          <div class="wr-slider-ends"><span>${s.slider.min}</span><span>${s.slider.max}</span></div>
+          ${s.answered != null ? "" : `<button type="button" class="wr-lock" data-wr-lock>Lock it in</button>`}
+        </div>
+        <p class="wr-line wr-reveal"${s.answered != null ? "" : " hidden"}>${s.answered != null ? esc(wrVerdict(s)) : ""}</p>
+        <div class="wr-reveal-stats"${s.answered != null ? "" : " hidden"}>${wrTiles(s.stats, 0.1)}</div>`;
     } else if (s.quiz) {
       body = `<p class="wr-a wr-kicker" ${d(0.1)}>${esc(s.kicker)}</p><p class="wr-a wr-big long" ${d(0.25)}>${esc(s.big)}</p>
-        <div class="wr-quiz${s.answered ? " done" : ""}">${s.quiz.options.map((p, k) => `<button type="button" class="wr-a wr-opt${s.answered ? (p.id === s.quiz.answer ? " right" : p.id === s.answered ? " wrong" : " dim") : ""}" data-wr-guess="${p.id}" ${d((0.45 + k * 0.1).toFixed(2))}>${wrFace(p)}<span>${esc(p.name)}</span></button>`).join("")}</div>
+        <div class="wr-quiz${s.quiz.duel ? " duel" : ""}${s.answered ? " done" : ""}">${s.quiz.options.map((p, k) => `<button type="button" class="wr-a wr-opt${s.answered ? (p.id === s.quiz.answer ? " right" : p.id === s.answered ? " wrong" : " dim") : ""}" data-wr-guess="${p.id}" ${d((0.45 + k * 0.1).toFixed(2))}>${wrFace(p)}<span>${esc(p.name)}</span></button>`).join("")}</div>
         <p class="wr-line wr-reveal"${s.answered ? "" : " hidden"}>${s.answered === s.quiz.answer ? "Nailed it. " : s.answered ? "Not quite. " : ""}${esc(s.reveal)}</p>
         <div class="wr-reveal-stats"${s.answered ? "" : " hidden"}>${s.stats ? wrTiles(s.stats, 0.1) : ""}</div>`;
     } else if (s.top5) {
@@ -3748,7 +3823,7 @@
         <p class="wr-site">${esc(SITE_URL)}</p></div>`;
     } else if (s.rivals) {
       body = `<p class="wr-a wr-kicker" ${d(0.1)}>${esc(s.kicker)}</p>
-        <div class="wr-rivals">${s.rivals.map((r, k) => `<div class="wr-a wr-rival" ${d((0.3 + k * 0.35).toFixed(2))}><span class="wr-emoji sm">${r.emoji}</span><p class="wr-kicker">${esc(r.label)}</p><p class="wr-big long">${esc(r.name)}</p><p class="wr-line">${esc(r.rec)}${r.yr ? ` · ${esc(r.yr)}` : ""}</p><p class="wr-sub">${esc(r.avg)} in those games</p></div>`).join("")}</div>`;
+        <div class="wr-rivals">${s.rivals.map((r, k) => `<div class="wr-a wr-rival" ${d((0.3 + k * 0.35).toFixed(2))}><span class="wr-emoji sm">${r.emoji}</span><p class="wr-kicker">${esc(r.label)}</p><p class="wr-big long">${esc(r.name)}</p><p class="wr-line">${esc(r.rec)}${r.yr ? ` · ${esc(r.yr)}` : ""}</p>${r.avg ? `<p class="wr-sub">${esc(r.avg)}</p>` : ""}</div>`).join("")}</div>`;
     } else {
       const num = s.count != null ? ` data-count="${s.count}" data-dec="${String(s.big).includes(".") ? String(s.big).split(".")[1].length : 0}"` : "";
       body = `${s.emoji ? `<span class="wr-a wr-emoji" ${d(0.05)}>${s.emoji}</span>` : ""}${s.face && !s.card ? `<div class="wr-a" ${d(0.05)}>${wrFace(s.face, "hero")}</div>` : ""}
@@ -3758,14 +3833,17 @@
         ${s.line ? `<p class="wr-a wr-line" ${d(0.55)}>${esc(s.line)}</p>` : ""}${s.sub ? `<p class="wr-a wr-sub" ${d(0.7)}>${esc(s.sub)}</p>` : ""}
         ${s.chips ? `<div class="wr-chips">${s.chips.map((c, k) => `<span class="wr-a" ${d((0.6 + k * 0.15).toFixed(2))}>${esc(c)}</span>`).join("")}</div>` : ""}
         ${s.road ? `<div class="wr-a" ${d(0.45)}>${wrRoadSvg(s.road, s.cut, th)}</div>` : ""}
+        ${s.rooms ? `<div class="wr-rooms">${s.rooms.map((r, k) => `<div class="wr-a wr-room${r.rank <= 3 ? " good" : r.rank >= L.size - 2 ? " bad" : ""}" ${d((0.5 + k * 0.1).toFixed(2))}><span class="wr-room-k">${esc(r.k)}</span><span class="wr-room-bar"><i style="width:${Math.max(4, 100 * r.v / Math.max(1, r.max)).toFixed(0)}%;--d:${(0.7 + k * 0.1).toFixed(2)}s"></i></span><span class="wr-room-r">#${r.rank}</span></div>`).join("")}</div>` : ""}
         ${s.bars ? (() => { const mx = Math.max(...s.bars.map(b => b.v), 1); return `<div class="wr-bars-v" aria-hidden="true">${s.bars.map((b, k) => `<span class="wr-bar${b.hi ? " hi" : ""}${b.lo ? " lo" : ""}" style="height:${Math.max(6, 100 * b.v / mx).toFixed(0)}%;--d:${(0.6 + k * 0.04).toFixed(2)}s"></span>`).join("")}</div>${s.low ? `<p class="wr-a wr-sub" ${d(1.3)}>${esc(s.low)}</p>` : ""}`; })() : ""}
         ${s.stats && s.stats.length ? wrTiles(s.stats, 0.95) : ""}
         ${s.list ? `<ul class="wr-list">${s.list.map(([e, x], k) => `<li class="wr-a" ${d((0.5 + k * 0.18).toFixed(2))}><span>${e}</span>${esc(x)}</li>`).join("")}</ul>` : ""}`;
     }
     const deco = `<div class="wr-deco p${idx % 4}" aria-hidden="true"><i></i><i></i><i></i></div>`;
     const confetti = s.confetti ? `<div class="wr-confetti" aria-hidden="true">${Array.from({ length: 36 }, (_, k) => `<i style="left:${(k * 37) % 100}%;--c:${["#2bc47b", "#d9482a", "#1f4fd1", "#ffffff", "#5b2368"][k % 5]};--t:${(1.6 + (k % 7) * 0.25).toFixed(2)}s;--dl:${((k % 9) * 0.12).toFixed(2)}s;--r:${(k * 47) % 360}deg"></i>`).join("")}</div>` : "";
-    return `<div class="wr-slide k-${s.key}${s.cover ? " cover" : ""}" style="${style}">${deco}${confetti}<div class="wr-body">${body}</div></div>`;
+    return `<div class="wr-slide k-${s.key}${s.cover ? " cover" : ""}${s.slider && s.answered != null ? " revealed" : ""}" style="${style}">${deco}${confetti}<div class="wr-body">${body}</div></div>`;
   }
+  const wrVerdict = s => { const off = Math.abs(s.answered - s.slider.answer), pct = off / Math.max(1, s.slider.answer);
+    return `You said ${s.answered}. ${pct <= 0.05 ? "Spot on." : pct <= 0.15 ? `Close: off by ${Math.round(off)}.` : `Off by ${Math.round(off)}.`} ${s.reveal}`; };
   const wrTiles = (stats, d0) => `<div class="wr-stats">${stats.slice(0, 4).map(([v, k], i) => `<div class="wr-a" style="--d:${(d0 + i * 0.12).toFixed(2)}s"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("")}</div>`;
   // numbers count up when their slide appears
   function wrCount(el) {
@@ -3783,7 +3861,19 @@
   }
 
   // ---- the story viewer
-  const wrWaiting = () => { const s = WR.slides[WR.i]; return !!(s && s.quiz && !s.answered); };
+  const wrWaiting = () => { const s = WR.slides[WR.i]; return !!(s && ((s.quiz && !s.answered) || (s.slider && s.answered == null))); };
+  function wrLock() {
+    const s = WR.slides[WR.i], box = WR.el && WR.el.querySelector(".wr-stage");
+    if (!s || !s.slider || s.answered != null || !box) return;
+    s.answered = Number(box.querySelector(".wr-slider input").value);
+    box.querySelector(".wr-slider").classList.add("done");
+    box.querySelector(".wr-slide").classList.add("revealed");
+    box.querySelector(".wr-slider input").disabled = true;
+    const lk = box.querySelector("[data-wr-lock]"); if (lk) lk.remove();
+    const rv = box.querySelector(".wr-reveal"); rv.textContent = wrVerdict(s); rv.hidden = false;
+    box.querySelector(".wr-reveal-stats").hidden = false;
+    WR.start = performance.now() - WR_MS * 0.1;
+  }
   function wrShow(i) {
     WR.i = Math.max(0, Math.min(WR.slides.length - 1, i));
     WR.start = performance.now(); WR.pauseAt = 0;
@@ -3816,7 +3906,7 @@
     if (state.params.has("play")) { const p = new URLSearchParams(state.params); p.delete("play"); state.params = p; history.replaceState(null, "", "#/history/wrapped" + (p.toString() ? "?" + p : "")); }
   }
   function wrKey(e) {
-    if (document.querySelector(".share-modal")) return;
+    if (document.querySelector(".share-modal") || (e.target && e.target.type === "range")) return;
     if (e.key === "Escape") wrClose();
     else if (e.key === "ArrowRight") wrShow(WR.i + 1);
     else if (e.key === "ArrowLeft") wrShow(WR.i - 1);
@@ -3857,7 +3947,7 @@
     document.addEventListener("keydown", wrKey);
     const story = el.querySelector(".wr-story");
     story.addEventListener("pointerdown", e => {
-      if (e.target.closest("button:not(.wr-tap)")) return;
+      if (e.target.closest("button:not(.wr-tap), input, .wr-slider")) return;
       WR.holdT = setTimeout(() => { WR.paused = true; WR.holding = true; }, 220);
     });
     const up = () => { clearTimeout(WR.holdT); if (WR.holding) { WR.holding = false; WR.paused = false; WR.suppress = true; } };
@@ -3866,11 +3956,14 @@
       if (WR.suppress) { WR.suppress = false; if (e.target.closest(".wr-tap")) return; }
       const g = e.target.closest("[data-wr-guess]");
       if (g) return wrGuess(Number(g.dataset.wrGuess));
+      if (e.target.closest("[data-wr-lock]")) return wrLock();
+      if (e.target.closest(".wr-slider")) return;
       if (e.target === el || e.target.closest(".wr-x") || e.target.closest('[data-wr="close"]')) return wrClose();
       if (e.target.closest('[data-wr="replay"]')) { WR.slides.forEach(s => { delete s.answered; }); return wrShow(0); }
       if (e.target.closest(".wr-tap.next")) return WR.i === WR.slides.length - 1 ? null : wrShow(WR.i + 1);
       if (e.target.closest(".wr-tap.prev")) return wrShow(WR.i - 1);
     });
+    el.addEventListener("input", e => { if (e.target.type === "range") { const o = el.querySelector(".wr-guess-v"); if (o) o.textContent = e.target.value; } });
     wrShow(0);
     WR.raf = requestAnimationFrame(wrTick);
     const x = el.querySelector(".wr-x");
@@ -3905,9 +3998,10 @@
   async function drawSlide(spec) {
     try { await Promise.all(["900 40px Archivo", "800 40px Archivo", "600 20px Inter", "700 20px Inter"].map(f => document.fonts.load(f))); } catch (_) { /* system fonts */ }
     let s = spec.slide;
-    if (s.quiz) s = { key: "mvp", theme: s.theme, kicker: "Your MVP", big: s.face.name, line: s.reveal, face: s.face };
+    if (s.quiz) s = { key: s.key, theme: s.theme, kicker: s.quiz.duel ? "This or that" : "Your MVP", big: s.face.name, line: s.reveal, face: s.face };
+    else if (s.slider) s = { key: s.key, theme: s.theme, kicker: "Points left on your bench", big: Number(s.slider.answer).toFixed(1), line: s.answered != null ? wrVerdict(s) : s.reveal, emoji: "🪑" };
     const th = WR_THEMES[s.theme] || WR_THEMES.brand, W = 1080, H = 1350, PAD = 84;
-    const hasTiles = !!(((spec.slide.quiz ? spec.slide.stats : s.stats) || []).length), bottom = hasTiles ? H - 330 : H - 170;
+    const hasTiles = !!(((spec.slide.quiz || spec.slide.slider ? spec.slide.stats : s.stats) || []).length), bottom = hasTiles ? H - 330 : H - 170;
     const cv = document.createElement("canvas");
     cv.width = W; cv.height = H;
     const c = cv.getContext("2d");
@@ -3990,6 +4084,16 @@
         const mx = Math.max(...s.bars.map(b => b.v), 1), n = s.bars.length, gap = 10, bw = (W - PAD * 2 - gap * (n - 1)) / n, bh = Math.max(120, bottom - 20 - y);
         s.bars.forEach((b, k) => { const h = Math.max(8, bh * b.v / mx); c.fillStyle = b.hi ? th.hi : b.lo ? th.ink : th.ink2; c.globalAlpha = b.hi || b.lo ? 1 : 0.45; c.fillRect(PAD + k * (bw + gap), y + bh - h, bw, h); c.globalAlpha = 1; });
       }
+      if (s.rooms) {
+        s.rooms.forEach(r => {
+          c.fillStyle = th.ink; c.font = font(900, 36, "a"); c.fillText(r.k, PAD, y + 42);
+          const bx = PAD + 150, bw = W - PAD * 2 - 150 - 110;
+          c.fillStyle = th.sh; c.fillRect(bx, y + 16, bw, 28);
+          c.fillStyle = r.rank <= 3 ? th.hi : r.rank >= L.size - 2 ? "#d9482a" : th.ink2; c.fillRect(bx, y + 16, Math.max(8, bw * r.v / Math.max(1, r.max)), 28);
+          c.fillStyle = th.ink; c.font = font(900, 40, "a"); c.textAlign = "right"; c.fillText("#" + r.rank, W - PAD, y + 44); c.textAlign = "left";
+          y += 54;
+        });
+      }
       if (s.chips) { s.chips.forEach(x => { c.fillStyle = th.ink; y = wrap("• " + x, W - PAD * 2, 50, y + 14, font(700, 38)); }); }
       if (s.list) { s.list.forEach(([e, x]) => { c.fillStyle = th.ink; y = wrap(`${e}  ${x}`, W - PAD * 2, 50, y + 14, font(700, 38)); }); }
       if (s.rivals) {
@@ -4001,7 +4105,7 @@
         });
       }
     }
-    const tiles = (spec.slide.quiz ? spec.slide.stats : s.stats) || [];
+    const tiles = (spec.slide.quiz || spec.slide.slider ? spec.slide.stats : s.stats) || [];
     if (!s.card && tiles.length) {
       const n = Math.min(4, tiles.length), gap = 18, tw = (W - PAD * 2 - gap * (n - 1)) / n, ty = H - 300;
       tiles.slice(0, n).forEach(([v, k], i) => {
@@ -5054,7 +5158,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-24", [
-      ["League Wrapped", "History → Wrapped", "Every manager's season as a story: how it ended, your peak, your MVP, your best move, the one that got away, your rivals, your manager type and more, then a card to share. Past seasons are open now; 2026 opens the day the championship is decided, with an alert. It replaces the Yearbook.", "#/history/wrapped?season=2025"],
+      ["League Wrapped", "History → Wrapped", "Every manager's season as a story: your road through the standings, how it ended, guess your MVP, your top 5, this or that, your position rooms, guess your bench points, the one that got away, your rivals, your manager type and more, with player photos and stats, then a card to share. Past seasons are open now; 2026 opens the day the championship is decided, with an alert. It replaces the Yearbook.", "#/history/wrapped?season=2025"],
       ["Trade impact", "Trades → Trade impact", "Pick two teams and the players each would send: see both teams' best lineups and their playoff, bye and title odds before and after, plus anyone else's odds the trade moves. Linked from Compare players and the Trade block.", "#/trades/impact"],
       ["Playoffs tab", "Playoffs", "Everything about who makes it now lives in its own tab, right of Standings: the playoff picture and tiebreaker race (moved off Standings), playoff and seed odds and the scenario builder (from Insights), and the bracket (from Matchups). It opens on the bracket once the playoffs start.", "#/playoffs"],
       ["Games open Monday night", "Games", "Next week's pick'em, Pick 4, Rank 'em, trivia and Guess the graph now open as soon as the week's last NFL game ends, instead of early Wednesday.", "#/games"],

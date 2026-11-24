@@ -469,16 +469,21 @@ player's real stat line (passing / rushing / receiving yards and TDs, from `data
   weeks in a playoff spot, highest place, longest win streak); how it ended (champion / final / playoff exit / missed
   by N wins or on points, last place gets a light roast; rank in points scored and against, all-play record); guess
   your MVP (four of your top scorers as photos, tap one, then the answer with his stat line); your top 5 (photos,
-  points, share of your points, points per start); your peak (best score and its rank among every score that season,
-  bars for every week; average and its rank, weeks above the league average, weeks with the league's top score); your
+  points, share of your points, points per start); this or that (the two players after the MVP closest in points, tap
+  who scored more); guess the number (drag a slider to guess your season's bench points, lock it in, then how far off
+  you were, the rank and the costliest bench call; interactive slides wait for an answer instead of moving on); your peak (best score and its rank among every score that season,
+  bars for every week; average and its rank, weeks above the league average, weeks with the league's top score); your position rooms (regular-season starter points at QB, RB, WR, TE, K and D/ST
+  as ranked bars, best and weakest room); your
   manager type (from the moves log's `style`: pickups, trades and all moves with ranks, busiest day); the league's
   champion (for everyone else; seed, points rank, your all-time record against them) and week of the year (with its
   top player's line); a trading-card summary.
-- Optional, only when worth showing, and only the team's 3 strongest (`WR_OPT`, scored by `opt`): clutch (a player
+- Optional, only when worth showing, and only the team's 3 strongest (`WR_OPT`, scored by `opt`): best single game
+  (a player's game for you in the league's top 10 that season, with that week's stat line), football is weird (your
+  highest-scoring loss and lowest-scoring win, when top 3 in the league), your schedule (opponents scored 3+ a week
+  above or below their usual average against you, top or bottom 2), clutch (a player
   whose points decided 40%+ of your wins), best move (a pickup or trade worth 50+ started points), the one that got
   away (dropped or traded, then 60+ started points elsewhere), the heartbreaker (a loss by under 5; close-game
-  record), bench regret (a bench swap that would have flipped a loss, twice or in the playoffs; or a clean sheet;
-  points left on the bench and lineup efficiency with ranks), luck (3 luckiest / unluckiest, 1+ win either way),
+  record), bench regret (only when bench points aren't known, since the guess-the-number slide covers it), luck (3 luckiest / unluckiest, 1+ win either way),
   rivals (all-time nemesis and favorite victim, with average scores in those games), superlatives (2+ season awards
   and badges), and the trade of the year (for the two teams in it).
 
