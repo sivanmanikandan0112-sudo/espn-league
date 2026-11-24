@@ -540,7 +540,7 @@
       [what, link] = {
         pickem: [`made pick'em picks for week ${e.w}`, "#/games"],
         pick4: ["saved a Pick 4 lineup", "#/games/pick4"],
-        fa: ["saved a waiver wire challenge lineup", "#/games/pick4?view=fa"],
+        fa: ["saved a waiver wire challenge lineup", "#/games/pick4"], // retired; old activity still says what happened
         bull: ["saved Bullseye picks", "#/games"], // Bullseye was retired; old activity still says what happened
         rank: ["ranked this week's Rank 'em", "#/games/rankem"],
         trivia: [`finished week ${e.w}'s trivia`, "#/games/trivia"],
@@ -1521,34 +1521,25 @@
   // scoring. Prices are a flat $ per ESPN-projected point, frozen when the week opens. Each spot locks at its own
   // player's kickoff; until then it can be swapped for anyone who hasn't played yet. The worker enforces all of it.
   const P3_SLOTS = ["QB", "RB", "WR", "TE"];
-  // two versions on one page, switched like Draft grades / Hindsight redraft: "all" (any NFL player) and "fa"
-  // (waiver wire challenge: only players who were unrostered in this league when the week opened)
-  const P3 = { mode: "all", data: null, at: 0, sel: {}, saved: {}, ready: false, auto: false, msg: "", err: false, pos: "QB", q: "" };
-  const p3Path = path => path + (P3.mode === "fa" && path === "/pick3" ? "?mode=fa" : "");
-  const p3Head = () => {
-    const fa = P3.mode === "fa";
-    const sw = `<nav class="pg-by ins-switch" aria-label="Game">${[["all", "Pick 4"], ["fa", "Waiver wire challenge"]].map(([k, label]) =>
-      `<a href="${href("games", k === "fa" ? { view: "fa" } : {}, "pick4")}" class="${k === P3.mode ? "active" : ""}"${k === P3.mode ? ' aria-current="true"' : ""}>${label}</a>`).join("")}</nav>`;
-    return `<div class="section-head"><div><h1>${fa ? "Waiver wire challenge" : "Pick 4"}</h1></div></div>${subnav("games", GAMES_TABS, "pick4")}${sw}`;
-  };
+  // (the waiver wire challenge, a free-agents-only version on the same page, was retired in November 2026)
+  const P3 = { data: null, at: 0, sel: {}, saved: {}, ready: false, auto: false, msg: "", err: false, pos: "QB", q: "" };
+  const p3Head = () => `<div class="section-head"><div><h1>Pick 4</h1></div></div>${subnav("games", GAMES_TABS, "pick4")}`;
   const money = n => "$" + Math.round(n).toLocaleString();
   async function renderPick3() {
-    const mode = state.params.get("view") === "fa" ? "fa" : "all";
-    if (mode !== P3.mode) Object.assign(P3, { mode, data: null, at: 0, sel: {}, saved: {}, ready: false, auto: false, msg: "", err: false, pos: "QB", q: "" });
+    if (state.params.has("view")) { location.replace(href("games", {}, "pick4")); return; } // old waiver wire challenge link
     const head = sub => p3Head() + (sub ? `<p class="sub">${sub}</p>` : "");
     if (state.season !== IDX.current) { main.innerHTML = head("") + `<div class="empty">Pick 4 runs in the current season. <a href="#/games/pick4">Go to this week's Pick 4</a></div>`; return; }
     if (!LIVE_API_BASE()) { main.innerHTML = head("") + '<div class="empty">Pick 4 needs the live worker, which isn\'t set up.</div>'; return; }
     if (!P3.data || Date.now() - P3.at > 60000) {
       if (!P3.data) main.innerHTML = head("") + '<div class="empty">Loading this week\'s players…</div>';
-      const d = await pkApi(p3Path("/pick3")).catch(() => ({ error: "Couldn't reach the server. Try again." }));
-      if (d.mode && d.mode !== P3.mode) return; // switched while loading
+      const d = await pkApi("/pick3").catch(() => ({ error: "Couldn't reach the server. Try again." }));
       if (P3.data && d.week !== P3.data.week) { P3.sel = {}; P3.saved = {}; P3.ready = false; P3.auto = false; }
       P3.data = d; P3.at = Date.now();
       if (state.tab !== "games" || state.sub !== "pick4") return;
     }
     if (!P3.ready && !P3.auto && PK.member && PK.pin && P3.data && !P3.data.error) {
       P3.auto = true;
-      const r = await pkApi("/pick3/mine", { member: PK.member, pin: PK.pin, mode: P3.mode }).catch(() => ({ error: "x" }));
+      const r = await pkApi("/pick3/mine", { member: PK.member, pin: PK.pin }).catch(() => ({ error: "x" }));
       if (!r.error) p3Load(r);
       if (state.tab !== "games" || state.sub !== "pick4") return;
     }
@@ -1599,9 +1590,7 @@
     const updated = new Date(T.made).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     const left = T.cap - spent;
     const pricing = `Prices are ${money(T.perPt)} per point ESPN projects for a player this week (under our scoring), the same rate at every position, and they move with injury news and projection changes: they're updated every ${T.refreshMin || 30} minutes until each player's game starts (last update ${esc(updated)}; ▲/▼ is the change since the week opened). <b>Players you've saved keep the price you paid</b>; only a player you swap in costs today's price. The cap is set once when the week opens.`;
-    const intro = P3.mode === "fa" ? expl(`Only players who are free agents in our league. Pick a QB, RB, WR and TE for ${money(T.cap)} or less.`,
-      `The same game as Pick 4, but only players who are free agents or on waivers in our league can be added (projected for 3+ points). The list is re-checked with every price update: players dropped in our league join it, and players someone picks up leave it, though anyone already in your lineup stays there unless you swap him out. ${pricing} The cap is 80% of the priciest free-agent QB + RB + WR + TE when the week opened. Your score is their real points this week under our scoring; each spot locks at its player's kickoff. Whoever wins found the free agents worth adding: see Waiver targets on My team to actually claim one. Ties go to the cheaper lineup.`)
-      : expl(`Pick a QB, RB, WR and TE for ${money(T.cap)} or less. Score = their real points this week.`,
+    const intro = expl(`Pick a QB, RB, WR and TE for ${money(T.cap)} or less. Score = their real points this week.`,
       `Pick a QB, RB, WR and TE from any NFL team for ${money(T.cap)} or less; your score is their real points this week under our scoring. ${pricing} Each spot locks when that player's game kicks off; until then you can swap in anyone who hasn't played yet, right up to the last game. Ties go to the cheaper lineup.`);
     const who = `<div class="panel pk-who">
         <label class="field">Who are you? <select id="p3-member"><option value="">Choose your name</option>${members.map(m => `<option value="${esc(m.id)}"${m.id === PK.member ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
@@ -1618,10 +1607,9 @@
         const now$ = byId[p.id] && byId[p.id].sal;
         const priceTxt = kept(k) ? `paid ${money(sv.sal)}${now$ && now$ !== sv.sal && !lock ? ` · now ${money(now$)}` : ""}` : "";
         const pts = lock && sv && sv.pts != null ? `<b class="p3-pts">${sv.pts.toFixed(1)} pts</b>` : `<span class="p3-sal">${money(cost(k))}</span>`;
-        // heads-ups on saved players: ruled out, or (waiver wire) picked up in our league
+        // heads-up on a saved player who's been ruled out
         let warn = "";
         if (!lock && byId[p.id] && byId[p.id].inj === "OUT") warn = `<span class="p3-warn">Ruled out. Swap him before ${esc(kick(p))}.</span>`;
-        else if (!lock && kept(k) && !byId[p.id] && P3.mode === "fa") warn = `<span class="p3-note">Picked up in our league since you added him. He stays in your lineup, but if you swap him out you can't get him back.</span>`;
         return `<div class="p3-slot${lock ? " locked" : ""}${P3.pos === k ? " on" : ""}"><span class="slot ${k}">${k}</span><span class="p3-sn"><b>${esc(p.n)}${injTag(byId[p.id])}</b><span class="team-mgr">${esc(p.team)} ${esc(p.opp)} · ${lock ? "locked 🔒" : esc(kick(p))}${p.proj != null ? ` · proj ${p.proj.toFixed(1)}` : ""}${priceTxt ? " · " + priceTxt : ""}</span>${warn}</span>${pts}
           ${lock ? "" : `<button type="button" class="linkbtn" data-p3-pos="${k}">Change</button><button type="button" class="linkbtn" data-p3-clear="${k}" aria-label="Remove ${esc(p.n)}">✕</button>`}</div>`;
       };
@@ -1672,7 +1660,7 @@
     const remember = document.getElementById("p3-remember").checked;
     if (!member) { P3.msg = "Choose your name first."; P3.err = true; return pick3View(); }
     if (!/^\d{4}$/.test(pin)) { P3.msg = "Enter a 4-digit PIN."; P3.err = true; return pick3View(); }
-    const r = await pkApi("/pick3/mine", { member, pin, mode: P3.mode });
+    const r = await pkApi("/pick3/mine", { member, pin });
     if (r.error) { P3.msg = r.error; P3.err = true; P3.ready = false; return pick3View(); }
     if (member !== PK.member) { PK.ready = false; PK.sel = {}; TV.ready = false; TV.result = null; TV.sel = []; TV.auto = false; }
     PK.member = member; PK.pin = pin;
@@ -1684,10 +1672,10 @@
   async function p3Save() {
     const btn = main.querySelector('[data-p3="save"]');
     if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
-    const r = await pkApi("/pick3/save", { member: PK.member, pin: PK.pin, picks: P3.sel, mode: P3.mode });
+    const r = await pkApi("/pick3/save", { member: PK.member, pin: PK.pin, picks: P3.sel });
     if (r.error) { P3.msg = r.error; P3.err = true; return pick3View(); }
     P3.saved = r.picks; P3.msg = `Saved: ${money(r.salary)} of ${money(P3.data.cap)}.`; P3.err = false;
-    P3.data = await pkApi(p3Path("/pick3")); P3.at = Date.now();
+    P3.data = await pkApi("/pick3"); P3.at = Date.now();
     pick3View();
   }
   main.addEventListener("click", e => {
@@ -4574,8 +4562,9 @@
     ["2026-11-24", [
       ["Trade impact", "Trades → Trade impact", "Pick two teams and the players each would send: see both teams' best lineups and their playoff, bye and title odds before and after, plus anyone else's odds the trade moves. Linked from Compare players and the Trade block.", "#/trades/impact"],
       ["Playoffs tab", "Playoffs", "Everything about who makes it now lives in its own tab, right of Standings: the playoff picture and tiebreaker race (moved off Standings), playoff and seed odds and the scenario builder (from Insights), and the bracket (from Matchups). It opens on the bracket once the playoffs start.", "#/playoffs"],
-      ["Games open Monday night", "Games", "Next week's pick'em, Pick 4, waiver wire challenge, Rank 'em, trivia and Guess the graph now open as soon as the week's last NFL game ends, instead of early Wednesday.", "#/games"],
+      ["Games open Monday night", "Games", "Next week's pick'em, Pick 4, Rank 'em, trivia and Guess the graph now open as soon as the week's last NFL game ends, instead of early Wednesday.", "#/games"],
       ["Bullseye retired", "Games", "Bullseye has been removed from Games.", "#/games"],
+      ["Waiver wire challenge retired", "Games → Pick 4", "The free-agents-only version of Pick 4 has been removed; Pick 4 itself is unchanged.", "#/games/pick4"],
       ["Rain from ESPN", "Watch guide, player card, lineup check", "Game conditions now include the condition ESPN reports (such as Showers or Rain), and flag Rain or Snow from it even when the hourly forecast numbers miss it.", "#/matchups/watch"],
       ["Seed odds on phones", "Playoffs → Seed odds", "The seed odds grid was hidden on phones; it now shows, with a narrower team column so seeds 1 through 8 fit on screen.", "#/insights/race?at=seeds"],
       ["Scenario builder", "Playoffs → Scenario builder", "Pick the winner of every game left and watch the standings, seeds, byes and first round update, with ties going to projected points (adjustable). Share a scenario as a link.", "#/insights/race?at=build"],
@@ -4628,7 +4617,7 @@
     ["2026-11-13", [
       ["Pick 4 prices follow the news", "Games → Pick 4", "Prices update every 30 minutes with ESPN's projections and injury news (Q / D / OUT tags, ▲/▼ since the week opened). Players already in your lineup keep the price you paid; the waiver wire list updates as players are dropped and picked up.", "#/games/pick4"],
       ["Trivia from easy to expert", "Games → League trivia", "Starting week 11, the 5 questions go in order of difficulty, Easy to Expert, and never repeat a question from earlier in the season.", "#/games/trivia"],
-      ["Waiver wire challenge", "Games → Pick 4", "Pick 4 with only players who are free agents in our league: a weekly hunt for the pickups worth adding.", "#/games/pick4?view=fa"],
+      ["Waiver wire challenge", "Games (retired November 2026)", "Pick 4 with only players who are free agents in our league: a weekly hunt for the pickups worth adding.", "#/games/pick4"],
       ["Pick 4", "Games → Pick 4", "A weekly side game: a QB, RB, WR and TE from any NFL team under a salary cap, scored with this week's real points. Each spot locks at its player's kickoff.", "#/games/pick4"],
       ["Insights regrouped", "Insights", "14 sub-tabs became 6 pages: Playoff race (with Hot & cold), Luck (with Close games and Vs. projection), Schedule (with Byes ahead), Lineups, Draft (grades or the hindsight redraft) and What ifs (Rules lab and Schedule swap). Player history moved to History. Old links still work.", "#/insights"],
       ["What's new", "this page", "Every feature added to the site, by day. A dot on the header link means something's new since your last look.", "#/whatsnew"],
@@ -4766,7 +4755,6 @@
     ["Games", [
       ["pickem", "Pick'em", "Games", "#/games", "Pick the winner of every league matchup before the week's first kickoff.", []],
       ["pick4", "Pick 4", "Games → Pick 4", "#/games/pick4", "Pick a QB, RB, WR and TE under a salary cap. Prices are $400 per projected point and move with the news; each spot locks at its player's kickoff.", []],
-      ["fachallenge", "Waiver wire challenge", "Games → Pick 4", "#/games/pick4?view=fa", "Pick 4 using only players who are free agents in our league.", []],
       ["rankem", "Rank 'em", "Games → Rank 'em", "#/games/rankem", "Put five players at one position in order of the points they'll score. 3 points per exact spot, 1 for one spot off, 15 max.", []],
       ["graph", "Guess the graph", "Games → Guess the graph", "#/games/graph", "Three graphs a week of one player's weekly fantasy points; pick him from four names. Easy, Medium and Hard are worth 1, 2 and 3 points.", []],
       ["trivia", "League trivia", "Games → League trivia", "#/games/trivia", "Five questions a week about league history, easy to expert. One try each.", []],

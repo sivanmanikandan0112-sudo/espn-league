@@ -359,8 +359,8 @@ Worker `GET /react?week=N`, `POST /react/toggle {member, pin, week, item, emoji}
 ## League pulse
 
 Standings sidebar (and under the standings on phones): recent activity on the site, newest first, from the worker's
-`GET /pulse`. Written by the worker whenever someone reacts (and removed if they take it back), saves pick'em, Pick 4,
-waiver wire challenge or Rank 'em entries (and Bullseye, until it was retired), finishes trivia or updates the trade block. Never what anyone
+`GET /pulse`. Written by the worker whenever someone reacts (and removed if they take it back), saves pick'em, Pick 4
+or Rank 'em entries (and Bullseye and the waiver wire challenge, until they were retired), finishes trivia or updates the trade block. Never what anyone
 picked. One KV value per season, `pulse:<season>`, the last 40 events; the same person doing the same thing within
 30 minutes moves back to the top instead of adding a line (`pulse()` in `worker/src/index.js`).
 
@@ -509,10 +509,10 @@ his replacement haven't kicked off; other members' players stay hidden until the
 value per week (`p3-entries:...`); finished weeks are scored once into `p3-season:<season>` (ties go to the cheaper
 lineup). Change the price/cap rules with `P3_PER_PT`, `P3_MIN_PROJ` and `P3_CAP_SHARE` in `worker/src/index.js`.
 
-**Waiver wire challenge** (the second view on the same page, `#/games/pick4?view=fa`, API `?mode=fa` / `"mode": "fa"`):
-the same game, but only players unrostered in this league (free agents or on waivers), projected 3+. The list is
-re-checked with every re-price: newly dropped players join, players picked up leave (they stay in lineups that have them). Same $400/point prices; the cap is 80% of the priciest free-agent QB + RB + WR + TE.
-Its own KV keys (`p3fa-slate`, `p3fa-entries`, `p3fa-season`) and leaderboard (`P3_MODES` in the worker).
+**Waiver wire challenge (retired):** a free-agents-only version of Pick 4 on the same page, removed in November
+2026. Its KV data (`p3fa-slate`, `p3fa-entries`, `p3fa-season`) was left untouched; old `#/games/pick4?view=fa` links
+go to Pick 4, and the worker answers `mode: "fa"` requests with a "retired" error (410) so an old copy of the site
+can't save a lineup into the wrong game.
 
 ## Bullseye (retired)
 

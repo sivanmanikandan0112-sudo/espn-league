@@ -143,7 +143,7 @@ async function pickemWeek(env) {
   });
 }
 
-// The weekly games (pick'em, Pick 4 and the waiver wire challenge, Rank 'em, trivia, Guess the graph) move on to the
+// The weekly games (pick'em, Pick 4, Rank 'em, trivia, Guess the graph) move on to the
 // next week as soon as this week's last NFL game is over (usually late Monday night), instead of waiting for ESPN to
 // roll the league over early Wednesday with waivers. Everything else (feed, chat, alerts) keeps ESPN's week.
 // "Over" = 4 hours after the last kickoff with no NFL game still in progress, or 6 hours after it regardless.
@@ -332,11 +332,10 @@ const P3_MIN_PROJ = 5;        // players projected under this aren't on the slat
 const P3_CAP_SHARE = 0.8;     // cap = 80% of the priciest QB + RB + WR + TE: a star or two, then mid-priced players
 const P3_SLOTS = ["QB", "RB", "WR", "TE"];
 const P3_REFRESH_MIN = 30;    // re-price from ESPN's latest projections (injury news) this often during the week
-// two versions share all of this: "all" (any NFL player) and "fa" (the waiver wire challenge: only players who were
-// free agents or on waivers in this league when the week's slate opened). Each has its own slate, entries and season.
+// KV keys for Pick 4's slate, entries and season. (A second version, the waiver wire challenge, used "p3fa" keys until
+// it was retired in November 2026; that data is left as it was.)
 const P3_MODES = {
-  all: { prefix: "p3", slate: "p3-slate4", minProj: P3_MIN_PROJ, fa: false },
-  fa: { prefix: "p3fa", slate: "p3fa-slate", minProj: 3, fa: true },
+  all: { prefix: "p3", slate: "p3-slate4", minProj: P3_MIN_PROJ },
 };
 
 async function espnFiltered(env, yr, params, filter) {
@@ -368,9 +367,8 @@ async function proGames(yr) {
 
 // The week's slate: made when the week opens, then re-priced every P3_REFRESH_MIN minutes from ESPN's latest
 // projections (which move with injury news) until the last game kicks off. A player's price stops moving once his
-// game starts. Injury status rides along (Q / D / OUT); OUT players can't be added. The waiver wire version also
-// re-checks who's unrostered: newly dropped players join, players picked up in the league leave (but stay in any
-// lineup that already has them). The cap is set once, when the week opens.
+// game starts. Injury status rides along (Q / D / OUT); OUT players can't be added. The cap is set once, when the
+// week opens.
 async function p3Slate(env, st, cfg) {
   const key = `${cfg.slate}:${st.season}:${st.week}`;
   const have = await env.PICKEM.get(key, "json");
@@ -393,7 +391,6 @@ async function p3Slate(env, st, cfg) {
     if (!P3_SLOTS.includes(pos)) continue;
     const old = prev[p.id];
     if (old && now >= old.at) continue; // his game has started: keep the old record below, price frozen
-    if (cfg.fa && e.onTeamId) continue; // waiver wire: unrostered players only (picked-up players drop off)
     if (["INJURY_RESERVE", "SUSPENSION"].includes(p.injuryStatus)) continue;
     const g = games[p.proTeamId];
     if (!g) continue; // bye
@@ -416,7 +413,7 @@ async function p3Slate(env, st, cfg) {
     if (top.some(x => !x)) throw new Error("This week's Pick 4 players aren't ready yet (no ESPN projections). Try again soon.");
     cap = Math.round(P3_CAP_SHARE * top.reduce((a, b) => a + b, 0) / 500) * 500;
   }
-  const slate = { season: st.season, week: st.week, sp, cap, perPt: P3_PER_PT, fa: cfg.fa, opened: (have && (have.opened || have.made)) || new Date().toISOString(),
+  const slate = { season: st.season, week: st.week, sp, cap, perPt: P3_PER_PT, opened: (have && (have.opened || have.made)) || new Date().toISOString(),
     made: new Date().toISOString(), players };
   await env.PICKEM.put(key, JSON.stringify(slate));
   return slate;
@@ -475,8 +472,9 @@ async function handlePick3(req, env, url) {
   const st = await gamesWeek(env);
   let body = null;
   if (req.method === "POST") { try { body = await req.json(); } catch (_) { return json(env, req, { error: "Bad request" }, 400); } }
-  const mode = (body ? body.mode : url.searchParams.get("mode")) === "fa" ? "fa" : "all";
-  const cfg = P3_MODES[mode];
+  // the waiver wire challenge ("fa") was retired in November 2026; its KV data (p3fa-*) is left as it was
+  if ((body ? body.mode : url.searchParams.get("mode")) === "fa") return json(env, req, { error: "The waiver wire challenge has been retired. Reload the page for Pick 4." }, 410);
+  const mode = "all", cfg = P3_MODES.all;
   const S = await p3Finalize(env, st, cfg);
   if (st.over) return json(env, req, { season: st.season, mode, over: true, history: S.weeks });
   const slate = await p3Slate(env, st, cfg);
@@ -520,7 +518,7 @@ async function handlePick3(req, env, url) {
       if (cur && started(cur)) return json(env, req, { error: `${cur.n}'s game has started, so your ${k} is locked.` }, 409);
       if (!id) { next[k] = null; continue; }
       const p = byId[id];
-      if (!p || p.pos !== k) return json(env, req, { error: cfg.fa ? `That ${k} isn't available on the waiver wire anymore.` : `That ${k} isn't on this week's list.` }, 400);
+      if (!p || p.pos !== k) return json(env, req, { error: `That ${k} isn't on this week's list.` }, 400);
       if (started(p)) return json(env, req, { error: `${p.n}'s game has already started. Pick someone who hasn't played yet.` }, 409);
       if (p.inj === "OUT") return json(env, req, { error: `${p.n} has been ruled out this week.` }, 400);
       next[k] = Object.fromEntries(P3_SNAP.map(f => [f, p[f]]));
@@ -533,7 +531,7 @@ async function handlePick3(req, env, url) {
     const fresh = (await env.PICKEM.get(eKey, "json")) || {};
     fresh[member] = { ...next, at: new Date().toISOString() };
     await env.PICKEM.put(eKey, JSON.stringify(fresh));
-    await pulse(env, st.season, { m: member, k: cfg.fa ? "fa" : "pick4", w: st.week });
+    await pulse(env, st.season, { m: member, k: "pick4", w: st.week });
     if (!S.open.includes(st.week)) {
       const S2 = (await env.PICKEM.get(`${cfg.prefix}-season:${st.season}`, "json")) || { weeks: {}, open: [] };
       if (!S2.open.includes(st.week)) { S2.open.push(st.week); await env.PICKEM.put(`${cfg.prefix}-season:${st.season}`, JSON.stringify(S2)); }
