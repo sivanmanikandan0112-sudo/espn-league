@@ -238,7 +238,8 @@ ROOFED = ("Mercedes-Benz Stadium", "AT&T Stadium", "Ford Field", "NRG Stadium", 
 
 def add_game_conditions(games, season):
     """Weather at kickoff for each outdoor NFL game this week (Watch guide, player card, lineup check): temperature,
-    wind and gusts, rain and snow over the game's first 3 hours, from Open-Meteo (free, no key). The stadium comes
+    wind and gusts, rain and snow over the game's first 3 hours, from Open-Meteo (free, no key), plus the condition ESPN
+    reports (AccuWeather's text, e.g. "Showers"), which catches rain the hourly numbers can miss. The stadium comes
     from ESPN's scoreboard: domes and roofed stadiums get "roof", and a game away from the home team's usual city (a
     neutral site) is placed by looking its city up. Stadiums and forecasts carry over between builds; forecasts
     refresh about hourly (every 30 minutes on game day) until kickoff. Best effort: any failure leaves the
@@ -247,17 +248,23 @@ def add_game_conditions(games, season):
         prev = {g["id"]: g for g in (live_site_file("%d.js" % season) or {}).get("nflGames", [])}
         now = time.time()
         for g in games:
-            for k in ("venue", "roof", "wx", "wxAt", "loc"):
+            for k in ("venue", "roof", "wx", "wxAt", "loc", "sky"):
                 if (prev.get(g["id"]) or {}).get(k) is not None:
                     g[k] = prev[g["id"]][k]
         # stadiums: ESPN's scoreboard for each day with a game not placed yet (one request per day, once a week)
+        boards, fetched = {}, set()  # ESPN scoreboard events by game id, one request per day (stadiums, reported conditions)
+        day_of = lambda g: dt.datetime.fromisoformat(g["date"]).astimezone(ET_ZONE).strftime("%Y%m%d")  # noqa: E731
+
+        def load_boards(gs):
+            for day in sorted({day_of(g) for g in gs} - fetched)[:5]:
+                fetched.add(day)
+                url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=" + day
+                with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "espn-league-site"}), timeout=6) as r:
+                    boards.update({str(e["id"]): e for e in json.load(r).get("events", [])})
+
         need = [g for g in games if "venue" not in g and g.get("date")]
-        venues = {}
-        for day in sorted({dt.datetime.fromisoformat(g["date"]).astimezone(ET_ZONE).strftime("%Y%m%d") for g in need})[:5]:
-            url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=" + day
-            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "espn-league-site"}), timeout=6) as r:
-                board = json.load(r)
-            venues.update({str(e["id"]): ((e.get("competitions") or [{}])[0].get("venue") or {}) for e in board.get("events", [])})
+        load_boards(need)
+        venues = {k: ((e.get("competitions") or [{}])[0].get("venue") or {}) for k, e in boards.items()}
         if need:
             for g in need:
                 v = venues.get(str(g["id"]))
@@ -279,6 +286,16 @@ def add_game_conditions(games, season):
             fresh = 1800 if at - now < 12 * 3600 else 3600
             if -4 * 3600 < at - now < 7 * 86400 and now - (g.get("wxAt") or 0) > fresh:
                 todo.append(g)
+        # ESPN's reported condition (AccuWeather's text, e.g. "Showers") for the same games: it catches rain the
+        # hourly numbers miss. ESPN drops it once a game is final, so the last one seen is kept.
+        try:
+            load_boards(todo)
+            for g in todo:
+                w = (boards.get(str(g["id"])) or {}).get("weather") or {}
+                if w.get("displayValue"):
+                    g["sky"] = w["displayValue"][:40]
+        except Exception as e:  # noqa: BLE001
+            print("  game conditions (ESPN): skipped (%s)" % e)
         if todo:
             q = "latitude=%s&longitude=%s" % (",".join(str(g["loc"][0]) for g in todo), ",".join(str(g["loc"][1]) for g in todo))
             url = ("https://api.open-meteo.com/v1/forecast?%s&hourly=temperature_2m,precipitation_probability,rain,snowfall,"

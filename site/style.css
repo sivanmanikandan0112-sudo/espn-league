@@ -542,7 +542,7 @@ a.bm-foot:hover { color: var(--accent); }
 .sg-pick { display: none; }
 .pick .logo { width: 28px; height: 28px; font-size: 10px; }
 @media (max-width: 640px) {
-  .sg-wrap { display: none; }
+  .swap-wrap { display: none; }  /* only the swap grid gives way to its picker; seed odds and pick'em grids stay */
   .sg-pick { display: block; }
 }
 .sg-pick .pick { grid-template-columns: 52px 30px minmax(0, 1fr); }
@@ -1382,6 +1382,13 @@ section.insight .mv { background: var(--surface); border: 1px solid var(--line);
 .sg thead .sg-cut { background: none; }
 .sg .sg-avg { padding: 0 10px; text-align: right; font-weight: 700; color: var(--ink-2); }
 .compact .sg-c { height: 24px; }
+@media (max-width: 640px) {  /* phone: a narrower team column, so the playoff cut fits before any scrolling */
+  .sg .sg-t { padding: 4px 6px; font-size: 12px; }
+  .sg tbody .sg-t { max-width: 112px; gap: 6px; }
+  .sg tbody .sg-t .logo { width: 18px; height: 18px; }
+  .sg-c { width: 26px; min-width: 24px; height: 28px; font-size: 11px; }
+  .sg .sg-avg { padding: 0 8px; }
+}
 
 /* ---- Big plays season switch, feedback */
 .ps-switch { margin-bottom: 10px; }

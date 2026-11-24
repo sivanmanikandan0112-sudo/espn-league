@@ -2950,7 +2950,7 @@
         <div class="picks" style="margin-top:10px">${pickRow.map(c => `<div class="pick"><span class="pick-no">${rec(c.v)}</span>${logo(teamById[c.b])}<span class="pick-name"><b>${esc(poss(tname(c.b)))} schedule</b>${c.b === state.swapTeam ? '<span class="team-mgr">actual record</span>' : ""}</span></div>`).join("")}</div></div>`;
       return section("Schedule swap", { short: "Each team's record with every other team's schedule.", full: `Each team's record if it had played every other team's schedule, using its real weekly scores (${S.weeks} completed regular-season weeks). When the other schedule had a game against this team, it plays that team instead. For actual records and luck, see the Luck tab.` }, summary) +
         section("Every schedule", "Rows are each team's scores; columns are whose schedule they play. The outlined cell is the real record. Greener means more wins.",
-          `<div class="sg-wrap"><table class="swap-grid"><thead>${head}</thead><tbody>${body}</tbody></table></div>${picker}`);
+          `<div class="sg-wrap swap-wrap"><table class="swap-grid"><thead>${head}</thead><tbody>${body}</tbody></table></div>${picker}`);
     },
 
     efficiency() {
@@ -4459,6 +4459,8 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-24", [
+      ["Rain from ESPN", "Watch guide, player card, lineup check", "Game conditions now include the condition ESPN reports (such as Showers or Rain), and flag Rain or Snow from it even when the hourly forecast numbers miss it.", "#/matchups/watch"],
+      ["Seed odds on phones", "Insights → Playoff race", "The seed odds grid was hidden on phones; it now shows, with a narrower team column so seeds 1 through 8 fit on screen.", "#/insights/race?at=seeds"],
       ["Scenario builder", "Insights → Playoff race, Standings", "Pick the winner of every game left and watch the standings, seeds, byes and first round update, with ties going to projected points (adjustable). Share a scenario as a link.", "#/insights/race?at=build"],
       ["Season yearbook", "History → Yearbook", "A keepsake for every finished season: the champion, final standings, the bracket, the season's extremes and awards, its spots in the all-time record book, and a page per team. Save it as a PDF or print it.", "#/history/yearbook?season=2025"],
       ["Tiebreaker race", "Standings, My team", "Ties in the standings go to total points. How often the playoff and bye lines come down to points, who's usually in that tie, who wins it, and the points gap now and at projections.", "#/"],
@@ -4637,7 +4639,7 @@
       ["build", "Scenario builder", "Insights → Playoff race", "#/insights/race?at=build", "Pick a winner for every regular-season game left and see the final standings, seeds, byes and first round. It starts from the favorites (ESPN's live win odds this week, the playoff odds' scoring model after). Teams level on wins are ordered by projected final points, which can be adjusted. The picks are saved in the link, so a scenario can be shared.", ["Scenario builder"]],
       ["tierace", "Tiebreaker race", "Standings, My team", "#/", "Teams level on wins are separated by total points. From the playoff-odds simulations: how often a team ends level on wins with someone across the playoff (or bye) line (In a tie), how often it comes out ahead when that happens (Wins it), its projected final points, and the pairs that meet in that tie most often, with the gap now and at projections.", ["Tiebreaker race"]],
       ["clinch", "Clinched / eliminated", "Standings, My team", "#/", "Exact, from the remaining schedule: clinched only if no combination of results can push a team out of the playoff spots (or bye spots), eliminated only if none can get it in. Points tiebreakers are treated as unknown (against a team for clinching, for it for elimination). The week's scenarios are the fewest results that settle it, whatever happens after.", ["Playoff picture"]],
-      ["conditions", "Game conditions", "Watch guide, player card, lineup check", "#/matchups/watch", "Forecast for the first 3 hours of each outdoor game (Open-Meteo): temperature, wind and gusts, chance and amount of rain or snow. Flags: Windy (15+ mph or gusts 25+; hurts kickers and passing), Rain (likely, 0.1+ inch), Snow (0.2+ inch), Frigid (25°F or colder), Hot (88°F+). Domes and roofed stadiums show Indoors.", []],
+      ["conditions", "Game conditions", "Watch guide, player card, lineup check", "#/matchups/watch", "Forecast for the first 3 hours of each outdoor game (Open-Meteo): temperature, wind and gusts, chance and amount of rain or snow, plus the condition ESPN reports (such as Showers). Flags: Windy (15+ mph or gusts 25+; hurts kickers and passing), Rain (likely, 0.1+ inch, or ESPN reports rain, showers or storms), Snow (0.2+ inch, or ESPN reports snow, flurries or sleet), Frigid (25°F or colder), Hot (88°F+). Domes and roofed stadiums show Indoors.", []],
       ["rootfor", "Who to root for", "Matchups, My team", "#/matchups", "For each of this week's other games, your playoff chance in the simulated seasons where each team won (the same 10,000 seasons as the playoff odds). Root for the team whose win helps you; the number is how many percentage points it's worth. Bye odds instead once you're all but in.", []],
       ["mstyle", "Manager style", "My team", "#/myteam", "How each manager runs a team, from ESPN's log of every move and lineup: pickups, lineup changes, gut calls (starting someone ESPN projected 2+ points below an eligible bench player), how fast pickups get cut, trades, and when moves happen (Eastern time). The type names the two habits that stand out most against the rest of the league.", []],
       ["butterfly", "Butterfly effect", "Insights → What ifs", "#/insights/whatif?at=butterfly", "One move taken out and the regular season replayed: players it brought in leave the lineups they started in, replaced by the best-projected bench player; players it sent away come back with their real points elsewhere and start if projected above the weakest eligible starter. Projections only, no hindsight.", []],
@@ -5254,13 +5256,14 @@
   // Game conditions: each outdoor game's weather at kickoff (from the build, Open-Meteo), as a short text plus the flags
   // that matter for fantasy. Wind and cold hurt kickers and passing; rain and snow, everyone.
   const nflGameOf = team => (D.nflGames || []).find(x => x.home === team || x.away === team);
+  // ESPN's reported condition (g.sky, AccuWeather's text such as "Showers") also counts: it catches rain the numbers miss
+  const SKY_SNOW = /snow|flurr|sleet|\bice\b/i, SKY_RAIN = /rain|shower|drizzle|storm/i;
   function condFlags(g) {
-    const w = g && !g.roof && g.wx;
-    if (!w) return [];
-    const f = [];
-    if (w.snow >= 0.2) f.push(["snow", "Snow", null]);
+    if (!g || g.roof || !(g.wx || g.sky)) return [];
+    const w = g.wx || {}, sky = g.sky || "", f = [];
+    if (w.snow >= 0.2 || SKY_SNOW.test(sky)) f.push(["snow", "Snow", null]);
     if (w.wind >= 15 || w.gust >= 25) f.push(["wind", "Windy", ["K", "QB", "WR", "TE"]]);
-    if (w.rain >= 0.1 && w.pp >= 50) f.push(["rain", "Rain", null]);
+    if ((w.rain >= 0.1 && w.pp >= 50) || SKY_RAIN.test(sky)) f.push(["rain", "Rain", null]);
     if (w.t <= 25) f.push(["cold", "Frigid", ["K", "QB", "WR", "TE"]]);
     if (w.t >= 88) f.push(["hot", "Hot", null]);
     return f;
@@ -5268,14 +5271,16 @@
   function condText(g) {
     if (!g) return "";
     if (g.roof) return "Indoors";
-    const w = g.wx;
-    if (!w) return "";
-    const out = [`${w.t}°F`, `wind ${w.wind} mph${w.gust >= w.wind + 8 ? `, gusts ${w.gust}` : ""}`];
-    if (w.snow >= 0.05) out.push(`snow ${w.snow}"`); else if (w.pp >= 30) out.push(`rain ${w.pp}%`);
+    const w = g.wx, sky = g.sky || "", out = sky ? [sky] : [];
+    if (w) {
+      out.push(`${w.t}°F`, `wind ${w.wind} mph${w.gust >= w.wind + 8 ? `, gusts ${w.gust}` : ""}`);
+      if (SKY_RAIN.test(sky) || SKY_SNOW.test(sky)) { /* the condition already names it */ }
+      else if (w.snow >= 0.05) out.push(`snow ${w.snow}"`); else if (w.pp >= 30) out.push(`rain ${w.pp}%`);
+    }
     return out.join(" · ");
   }
   const condHtml = g => { const t = condText(g); if (!t) return ""; const f = condFlags(g);
-    return `<span class="cond${f.length ? " bad" : ""}" title="Forecast at kickoff (first 3 hours)">${f.map(x => `<b>${x[1]}</b> `).join("")}${esc(t)}</span>`; };
+    return `<span class="cond${f.length ? " bad" : ""}" title="Forecast at kickoff (first 3 hours; condition from ESPN)">${f.map(x => `<b>${x[1]}</b> `).join("")}${esc(t)}</span>`; };
 
   // Left the game: the latest in-game injury news for a player this week (from the live worker), or null
   function inGameNews(pid, week) {

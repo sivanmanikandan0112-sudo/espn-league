@@ -417,7 +417,8 @@ would need beyond its projections.
   `ingame`, which the site shows as a HURT tag in box scores and a line on the player card. Kinds `hurt` (on) and
   `hurtAgainst`.
 - **Game conditions** (build, `add_game_conditions`): stadium from ESPN's scoreboard (domes and roofs = Indoors; a
-  neutral site is placed by its city), forecast for the first 3 hours from Open-Meteo, refreshed about hourly (every
+  neutral site is placed by its city), forecast for the first 3 hours from Open-Meteo plus the condition ESPN reports (AccuWeather's text, e.g.
+  "Showers"; rain, showers or storms there flag Rain even when the hourly numbers miss it), refreshed about hourly (every
   30 minutes on game day) until the game ends. Shown on Watch guide cards, the player card, and as a lineup-check
   line for starters affected (wind and cold: K, QB, WR, TE; rain and snow: everyone).
 
