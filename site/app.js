@@ -868,6 +868,46 @@
   }
 
   const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"]];
+  // The week the Matchups tabs show: ?week= when it's a week of this season, else this week (the last one once the
+  // season is over). Weekly, Big plays and the Watch guide share it: their tabs and the week strip carry it along.
+  function matchupWeek() {
+    const weeks = D.weeks.map(x => x.week);
+    let w = parseInt(state.params.get("week"), 10);
+    if (!weeks.includes(w)) w = L.over ? weeks[weeks.length - 1] : L.currentWeek;
+    if (!weeks.includes(w)) w = weeks[weeks.length - 1];
+    return w;
+  }
+  const mWeekParam = () => { const w = state.params.get("week"); return w && D.weeks.some(x => String(x.week) === w) ? { week: w } : {}; };
+  const matchupNav = cur => subnav("matchups", MATCHUP_TABS, cur, mWeekParam());
+  const weekStrip = w => `<div class="week-strip" role="tablist">${D.weeks.map(x => `<button data-week="${x.week}" class="${x.week === w ? "active" : ""}${x.playoffs ? " po" : ""}" role="tab" aria-selected="${x.week === w}">${x.playoffs ? "PO " : "Wk "}${x.week}</button>`).join("")}</div>`;
+  // the chosen week in the middle of the strip (sideways only, so the page doesn't jump)
+  function centerWeekStrip() {
+    const s = main.querySelector(".week-strip"), a = s && s.querySelector(".active");
+    if (a) s.scrollLeft = a.offsetLeft - s.offsetLeft - (s.clientWidth - a.offsetWidth) / 2;
+  }
+  // is this the live week (the current season's week in progress)? Big plays and the Watch guide are live then
+  const liveWeek = w => state.season === IDX.current && L.isCurrent && !L.over && w === L.currentWeek;
+  // The NFL games of a week other than the live one (the build only has this week's): ESPN's scoreboard, read once
+  // per week per visit. Returns the games, null while loading (the tab redraws when they arrive) or "error".
+  const NFLWK = {};
+  function nflGamesFor(week) {
+    if (liveWeek(week)) return D.nflGames || [];
+    const k = state.season + ":" + week;
+    if (NFLWK[k] && NFLWK[k] !== "busy") return NFLWK[k];
+    if (!NFLWK[k]) {
+      NFLWK[k] = "busy";
+      fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${state.season}&seasontype=2&week=${week}`)
+        .then(r => r.json()).then(d => {
+          NFLWK[k] = (d.events || []).map(e => {
+            const c = (e.competitions || [])[0] || {};
+            const side = h => (((c.competitors || []).find(x => x.homeAway === h) || {}).team || {}).abbreviation || "";
+            return { id: e.id, date: e.date, tbd: false, home: side("home"), away: side("away") };
+          }).sort((a, b) => (a.date || "").localeCompare(b.date || "") || a.home.localeCompare(b.home));
+        }).catch(() => { NFLWK[k] = "error"; })
+        .then(() => { if (state.tab === "matchups" && (state.sub === "plays" || state.sub === "watch") && matchupWeek() === week) renderKeepScroll(renderMatchups); });
+    }
+    return null;
+  }
   // Games: pick'em and league trivia (name + PIN), separate from the stats tabs
   const GAMES_TABS = [["", "Pick'em"], ["pick4", "Pick 4"], ["rankem", "Rank 'em"], ["graph", "Guess the graph"], ["trivia", "League trivia"]];
   function renderGames() {
@@ -903,7 +943,7 @@
   }
   function playLinks(e) {
     try {
-      if (!L.isCurrent || L.over || !e.nfl) return "";
+      if (!L.isCurrent || L.over || !e.nfl || (e.week && e.week !== L.currentWeek)) return "";
       const g = (D.nflGames || []).find(x => x.home === e.nfl || x.away === e.nfl);
       if (!g || !g.id) return "";
       // that exact play when it's in Real's top plays; otherwise the player's own game page on Real (where Real's
@@ -916,12 +956,12 @@
   }
   function playLine(e) {
     const t = teamById[e.team] || { name: "Team " + e.team }, o = teamById[e.opp] || { name: "opponent" };
-    const lead = e.score[0] - e.score[1];
-    const status = Math.abs(lead) < 0.005 ? `ties ${esc(o.name)}` : `${lead > 0 ? "leads" : "trails"} ${esc(o.name)} by ${Math.abs(lead).toFixed(2)}`;
+    const lead = e.score ? e.score[0] - e.score[1] : null;
+    const status = lead == null ? "" : Math.abs(lead) < 0.005 ? `ties ${esc(o.name)}` : `${lead > 0 ? "leads" : "trails"} ${esc(o.name)} by ${Math.abs(lead).toFixed(2)}`;
     const when = new Date(e.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     return `<div class="play${e.starter ? "" : " bench"}"><span class="play-t">${when}</span>
       <span class="play-what"><b>${esc(e.name)}</b> <span class="muted">${esc(e.pos)}${e.nfl ? " · " + esc(e.nfl) : ""}</span> · ${esc(e.label)}${e.starter ? "" : ' <span class="muted">(bench)</span>'}${watchLink(e)}
-      <span class="team-mgr">${esc(t.name)} ${status}</span>${playLinks(e)}${rxRow(L.currentWeek, `p:${e.pid}-${e.t}`)}</span>
+      <span class="team-mgr">${esc(t.name)}${status ? " " + status : ""}</span>${playLinks(e)}${rxRow(e.week || L.currentWeek, `p:${e.pid}-${e.t}`)}</span>
       <span class="play-d ${e.delta >= 0 ? "pos" : "neg"}">${e.delta >= 0 ? "+" : ""}${e.delta.toFixed(2)}</span></div>`;
   }
   function feedPanel(week) {
@@ -937,8 +977,10 @@
   // Every big play this week, grouped by real NFL game (default) or by fantasy matchup; the choice is remembered.
   // Season view: totals from every week the live feed has covered (worker /plays)
   const PS = { data: null, at: 0 };
-  const playsSwitch = cur => `<div class="pg-by ps-switch" role="tablist" aria-label="Big plays: this week or season">${[["", "This week"], ["season", "Season"]].map(([k, lab]) =>
-    `<a role="tab" aria-selected="${cur === k}" class="${cur === k ? "active" : ""}" href="${href("matchups", k ? { view: k } : {}, "plays")}">${lab}</a>`).join("")}</div>`;
+  const playsSwitch = cur => `<div class="pg-by ps-switch" role="tablist" aria-label="Big plays: one week or season">${[["", liveWeek(matchupWeek()) ? "This week" : "Week " + matchupWeek()], ["season", "Season"]].map(([k, lab]) =>
+    `<a role="tab" aria-selected="${cur === k}" class="${cur === k ? "active" : ""}" href="${href("matchups", Object.assign(k ? { view: k } : {}, mWeekParam()), "plays")}">${lab}</a>`).join("")}</div>`;
+  // an earlier week's plays from the worker (its stored copy of that week's feed), loaded once per visit
+  const PWK = {};
   async function renderPlaysSeason(head) {
     if (state.season !== IDX.current || !LIVE_API_BASE()) { main.innerHTML = head + playsSwitch("season") + `<div class="empty">Season big plays are tracked for the current season.</div>`; return; }
     if (!PS.data || Date.now() - PS.at > 120000) {
@@ -990,15 +1032,38 @@
     const asked = state.params.get("by");
     const by = asked === "fantasy" || asked === "nfl" ? asked : store.get("plays-by", "nfl") === "fantasy" ? "fantasy" : "nfl";
     if (asked) store.set("plays-by", by);
-    const head = `<div class="section-head"><div><h1>Big plays</h1>${expl("Every big play this week, by NFL game or by fantasy matchup.",
-      "Touchdowns, field goals worth 5+ points, turnovers, defensive plays worth 5+ points (in practice defensive and return TDs), and single plays of 30+ yards (50+ for a pass), caught live from ESPN every minute during games. Each play shows the fantasy points that play alone was worth and where its fantasy matchup stood right after it. Bench players are marked.")}</div></div>${subnav("matchups", MATCHUP_TABS, "plays")}`;
+    const w = matchupWeek(), live = liveWeek(w);
+    const head = `<div class="section-head"><div><h1>Big plays</h1>${expl(`Every big play ${live ? "this week" : "in week " + w}, by NFL game or by fantasy matchup.`,
+      "Touchdowns, field goals worth 5+ points, turnovers, defensive plays worth 5+ points (in practice defensive and return TDs), and single plays of 30+ yards (50+ for a pass), caught live from ESPN every minute during games. Each play shows the fantasy points that play alone was worth and where its fantasy matchup stood right after it. Bench players are marked.")}</div></div>${matchupNav("plays")}`;
     if (state.params.get("view") === "season") return renderPlaysSeason(head);
-    const wk = state.season === IDX.current ? D.weeks.find(x => x.week === L.currentWeek) : null;
-    if (!wk || L.over) { main.innerHTML = head + `<div class="empty">Big plays are tracked live for the current week while the season is in progress.${state.season !== IDX.current ? ` <a href="#/matchups/plays">Go to this week</a>` : ""}</div>`; return; }
-    if (!window.LIVE_FEED) { main.innerHTML = head + `<div class="empty">Loading this week's plays…</div>`; return; }
-    const all = feedFor(wk.week);
+    const wk = D.weeks.find(x => x.week === w);
+    const top = head + weekStrip(w);
+    if (state.season !== IDX.current || !wk) { main.innerHTML = top + `<div class="empty">Big plays are kept for the current season only.${state.season !== IDX.current ? ` <a href="#/matchups/plays">Go to this week</a>` : ""}</div>`; return; }
+    let all;
+    if (live) {
+      if (!window.LIVE_FEED) { main.innerHTML = top + `<div class="empty">Loading this week's plays…</div>`; return; }
+      all = feedFor(w);
+    } else {
+      const P = PWK[w];
+      if (!P || P === "busy") {
+        main.innerHTML = top + `<div class="empty">Loading week ${w}'s plays…</div>`;
+        if (!P && LIVE_API_BASE()) {
+          PWK[w] = "busy";
+          pkApi("/plays?week=" + w).catch(() => ({ error: "Couldn't reach the server." })).then(d => {
+            PWK[w] = d && !d.error ? d : { error: (d && d.error) || "Couldn't load that week's plays." };
+            if (state.tab === "matchups" && state.sub === "plays" && matchupWeek() === w && state.params.get("view") !== "season") renderKeepScroll(renderMatchups);
+          });
+        }
+        return;
+      }
+      if (P.error) { delete PWK[w]; main.innerHTML = top + `<div class="empty">${esc(P.error)}</div>`; return; }
+      if (!P.tracked) { main.innerHTML = top + `<div class="empty">No big plays were recorded for week ${w}.</div>`; return; }
+      all = P.events.map(e => Object.assign({ week: w }, e)).sort((a, b) => b.t - a.t);
+    }
+    const nflList = by === "nfl" ? nflGamesFor(w) : [];
+    if (nflList == null) { main.innerHTML = top + `<div class="empty">Loading week ${w}'s NFL games…</div>`; return; }
     const toggle = `<div class="pg-by" role="tablist" aria-label="Group big plays">${[["nfl", "By NFL game"], ["fantasy", "By fantasy matchup"]].map(([k, lab]) =>
-      `<a role="tab" aria-selected="${by === k}" class="${by === k ? "active" : ""}" href="${href("matchups", { by: k }, "plays")}">${lab}</a>`).join("")}</div>`;
+      `<a role="tab" aria-selected="${by === k}" class="${by === k ? "active" : ""}" href="${href("matchups", Object.assign({ by: k }, mWeekParam()), "plays")}">${lab}</a>`).join("")}</div>`;
     const foot = (n, link) => `<div class="pg-foot"><span>${n} big play${n === 1 ? "" : "s"}</span>${link || ""}</div>`;
     const plays = ev => ev.length ? `<div class="plays pg-plays">${ev.map(playLine).join("")}</div>` : `<p class="pg-none">No big plays yet.</p>`;
     let body;
@@ -1015,7 +1080,7 @@
       body = `<div class="pg-grid">${body}</div>`;
     } else {
       // real NFL games this week; a play belongs to the game its player's NFL team is in
-      const nfl = (D.nflGames || []).map(g => ({ g, ev: all.filter(e => e.nfl === g.home || e.nfl === g.away) }));
+      const nfl = (Array.isArray(nflList) ? nflList : []).map(g => ({ g, ev: all.filter(e => e.nfl === g.home || e.nfl === g.away) }));
       const placed = new Set(nfl.flatMap(x => x.ev));
       const other = all.filter(e => !placed.has(e));
       const now = Date.now();
@@ -1035,7 +1100,7 @@
         ${list("No league big plays", quiet)}${list("Still to play", later)}`;
       if (!withPlays.length && !other.length) body = `<p class="pg-none">No big plays yet this week.</p>` + list("Still to play", later);
     }
-    main.innerHTML = head + (state.season === IDX.current ? playsSwitch("") : "") + toggle + `<p class="pg-sum">Week ${wk.week} · ${all.length} big play${all.length === 1 ? "" : "s"} so far${wk.final ? "" : " · updates every minute during games"}</p>` + body;
+    main.innerHTML = top + playsSwitch("") + toggle + `<p class="pg-sum">Week ${w} · ${all.length} big play${all.length === 1 ? "" : "s"}${live ? " so far" : ""}${live && !wk.final ? " · updates every minute during games" : ""}</p>` + body;
   }
 
   // Monday-night math: once the only league starters left in a matchup are in games that haven't kicked off
@@ -1129,12 +1194,12 @@
   function renderMatchups() {
     if (state.sub === "bracket") { location.replace(href("playoffs", {}, "bracket")); return; } // the bracket moved to Playoffs
     if (state.sub === "pickem") { location.replace("#/games"); return; } // old link: pick'em moved to Games
-    if (state.sub === "watch") return renderWatch();
-    if (state.sub === "plays") return renderPlays();
-    const weeks = D.weeks.map(x => x.week);
-    let w = parseInt(state.params.get("week"), 10);
-    if (!weeks.includes(w)) w = L.over ? weeks[weeks.length - 1] : L.currentWeek;
-    if (!weeks.includes(w)) w = weeks[weeks.length - 1];
+    if (state.sub === "watch" || state.sub === "plays") {
+      const r = state.sub === "watch" ? renderWatch() : renderPlays();
+      centerWeekStrip();
+      return r;
+    }
+    const w = matchupWeek();
     const wk = D.weeks.find(x => x.week === w);
     const open = state.params.get("game");
     const focusTeam = Number(state.params.get("team")) || null;   // set by Record book links
@@ -1177,8 +1242,8 @@
     }).join("");
     main.innerHTML = `
       <div class="section-head"><div><h1>Week ${w} matchups</h1><p class="sub">${wk.final ? "Final scores." : "Live scores · week in progress."} Tap a matchup for the box score.</p></div></div>
-      ${subnav("matchups", MATCHUP_TABS, "")}
-      <div class="week-strip" role="tablist">${D.weeks.map(x => `<button data-week="${x.week}" class="${x.week === w ? "active" : ""}${x.playoffs ? " po" : ""}" role="tab" aria-selected="${x.week === w}">${x.playoffs ? "PO " : "Wk "}${x.week}</button>`).join("")}</div>
+      ${matchupNav("")}
+      ${weekStrip(w)}
       ${wk.final ? recapCard(w) : ""}
       ${feedPanel(w)}
       ${thisWeekStrip(w)}
@@ -2254,9 +2319,9 @@
     <button type="button" class="info-btn" aria-expanded="false" aria-label="How this works">i</button></p>`;
   const section = (title, sub, body) => `<section class="insight"><div class="section-head"><div><h2>${title}</h2>${!sub ? "" : typeof sub === "string" ? `<p class="sub">${sub}</p>` : expl(sub.short, sub.full, GLOSSARY_BY_TITLE[String(title).replace(/<[^>]*>/g, "").trim()])}</div></div>${body}</section>`;
 
-  function subnav(tab, items, cur) {
+  function subnav(tab, items, cur, extra) {
     return `<nav class="subnav" aria-label="${tab[0].toUpperCase() + tab.slice(1)} sections">${items.map(([k, label]) =>
-      `<a href="${href(tab, {}, k)}" class="${k === cur ? "active" : ""}"${k === cur ? ' aria-current="page"' : ""}>${label}</a>`).join("")}</nav>`;
+      `<a href="${href(tab, extra || {}, k)}" class="${k === cur ? "active" : ""}"${k === cur ? ' aria-current="page"' : ""}>${label}</a>`).join("")}</nav>`;
   }
 
   // favorites and underdogs by ESPN's pre-game projection for each lineup (Insights -> Luck -> Upset tracker)
@@ -4670,12 +4735,18 @@
   // ---------------------------------------------------------------- watch guide
   // Which real NFL games matter most this week: every league starter playing in each game, weighted by his
   // projection and by how close his fantasy matchup is (a toss-up counts more than a blowout).
-  function watchModel() {
-    if (!L.isCurrent || L.over || !(D.nflGames || []).length) return null;
-    const wk = D.weeks.find(w => w.week === L.currentWeek);
+  // For an earlier week (or a past season), the same rating with the points each starter actually scored in place
+  // of his projection: which games mattered most that week.
+  function watchModel(week) {
+    const wk = D.weeks.find(w => w.week === week);
     if (!wk) return null;
+    const live = liveWeek(week);
+    const src = nflGamesFor(week);
+    if (src == null) return { loading: true };
+    if (src === "error") return { error: true };
+    if (!src.length) return null;
     const now = Date.now();
-    const games = D.nflGames.map(g => Object.assign({}, g, { at: g.date ? new Date(g.date).getTime() : 0, rows: [], stake: 0, starters: 0, proj: 0 }));
+    const games = src.map(g => Object.assign({}, g, { at: g.date ? new Date(g.date).getTime() : 0, rows: [], stake: 0, starters: 0, proj: 0 }));
     const byTeam = {};
     games.forEach(g => { byTeam[g.home] = g; byTeam[g.away] = g; });
     wk.games.filter(m => m.sides.length === 2).forEach(m => {
@@ -4685,7 +4756,7 @@
       [a, b].forEach((s, i) => s.lineup.filter(p => p.slot !== "BE" && p.slot !== "IR").forEach(p => {
         const g = byTeam[p.team];
         if (!g) return;
-        const pr = p.proj || 0;
+        const pr = live ? p.proj || 0 : p.proj != null ? p.proj : p.pts || 0;
         g.starters++; g.proj += pr; g.stake += pr * (0.35 + 0.65 * close);
         let row = g.rows.find(r => r.game === m.id);
         if (!row) g.rows.push(row = { game: m.id, close, sides: [{ team: a.team, players: [] }, { team: b.team, players: [] }] });
@@ -4698,12 +4769,12 @@
       // ESPN's scoreboard (checked each minute during games) says when a game is really over; without a fresh
       // check, a guess from the kickoff time
       const k = NFL_STATUS.games && now - NFL_STATUS.at < 5 * 60e3 ? NFL_STATUS.games[String(g.id)] : null;
-      g.state = k ? (k[0] === "in" ? "live" : k[0] === "post" ? "final" : "upcoming")
+      g.state = !live ? "final" : k ? (k[0] === "in" ? "live" : k[0] === "post" ? "final" : "upcoming")
         : !g.at || now < g.at ? "upcoming" : now < g.at + 3.5 * 3600e3 ? "live" : "final";
       g.detail = k && k[0] === "in" ? k[1] : "";
       g.rows.sort((x, y) => y.close - x.close);
     });
-    return { week: wk.week, games };
+    return { week: wk.week, games, live };
   }
   const kickText = g => g.state === "live" ? (g.detail ? "Live · " + g.detail : "Live now") : g.state === "final" ? "Final" : g.tbd ? "Time TBD"
     : new Date(g.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
@@ -4712,15 +4783,20 @@
   const plist = (ps, done) => ps.map(p => `${esc(lastName(p.name))} <span class="muted">${done ? fmt(p.pts) : (p.proj || 0).toFixed(1)}</span>`).join(", ");
 
   function renderWatch() {
-    const head = `<div class="section-head"><div><h1>Watch guide</h1>${expl("The real NFL games that matter most to the league this week.",
-      "Each game is rated by the league starters playing in it, weighted by their projections and by how close their fantasy matchups are: a player in a toss-up counts almost three times as much as one in a lopsided matchup. 100 = the week's biggest game. Numbers next to players are ESPN's projections (points once their game is over).")}</div></div>${subnav("matchups", MATCHUP_TABS, "watch")}`;
+    const w = matchupWeek(), live = liveWeek(w);
+    const head = `<div class="section-head"><div><h1>Watch guide${live ? "" : ` <span class="muted">· week ${w}</span>`}</h1>${live ? expl("The real NFL games that matter most to the league this week.",
+      "Each game is rated by the league starters playing in it, weighted by their projections and by how close their fantasy matchups are: a player in a toss-up counts almost three times as much as one in a lopsided matchup. 100 = the week's biggest game. Numbers next to players are ESPN's projections (points once their game is over).")
+      : expl(`The real NFL games that mattered most to the league in week ${w}.`,
+      `Each game is rated by the league starters who played in it, weighted by the points they scored and by how close their fantasy matchups were going in (by ESPN's projections): a player in a toss-up counts almost three times as much as one in a lopsided matchup. 100 = the week's biggest game. Numbers next to players are their points.`)}</div></div>${matchupNav("watch")}${weekStrip(w)}`;
     // opened between the minute checks: get the real game states now, then redraw once
-    if (!(NFL_STATUS.games && Date.now() - NFL_STATUS.at < 5 * 60e3) && !NFL_STATUS.busy) {
+    if (live && !(NFL_STATUS.games && Date.now() - NFL_STATUS.at < 5 * 60e3) && !NFL_STATUS.busy) {
       NFL_STATUS.busy = true;
       checkNflStatus().then(() => { NFL_STATUS.busy = false; if (NFL_STATUS.games && state.tab === "matchups" && state.sub === "watch") renderKeepScroll(renderWatch); });
     }
-    const M = watchModel();
-    if (!M) { main.innerHTML = head + `<div class="empty">The watch guide covers the current week while the season is in progress.${state.season !== IDX.current ? ` <a href="#/matchups/watch">Go to this week's guide</a>` : ""}</div>`; return; }
+    const M = watchModel(w);
+    if (!M) { main.innerHTML = head + `<div class="empty">No NFL games found for week ${w}.</div>`; return; }
+    if (M.loading) { main.innerHTML = head + `<div class="empty">Loading week ${w}'s NFL games…</div>`; return; }
+    if (M.error) { main.innerHTML = head + `<div class="empty">Couldn't reach ESPN for week ${w}'s NFL games. Try again in a bit.</div>`; delete NFLWK[state.season + ":" + w]; return; }
     const me = myTeam();
     const card = g => {
       const mineHere = me && g.rows.some(r => r.sides.some(s => s.team === me.id && s.players.length));
@@ -4733,9 +4809,16 @@
         <div class="wg-top"><span class="wg-teams">${esc(g.away)} <span class="muted">at</span> ${esc(g.home)}</span><span class="wg-when${g.state === "live" ? " live" : ""}">${esc(kickText(g))}</span></div>
         ${condHtml(g) ? `<div class="wg-cond">${condHtml(g)}</div>` : ""}<div class="wg-links">${followLinks(g)}</div>
         <div class="wg-meter"><span class="wg-score" title="Importance this week (100 = biggest game)">${g.score}</span><span class="wg-bar" aria-hidden="true"><i style="width:${g.score}%"></i></span>
-          <span class="team-mgr">${g.starters} league starter${g.starters === 1 ? "" : "s"} · ${g.proj.toFixed(0)} projected pts${mineHere ? " · <b>you have players here</b>" : ""}</span></div>
+          <span class="team-mgr">${g.starters} league starter${g.starters === 1 ? "" : "s"} · ${g.proj.toFixed(0)} ${g.state === "final" && !liveWeek(matchupWeek()) ? "" : "projected "}pts${mineHere ? " · <b>you have players here</b>" : ""}</span></div>
         ${rows ? `<div class="wg-rows">${rows}</div>` : ""}</article>`;
     };
+    if (!M.live) {
+      const played = M.games.filter(g => g.starters).sort((a, b) => b.stake - a.stake);
+      const none = M.games.filter(g => !g.starters);
+      main.innerHTML = head + (played.length ? section(`Week ${w}'s biggest games`, "", `<div class="wg-list">${played.map(card).join("")}</div>`) : `<div class="empty">No league starters played in week ${w}'s NFL games.</div>`) +
+        (none.length ? `<p class="sub">No league starters: ${none.map(g => esc(g.away + " at " + g.home)).join(", ")}.</p>` : "");
+      return;
+    }
     const left = M.games.filter(g => g.state !== "final" && g.starters);
     const top = left.slice().sort((a, b) => b.stake - a.stake).slice(0, 3);
     const days = {};
@@ -4885,7 +4968,7 @@
 
     // NFL games with my players this week
     let watch = "";
-    const M = cur ? watchModel() : null;
+    const M = cur && liveWeek(L.currentWeek) ? watchModel(L.currentWeek) : null;
     if (M) {
       const gs = M.games.filter(x => x.state !== "final" && x.rows.some(r => r.sides.some(s => s.team === t.id && s.players.length)));
       const lines = gs.map(x => {
@@ -5157,6 +5240,9 @@
   // Every feature added to the site, grouped by the day it went live (newest first). Add new features at the top.
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
+    ["2026-11-25", [
+      ["One week across Matchups", "Matchups → Weekly, Big plays, Watch guide", "The week you pick now carries over to Big plays and the Watch guide, each with its own week strip. Earlier weeks show that week's big plays and the games that mattered most.", "#/matchups/plays"],
+    ]],
     ["2026-11-24", [
       ["League Wrapped", "History → Wrapped", "Every manager's season as a story: your road through the standings, how it ended, guess your MVP, your top 5, this or that, your position rooms, guess your bench points, the one that got away, your rivals, your manager type and more, with player photos and stats, then a card to share. Past seasons are open now; 2026 opens the day the championship is decided, with an alert. It replaces the Yearbook.", "#/history/wrapped?season=2025"],
       ["Trade impact", "Trades → Trade impact", "Pick two teams and the players each would send: see both teams' best lineups and their playoff, bye and title odds before and after, plus anyone else's odds the trade moves. Linked from Compare players and the Trade block.", "#/trades/impact"],
@@ -5763,7 +5849,7 @@
       return;
     }
     const wkBtn = e.target.closest("[data-week]");
-    if (wkBtn) { location.hash = href("matchups", { week: wkBtn.dataset.week }); return; }
+    if (wkBtn) { location.hash = href("matchups", { week: wkBtn.dataset.week }, state.tab === "matchups" && ["plays", "watch"].includes(state.sub) ? state.sub : ""); return; }
     const side = e.target.closest("[data-boxside]");
     if (side) {
       const art = side.closest(".game");

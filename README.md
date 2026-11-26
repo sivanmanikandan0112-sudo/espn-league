@@ -181,6 +181,10 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
   long-TD bonus), not everything the player gained in that minute.
   When ESPN takes a play back (a fumble or interception overturned, a TD ruled short), that play is removed from
   the feed rather than shown again with the opposite points.
+  **Earlier weeks**: the week picked on any Matchups tab carries over to Big plays and the Watch guide (`?week=`,
+  with the same week strip on all three). An earlier 2026 week's plays come from the worker (`GET /plays?week=N`:
+  the full feed while it's kept, with each play's matchup score, else the trimmed copy); NFL games for grouping come
+  from ESPN's public scoreboard for that week. Real/Gamecast play links are for the live week only.
 - **Watch the play**: big plays get a "▶ Watch" link to ESPN's highlight clip when one exists. The live worker
   matches each play to the first clip in ESPN's public game summary whose headline names the player, posted from
   just before the play to 3 hours after (`addPlayVideos` in `worker/src/index.js`). Clips expire after ~2 days, and
@@ -192,6 +196,9 @@ Then open http://localhost:8765. The `site/` folder is plain static files, so it
 - **Watch guide** (Matchups → Watch guide): this week's real NFL games ranked by how much they matter to the league:
   every league starter in the game, weighted by ESPN's projection and by how close his fantasy matchup is (0.35 for a
   lopsided one up to 1.0 for a toss-up), scaled so the biggest game is 100. Kickoffs come from ESPN's NFL schedule.
+  For any other week (or season), it becomes that week's biggest games: the same rating with the points each starter
+  scored in place of his projection, and closeness from the matchups' pre-game projections. That week's NFL games are
+  read from ESPN's public scoreboard (`nflGamesFor` in `site/app.js`).
 - **Waiver targets** (My team, current season): free agents and players on waivers (`add_free_agents` in `build.py`:
   the top 25 unrostered QB/RB/WR/TE by expected points, projected week by week like power value) compared with your
   roster. Three parts: the pickups that would most improve next week's best lineup (and whom they'd start over), the

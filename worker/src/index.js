@@ -771,9 +771,22 @@ async function handleGraph(req, env, url) {
 // is read straight from its feed. The aggregate is cached for 2 minutes.
 const trimPlays = events => (events || []).filter(e => e.kind !== "stat correction" && e.label !== "stat correction")
   .map(e => ({ t: e.t, team: e.team, pid: e.pid, name: e.name, pos: e.pos, nfl: e.nfl, kind: e.kind, label: e.label, delta: e.delta, starter: e.starter, game: e.game }));
-async function handlePlays(req, env) {
+async function handlePlays(req, env, url) {
   if (!env.PICKEM) return json(env, req, { error: "Storage isn't set up yet." }, 503);
   const st = await pickemWeek(env);
+  // one week's plays (Matchups -> Big plays for an earlier week): the full feed while it's kept (3 weeks, with each
+  // play's matchup score), otherwise the trimmed copy
+  const one = url && url.searchParams.get("week");
+  if (one) {
+    const w = parseInt(one, 10);
+    if (!(w >= 1 && w <= st.week)) return json(env, req, { error: "No such week." }, 400);
+    const out = await cached(`plays-one-${st.season}-${w}`, w < st.week ? 600 : 60, async () => {
+      const f = await env.PICKEM.get(`feed:${st.season}:${w}`, "json");
+      const events = f ? f.events || [] : (await env.PICKEM.get(`plays-week:${st.season}:${w}`, "json")) || null;
+      return { season: st.season, week: w, events: events || [], tracked: !!events };
+    });
+    return json(env, req, out);
+  }
   const out = await cached(`plays-season-${st.season}-${st.week}`, 120, async () => {
     const weeks = [];
     for (let w = 1; w <= st.week; w++) {
