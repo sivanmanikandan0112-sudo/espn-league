@@ -1910,18 +1910,24 @@ function redZoneAlerts(box, lv, board, S, nm) {
 }
 
 // Left the game: ESPN's fantasy news posts in-game injury updates ("X is questionable to return…", "X has returned to
-// the game"). Checked every other minute for starters whose game is on; only news from during his game counts. The
+// the game"). Checked every other minute for starters whose game is on (or ended within 5 hours of kickoff); only news from during his game counts. The
 // latest status per player is kept in ingame:<season>:<week> (the site shows it on the player card) and alerts go out
 // when it changes, for news under 20 minutes old.
-const HURT_RE = /(questionable|doubtful|not expected|unlikely) to return|(won'?t|will not|didn'?t|did not) return|\bruled out\b|out for the (rest|remainder)|being evaluated|evaluated for (a |an )?(concussion|injury)|medical tent|carted|exited (sunday's|monday's|thursday's|saturday's|the) game|left (sunday's|monday's|thursday's|saturday's|the) game/i;
-const BACK_RE = /\b(has )?returned to (sunday's|monday's|thursday's|saturday's|the) game|cleared to return|back in the game|re-?entered/i;
+// The game phrase in ESPN's blurbs: "the game", "Wednesday's game", "Thursday night's game", "tonight's contest"…
+const GAME_RE = String.raw`(?:the |(?:sun|mon|tues|wednes|thurs|fri|satur)day(?:'s| night'?s?)? |(?:this|tonight'?s) )?(?:game|contest|action)`;
+const HURT_RE = new RegExp(String.raw`(questionable|doubtful|not expected|unlikely) to return|(won'?t|will not|didn'?t|did not) return\b|\bruled out\b|out for the (rest|remainder)|being evaluated|evaluated for (a |an )?(concussion|injury)|medical tent|carted|(headed|went|was taken|limped) to the locker room|(exited|left) ${GAME_RE}`, "i");
+const BACK_RE = new RegExp(String.raw`\b(has |have )?return(ed|s) to ${GAME_RE}|cleared to return|back in (the game|action)|re-?entered|back on the field`, "i");
+const NOT_BACK_RE = /(hasn'?t|has not|never) returned/i;
+const hurtKind = h => NOT_BACK_RE.test(h) ? "hurt" : BACK_RE.test(h) ? "back" : HURT_RE.test(h) ? "hurt" : null;
 async function hurtAlerts(env, box, lv, nfl, yr, week, nm, now) {
   if (new Date(now).getUTCMinutes() % 2) return;
   const on = new Map();
   for (const g of lv.games) {
     for (const s of g.sides) {
       for (const p of s.lineup) {
-        if (["BE", "IR"].includes(p.slot) || p.pos === "D/ST" || (nfl[p.team] || {}).state !== "in") continue;
+        // during his game, and for a while after it (a "returned to the game" update can land late, or after a deploy)
+        const ng = nfl[p.team] || {};
+        if (["BE", "IR"].includes(p.slot) || p.pos === "D/ST" || !(ng.state === "in" || (ng.state === "post" && now - ng.at < 5 * 3600e3))) continue;
         on.set(String(p.id), { p, team: s.team, opp: (g.sides.find(x => x !== s) || {}).team });
       }
     }
@@ -1944,7 +1950,7 @@ async function hurtAlerts(env, box, lv, nfl, yr, week, nm, now) {
       const t = Date.parse(a.published), kick = (nfl[st.p.team] || {}).at || 0;
       if (!(t >= kick && t <= now + 60e3)) continue;
       const h = String(a.headline || "");
-      const kind = BACK_RE.test(h) ? "back" : HURT_RE.test(h) ? "hurt" : null;
+      const kind = hurtKind(h);
       if (!kind) continue;
       const prev = H[pid];
       if (prev && prev.t >= t) continue;
