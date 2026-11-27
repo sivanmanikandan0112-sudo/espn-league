@@ -4458,7 +4458,8 @@
     const sure = R.games.every(g => (g.odds[key] || []).every(o => o && o[0] != null && o[0] >= 99.5));
     const k = sure ? 1 : 0; // 0 = playoff odds, 1 = bye odds
     const wk = D.weeks.find(w => w.week === R.week);
-    const live = g => { const x = wk && wk.games.find(y => y.sides.length === 2 && y.sides.some(s => s.team === g.home) && y.sides.some(s => s.team === g.away)); return x ? Object.fromEntries(x.sides.map(s => [s.team, s.pts])) : null; };
+    // each side's live score and ESPN's live win chance (what "going your way" is judged on, not the score)
+    const live = g => { const x = wk && wk.games.find(y => y.sides.length === 2 && y.sides.some(s => s.team === g.home) && y.sides.some(s => s.team === g.away)); return x ? Object.fromEntries(x.sides.map(s => [s.team, { pts: s.pts, wp: s.winProb }])) : null; };
     let own = null;
     const rows = [];
     for (const g of R.games) {
@@ -4482,13 +4483,17 @@
     const r = rootFor(tid);
     if (!r) return "";
     const what = r.kind === "bye" ? "first-round bye" : "playoff";
+    // "going your way" = the team you want has the better live win chance (ESPN's), whatever the score says
+    const started = (lv, a, b) => lv && lv[a] && lv[b] && (lv[a].pts > 0 || lv[b].pts > 0);
+    const chance = (lv, a, b) => started(lv, a, b) && lv[a].wp != null && lv[b].wp != null && lv[a].wp + lv[b].wp > 0 ? lv[a].wp / (lv[a].wp + lv[b].wp) : null;
     const liveTag = (lv, a, b) => {
-      if (!lv || !(lv[a] > 0 || lv[b] > 0)) return "";
-      const d = lv[a] - lv[b];
-      return `<span class="rf-live ${d > 0 ? "good" : d < 0 ? "bad" : ""}">${fmt(lv[a])}–${fmt(lv[b])}${d > 0 ? " · going your way" : d < 0 ? " · not yet" : ""}</span>`;
+      if (!started(lv, a, b)) return "";
+      const c = chance(lv, a, b), p = c == null ? null : Math.round(c * 100);
+      const verdict = p == null ? "" : p > 50 ? " · going your way" : p < 50 ? " · not going your way" : " · toss-up";
+      return `<span class="rf-live ${p == null || p === 50 ? "" : p > 50 ? "good" : "bad"}">${fmt(lv[a].pts)}–${fmt(lv[b].pts)}${p == null ? "" : ` · <span title="ESPN's live win chance for ${esc(tname(a))}">${p}% to win</span>`}${verdict}</span>`;
     };
-    const going = r.rows.filter(x => x.live && (x.live[x.pick] > 0 || x.live[x.other] > 0));
-    const sum = going.length ? ` <span class="rf-sum">${going.filter(x => x.live[x.pick] > x.live[x.other]).length} of ${going.length} going your way right now</span>` : "";
+    const going = r.rows.filter(x => chance(x.live, x.pick, x.other) != null);
+    const sum = going.length ? ` <span class="rf-sum">${going.filter(x => chance(x.live, x.pick, x.other) > 0.5).length} of ${going.length} going your way right now (by win chance)</span>` : "";
     const own = r.own ? `<div class="rf-own"><b>Your game</b> vs. ${esc(tname(r.own.opp))}: win and your ${what} odds are <b>${pct(r.own.win)}</b>, lose and they're <b>${pct(r.own.lose)}</b>.${liveTag(r.own.live, tid, r.own.opp) ? " " + liveTag(r.own.live, tid, r.own.opp) : ""}</div>` : "";
     const list = r.rows.length ? `<div class="rf-list">${r.rows.map(x => `<div class="rf-row">
         <span class="rf-who">${logo(teamById[x.pick])}<span><span class="rf-k">Root for</span> <b>${esc(tname(x.pick))}</b> <span class="muted">over ${esc(tname(x.other))}</span>
@@ -4496,7 +4501,7 @@
         <span class="rf-swing">+${x.swing.toFixed(x.swing < 10 ? 1 : 0)}%<small>your odds</small></span></div>`).join("")}</div>`
       : `<p class="muted">No other game this week moves your ${what} odds by a point or more.</p>`;
     return section(`Who to root for <span class="muted">· week ${r.week}</span>`, { short: `The other games this week that change your ${what} odds, and by how much.`,
-      full: `From the same 10,000 simulated seasons as the playoff odds: for each of this week's games, your ${what} chance in the simulations where each team won. <b>Root for</b> the team whose win helps you; the number is how much that result adds to your odds (percentage points). Updates with every site refresh (every 5 minutes during games), so a game that's nearly over stops mattering.${r.kind === "bye" ? " You're all but certain to make the playoffs, so this shows first-round-bye odds instead." : ""}` },
+      full: `From the same 10,000 simulated seasons as the playoff odds: for each of this week's games, your ${what} chance in the simulations where each team won. <b>Root for</b> the team whose win helps you; the number is how much that result adds to your odds (percentage points). Updates with every site refresh (every 5 minutes during games), so a game that's nearly over stops mattering. During games, "going your way" means the team you want has the better live win chance (ESPN's, which counts who each side has left to play), not just the higher score.${r.kind === "bye" ? " You're all but certain to make the playoffs, so this shows first-round-bye odds instead." : ""}` },
       `<div class="panel rf">${r.now != null ? `<p class="rf-now">Your ${what} odds now: <b>${pct(r.now)}</b>${sum}</p>` : ""}${own}${list}</div>`);
   }
   function rootForSection(w) {

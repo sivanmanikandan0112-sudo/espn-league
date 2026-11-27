@@ -376,7 +376,8 @@ picked. One KV value per season, `pulse:<season>`, the last 40 events; the same 
 Matchups (below this week's games) and My team. The playoff-odds simulation (`stats.playoff_odds`, 10,000 seasons)
 also records, for each game of the first week that isn't settled yet, every team's playoff and bye chance in the
 simulations where each side won (`league.rootFor`). The site shows your own game's stakes and the other games whose
-result moves your odds by a point or more, with their live scores. Once your playoff odds are 99.5%+ either way it
+result moves your odds by a point or more, with their live scores and ESPN's live win chance. "Going your way"
+is judged on that win chance (the team you want above 50%), not on who's ahead in points. Once your playoff odds are 99.5%+ either way it
 switches to first-round-bye odds. Refreshes with every site build.
 
 ## Manager style and Butterfly effect
