@@ -373,7 +373,7 @@ picked. One KV value per season, `pulse:<season>`, the last 40 events; the same 
 
 ## Collapsible sections
 
-On the long pages (`CZ_PAGES` in `site/app.js`: Standings, My team, Playoffs → Picture, Matchups → Watch guide,
+On the long pages (`CZ_PAGES` in `site/app.js`: Standings, My team, Matchups (Weekly and Watch guide), Playoffs → Picture,
 History → Overview and Records) every section title collapses or expands its section; the choice is saved per device
 (`lhq:cz`). With nothing saved, phones (640px or narrower) start the sections in `CZ_PHONE_SHUT` collapsed (and all
 but the first two record lists); computers start everything open. Pages with 5+ sections get Collapse all / Expand all.

@@ -1911,7 +1911,8 @@ html.wr-open { overflow: hidden; }
 .cz-btn svg { transition: transform .15s ease; }
 .cz-btn:hover, .cz-btn:focus-visible { color: var(--accent); }
 .cz-off .cz-btn svg { transform: rotate(-90deg); }
-section.cz-off > :not(.section-head):not(h3) { display: none !important; }
+section.cz-off > :not(.section-head):not(h3):not(h2) { display: none !important; }
+section.cz-off > h2 { margin-bottom: 0; }
 section.cz-off > .section-head { margin-bottom: 0; }
 section.cz-off > .section-head > div > :not(h2) { display: none; }
 section.rec-card.cz-off > h3 { margin-bottom: 0; }

@@ -68,7 +68,7 @@
   // this device ("cz": page|section -> 1 collapsed, 0 open). With no choice saved, phones start some sections collapsed
   // (CZ_PHONE_SHUT) so the page is shorter; computers start everything open. Sections are found after each render
   // (a MutationObserver on <main>), so pages need no changes of their own.
-  const CZ_PAGES = { "standings/": 1, "myteam/": 1, "matchups/watch": 1, "playoffs/": 1, "playoffs/picture": 1, "history/": 1, "history/overview": 1, "history/records": 1 };
+  const CZ_PAGES = { "standings/": 1, "myteam/": 1, "matchups/": 1, "matchups/watch": 1, "playoffs/": 1, "playoffs/picture": 1, "history/": 1, "history/overview": 1, "history/records": 1 };
   const CZ_PHONE_SHUT = {
     "standings/": ["season storyline", "league pulse", "weekly winners & losers"],
     "myteam/": ["roster", "schedule", "your badges", "your record book", "your manager style", "byes ahead"],
@@ -83,7 +83,8 @@
   function czName(h) {
     const c = h.cloneNode(true);
     c.querySelectorAll("a, button, .muted, .pill, .badge").forEach(x => x.remove());
-    return c.textContent.split("·")[0].replace(/\d+/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    const clean = t => t.split("·")[0].replace(/[\d›]+/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    return clean(c.textContent) || clean(h.textContent); // a title that is itself a link ("Recent big plays ›")
   }
   function czSet(sec, shut) {
     sec.classList.toggle("cz-off", shut);
@@ -103,11 +104,11 @@
     const saved = store.get("cz", {}) || {};
     const phone = czIsPhone();
     const shutList = CZ_PHONE_SHUT[page] || [];
-    const found = [...main.querySelectorAll("section")].filter(x => !x.classList.contains("cz") && (x.querySelector(":scope > .section-head h2") || (x.matches(".rec-card") && page === "history/records")));
+    const found = [...main.querySelectorAll("section")].filter(x => !x.classList.contains("cz") && (x.querySelector(":scope > .section-head h2, :scope > h2") || (x.matches(".rec-card") && page === "history/records")));
     if (!found.length) return;
     const all = [...main.querySelectorAll(".cz")].length;
     found.forEach((sec, i) => {
-      const h = sec.matches(".rec-card") ? sec.querySelector(":scope > h3") : sec.querySelector(":scope > .section-head h2");
+      const h = sec.matches(".rec-card") ? sec.querySelector(":scope > h3") : sec.querySelector(":scope > .section-head h2, :scope > h2");
       if (!h) return;
       const name = czName(h);
       if (!name) return;
@@ -5360,7 +5361,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-28", [
-      ["Collapsible sections", "My team, Standings, Playoffs → Picture, Watch guide, History → Overview and Records", "Tap a section's title to collapse or expand it; your choice is saved on this device. On phones, the longer sections (Roster, Schedule, badges, the tiebreaker race, all-time tables…) start collapsed, and pages with many sections get Collapse all / Expand all.", "#/myteam"],
+      ["Collapsible sections", "My team, Standings, Matchups (recent big plays, league history, who to root for), Playoffs → Picture, Watch guide, History → Overview and Records", "Tap a section's title to collapse or expand it; your choice is saved on this device. On phones, the longer sections (Roster, Schedule, badges, the tiebreaker race, all-time tables…) start collapsed, and pages with many sections get Collapse all / Expand all.", "#/myteam"],
       ["Shorter Big plays and Trade history", "Matchups → Big plays, Trades", "Each Big plays card shows its 3 newest plays with Show all; Trade history shows 10 trades at a time with Show more.", "#/matchups/plays"],
     ]],
     ["2026-11-26", [
