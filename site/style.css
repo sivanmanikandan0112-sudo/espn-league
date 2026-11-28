@@ -1922,3 +1922,10 @@ section.rec-card.cz-off > h3 { margin-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .cz-btn svg { transition: none; } }
 /* My team → Your games to watch: the kickoff time gets its own width instead of the 64px record column */
 .rec:has(> .me-kick) { grid-template-columns: max-content minmax(0, 1fr); }
+
+/* ESPN injury designation in this week's box scores (next to the in-game HURT tag) */
+.inj-tag { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 4px; font-size: 9.5px; font-weight: 800; letter-spacing: .04em; vertical-align: 1px; color: #fff; }
+.inj-tag.q { background: #b8860b; }
+.inj-tag.d { background: #d9772b; }
+.inj-tag.out { background: #d9534f; }
+.inj-tag.sus { background: #6b7280; }

@@ -938,11 +938,28 @@
   // ---------------------------------------------------------------- matchups
   const TIER = { WINNERS_BRACKET: "Playoffs", WINNERS_CONSOLATION_LADDER: "Consolation", LOSERS_CONSOLATION_LADDER: "Consolation" };
 
+  // ESPN's current injury designation (Q, D, OUT, IR, SUSP…) beside a player in this week's box scores. The lineup
+  // carries ESPN's status as of the latest refresh (every minute during games), so it's what ESPN shows right now.
+  // Earlier weeks leave it off: their status is from back then, not now.
+  const INJ_LVL = { QUESTIONABLE: "q", PROBABLE: "q", DAY_TO_DAY: "q", DOUBTFUL: "d", OUT: "out", INJURY_RESERVE: "out", SUSPENSION: "sus" };
+  // each rostered player's current ESPN status, from the team rosters (box-score lineups don't carry it)
+  const INJ_NOW = { d: null, m: {} };
+  const injNow = id => {
+    if (INJ_NOW.d !== D) { INJ_NOW.d = D; INJ_NOW.m = {}; (D.teams || []).forEach(t => (t.roster || []).forEach(r => { if (r.injury) INJ_NOW.m[String(r.id)] = r.injury; })); }
+    return INJ_NOW.m[String(id)] || null;
+  };
+  function injTag(p, week) {
+    if (!L.isCurrent || L.over || week !== L.currentWeek) return "";
+    const st = String(p.injury || injNow(p.id) || "");
+    if (!st || st === "ACTIVE" || st === "NORMAL") return "";
+    const word = (STATUS_WORD[st] || st.replace(/_/g, " ").toLowerCase());
+    return ` <span class="inj-tag ${INJ_LVL[st] || "q"}" title="ESPN: ${esc(word)}">${esc(INJ[st] || st.replace(/_/g, " "))}</span>`;
+  }
   function boxCol(side, hl, week) {
     const t = teamById[side.team];
     const start = side.lineup.filter(p => p.slot !== "BE" && p.slot !== "IR");
     const bench = side.lineup.filter(p => p.slot === "BE" || p.slot === "IR");
-    const line = (p, b) => `<div class="box-line${b ? " bench" : ""}${hl && String(p.id) === hl ? " hl" : ""}" role="button" tabindex="0" data-stat="${p.id}" data-stat-week="${week}" title="See ${esc(p.name)}'s stat line"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700;text-align:center">${esc(p.slot)}</span><span class="pn" title="${esc(p.name)} · ${esc(p.pos)} ${esc(p.team)}">${esc(p.name)}${hurtTag(p.id, week)}</span><span class="pp">${fmt(p.pts)}</span></div>`;
+    const line = (p, b) => `<div class="box-line${b ? " bench" : ""}${hl && String(p.id) === hl ? " hl" : ""}" role="button" tabindex="0" data-stat="${p.id}" data-stat-week="${week}" title="See ${esc(p.name)}'s stat line"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700;text-align:center">${esc(p.slot)}</span><span class="pn" title="${esc(p.name)} · ${esc(p.pos)} ${esc(p.team)}">${esc(p.name)}${injTag(p, week)}${hurtTag(p.id, week)}</span><span class="pp">${fmt(p.pts)}</span></div>`;
     return `<div class="box-col"><h4>${esc(t.name)}</h4>${start.map(p => line(p, false)).join("")}${bench.length ? '<div class="box-sep">BENCH</div>' + bench.map(p => line(p, true)).join("") : ""}</div>`;
   }
 
@@ -5361,6 +5378,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-28", [
+      ["Injury tags in box scores", "Matchups → any box score", "This week's box scores show each player's current ESPN designation beside his name: Q (questionable), D (doubtful), OUT, IR or SUSP, next to the in-game HURT tag.", "#/matchups"],
       ["Collapsible sections", "My team, Standings, Matchups (recent big plays, league history, who to root for), Playoffs → Picture, Watch guide, History → Overview and Records", "Tap a section's title to collapse or expand it; your choice is saved on this device. On phones, the longer sections (Roster, Schedule, badges, the tiebreaker race, all-time tables…) start collapsed, and pages with many sections get Collapse all / Expand all.", "#/myteam"],
       ["Shorter Big plays and Trade history", "Matchups → Big plays, Trades", "Each Big plays card shows its 3 newest plays with Show all; Trade history shows 10 trades at a time with Show more.", "#/matchups/plays"],
     ]],

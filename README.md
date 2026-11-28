@@ -371,6 +371,13 @@ or Rank 'em entries (and Bullseye and the waiver wire challenge, until they were
 picked. One KV value per season, `pulse:<season>`, the last 40 events; the same person doing the same thing within
 30 minutes moves back to the top instead of adding a line (`pulse()` in `worker/src/index.js`).
 
+## Injury tags in box scores
+
+This week's box scores (`injTag` in `site/app.js`) show each player's current ESPN designation (Q, D, OUT, IR, SUSP,
+P, DTD) beside his name, colored by severity, next to the in-game HURT tag. The status comes from the live worker's
+lineup when it carries one (refreshed every minute during games), else from the team rosters in the latest build,
+since the build's box-score lineups don't include it. Earlier weeks show no tags: their status would be from back then.
+
 ## Collapsible sections
 
 On the long pages (`CZ_PAGES` in `site/app.js`: Standings, My team, Matchups (Weekly and Watch guide), Playoffs → Picture,
