@@ -371,6 +371,16 @@ or Rank 'em entries (and Bullseye and the waiver wire challenge, until they were
 picked. One KV value per season, `pulse:<season>`, the last 40 events; the same person doing the same thing within
 30 minutes moves back to the top instead of adding a line (`pulse()` in `worker/src/index.js`).
 
+## Upcoming weeks on Matchups
+
+The Matchups week strip runs through `league.finalWeek` (`futureWeeks`/`allWeeks` in `site/app.js`, current season
+only). An upcoming week is built client-side (`futureWeek`): regular-season matchups from ESPN's schedule
+(`upcoming`), the first playoff round from current seeds (the top `2^rounds − playoffTeams` seeds get byes, the rest
+pair high vs. low), later rounds unset. Each side is its best lineup by ESPN's projection for that week (the Trade
+impact optimizer over the roster's `wk` projections; kicker and defense at their rest-of-season average), with a win
+chance from the playoff-odds model (`scnP`). Weekly shows those matchups with projected lineups; the Watch guide
+rates that week's NFL games (ESPN's scoreboard) the same way as the live guide; Big plays waits for kickoff.
+
 ## Injury tags in box scores
 
 This week's box scores (`injTag` in `site/app.js`) show each player's current ESPN designation (Q, D, OUT, IR, SUSP,

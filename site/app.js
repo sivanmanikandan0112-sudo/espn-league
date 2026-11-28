@@ -975,16 +975,67 @@
   const MATCHUP_TABS = [["", "Weekly"], ["plays", "Big plays"], ["watch", "Watch guide"]];
   // The week the Matchups tabs show: ?week= when it's a week of this season, else this week (the last one once the
   // season is over). Weekly, Big plays and the Watch guide share it: their tabs and the week strip carry it along.
+  // Weeks still to come this season: after the last week ESPN has matchups for, through the final playoff week
+  function futureWeeks() {
+    if (state.season !== IDX.current || !L.isCurrent || L.over) return [];
+    const last = D.weeks.length ? D.weeks[D.weeks.length - 1].week : 0, out = [];
+    for (let w = last + 1; w <= (L.finalWeek || last); w++) out.push(w);
+    return out;
+  }
+  const isFuture = w => futureWeeks().includes(w);
+  const allWeeks = () => D.weeks.map(x => ({ week: x.week, playoffs: x.playoffs }))
+    .concat(futureWeeks().map(w => ({ week: w, playoffs: w > L.regularSeasonWeeks, future: true })));
+  // A week still to come, from what's known now. Regular season: ESPN's schedule. First playoff round: the pairings if
+  // the playoffs started today (current seeds; the top seeds get byes). Later rounds: not set yet. Each team's lineup is
+  // its best lineup by ESPN's projection for that week (kickers and defenses: their rest-of-season average);
+  // win chances come from the playoff-odds model, as in the scenario builder.
+  const FW = { d: null, m: {} };
+  function futureWeek(w) {
+    if (FW.d !== D) { FW.d = D; FW.m = {}; }
+    if (FW.m[w]) return FW.m[w];
+    const RS = L.regularSeasonWeeks, left = Math.max(1, (L.finalWeek || RS) - L.currentWeek + 1);
+    let pairs = [], kind = "schedule", byes = [];
+    if (w <= RS) pairs = (D.upcoming || []).filter(u => u.week === w && (u.teams || []).length === 2 && u.teams.every(t => teamById[t])).map(u => u.teams);
+    else if (w === RS + 1 && L.playoffTeams) {
+      kind = "today";
+      const seeds = D.teams.filter(t => t.seed && t.seed <= L.playoffTeams).sort((a, b) => a.seed - b.seed).map(t => t.id);
+      const nBye = Math.max(0, 2 ** (L.playoffRounds || 0) - seeds.length);
+      byes = seeds.slice(0, nBye);
+      const rest = seeds.slice(nBye);
+      for (let i = 0; i < rest.length / 2; i++) pairs.push([rest[i], rest[rest.length - 1 - i]]);
+    } else kind = "tbd";
+    // each team's best lineup that week by ESPN's projections (the Trade impact optimizer: a starter on bye or out is
+    // replaced from the bench), plus its current kicker and defense
+    const mk = (r, slot) => ({ id: r.id, name: r.name, pos: r.pos, team: r.team, slot, pts: 0, injury: r.injury,
+      proj: r.wk ? +(r.wk[String(w)] || 0) : +((r.ros || 0) / left).toFixed(1) });
+    const lineupOf = tid => {
+      const roster = ((teamById[tid] || {}).roster || []).filter(r => r.slot !== "IR");
+      const S = tiSlots(), best = tiLineup(roster, w, S);
+      const chosen = roster.filter(r => best.ids.has(r.id)).sort((a, b) => tiPts(b, w) - tiPts(a, w));
+      const out = [];
+      TI_POS.forEach(pos => chosen.filter(r => r.pos === pos).slice(0, S[pos]).forEach(r => out.push(mk(r, pos))));
+      chosen.filter(r => !out.some(x => x.id === r.id)).forEach(r => out.push(mk(r, "FLEX")));
+      ["D/ST", "K"].forEach(pos => { const r = roster.find(x => x.pos === pos && x.slot === pos) || roster.find(x => x.pos === pos); if (r) out.push(mk(r, pos)); });
+      return out;
+    };
+    const games = pairs.map(([h, a], i) => {
+      const pH = scnP(h, a);
+      const side = (tid, p) => { const lineup = lineupOf(tid); return { team: tid, pts: 0, proj: +lineup.reduce((n, x) => n + x.proj, 0).toFixed(1), winProb: p, lineup }; };
+      return { id: `f${w}-${i}`, winner: "UNDECIDED", playoff: w > RS, tier: w > RS ? "WINNERS_BRACKET" : "NONE", sides: [side(h, pH), side(a, 1 - pH)] };
+    });
+    return (FW.m[w] = { week: w, future: true, kind, byes, final: false, playoffs: w > RS, games, lineupOf });
+  }
+  const weekFor = w => D.weeks.find(x => x.week === w) || (isFuture(w) ? futureWeek(w) : null);
   function matchupWeek() {
-    const weeks = D.weeks.map(x => x.week);
+    const weeks = allWeeks().map(x => x.week);
     let w = parseInt(state.params.get("week"), 10);
     if (!weeks.includes(w)) w = L.over ? weeks[weeks.length - 1] : L.currentWeek;
     if (!weeks.includes(w)) w = weeks[weeks.length - 1];
     return w;
   }
-  const mWeekParam = () => { const w = state.params.get("week"); return w && D.weeks.some(x => String(x.week) === w) ? { week: w } : {}; };
+  const mWeekParam = () => { const w = state.params.get("week"); return w && allWeeks().some(x => String(x.week) === w) ? { week: w } : {}; };
   const matchupNav = cur => subnav("matchups", MATCHUP_TABS, cur, mWeekParam());
-  const weekStrip = w => `<div class="week-strip" role="tablist">${D.weeks.map(x => `<button data-week="${x.week}" class="${x.week === w ? "active" : ""}${x.playoffs ? " po" : ""}" role="tab" aria-selected="${x.week === w}">${x.playoffs ? "PO " : "Wk "}${x.week}</button>`).join("")}</div>`;
+  const weekStrip = w => `<div class="week-strip" role="tablist">${allWeeks().map(x => `<button data-week="${x.week}" class="${x.week === w ? "active" : ""}${x.playoffs ? " po" : ""}${x.future ? " future" : ""}" role="tab" aria-selected="${x.week === w}"${x.future ? ' title="Upcoming"' : ""}>${x.playoffs ? "PO " : "Wk "}${x.week}</button>`).join("")}</div>`;
   // the chosen week in the middle of the strip (sideways only, so the page doesn't jump)
   function centerWeekStrip() {
     const s = main.querySelector(".week-strip"), a = s && s.querySelector(".active");
@@ -1150,6 +1201,7 @@
     if (state.params.get("view") === "season") return renderPlaysSeason(head);
     const wk = D.weeks.find(x => x.week === w);
     const top = head + weekStrip(w);
+    if (isFuture(w)) { main.innerHTML = top + `<div class="empty">Week ${w} hasn't started yet. Its big plays show up here once its games kick off.</div>`; return; }
     if (state.season !== IDX.current || !wk) { main.innerHTML = top + `<div class="empty">Big plays are kept for the current season only.${state.season !== IDX.current ? ` <a href="#/matchups/plays">Go to this week</a>` : ""}</div>`; return; }
     let all;
     if (live) {
@@ -1308,6 +1360,39 @@
     return `<section class="tw"><h2 class="tw-h">This week in league history</h2><div class="tw-strip">${rows.slice(0, 6).map(line).join("")}</div></section>`;
   }
 
+  // A week still to come: the scheduled matchups (or, for the first playoff round, the pairings if the playoffs started
+  // today) with each side's projected points from its best projected lineup and a win chance from the playoff-odds model.
+  function renderFutureMatchups(w) {
+    const F = futureWeek(w), RS = L.regularSeasonWeeks;
+    const round = w > RS ? `Playoffs, round ${w - RS}` : "";
+    const head = `<div class="section-head"><div><h1>Week ${w} matchups</h1><p class="sub">${round ? round + " · " : ""}Upcoming. Projected: each team's best lineup by ESPN's week ${w} projections.</p></div></div>
+      ${matchupNav("")}${weekStrip(w)}`;
+    if (F.kind === "tbd" || !F.games.length) {
+      main.innerHTML = head + `<div class="empty">${F.kind === "tbd" ? `Week ${w}'s playoff matchups depend on the earlier rounds.` : `No matchups scheduled for week ${w}.`}
+        <a href="${href("playoffs", {}, "bracket")}">Playoff bracket</a> · <a href="${href("playoffs", {}, "seeds")}">Seed odds</a></div>`;
+      centerWeekStrip();
+      return;
+    }
+    const note = F.kind === "today" ? `<p class="note">Playoff matchups aren't set yet. These are the first-round pairings if the playoffs started today, by current seed${F.byes.length ? `; ${F.byes.map(id => `<b>${esc(tname(id))}</b>`).join(" and ")} would have first-round byes` : ""}. <a href="${href("playoffs", {}, "seeds")}">Seed odds ›</a></p>` : "";
+    const mineFirst = g => g.sides.some(sd => isMine(teamById[sd.team])) ? 0 : 1;
+    const cards = F.games.slice().sort((a, b) => mineFirst(a) - mineFirst(b)).map(g => {
+      const [a, b] = g.sides;
+      const row = sd => {
+        const t = teamById[sd.team], o = sd === a ? b : a, p = Math.round(sd.winProb * 100);
+        return `<div class="side-row">${logo(t)}<span style="min-width:0"><div class="team-name">${esc(t.name)}${F.kind === "today" && t.seed ? ` <span class="muted">#${t.seed}</span>` : ""}</div><div class="team-mgr">${esc(t.manager)} · ${record(t)}</div></span>
+          <span class="wp${sd.winProb > o.winProb ? " fav" : ""}" title="Win chance from the playoff-odds model">${p}% <small>to win</small></span>
+          <span class="score">${sd.proj.toFixed(1)}<small>projected</small></span></div>`;
+      };
+      const line = p => `<div class="box-line"><span class="slot ${esc(POS.includes(p.slot) ? p.slot : p.pos)}" style="font-size:10px;font-weight:700;text-align:center">${esc(p.slot)}</span><span class="pn">${esc(p.name)}${p.injury && p.injury !== "ACTIVE" ? ` <span class="inj-tag ${INJ_LVL[p.injury] || "q"}" title="ESPN: ${esc(STATUS_WORD[p.injury] || p.injury)}">${esc(INJ[p.injury] || p.injury)}</span>` : ""}</span><span class="pp">${p.proj.toFixed(1)}</span></div>`;
+      const col = sd => `<div class="box-col"><h4>${esc(teamById[sd.team].name)}</h4>${sd.lineup.map(line).join("")}</div>`;
+      return `<article class="game future${g.sides.some(sd => isMine(teamById[sd.team])) ? " mine" : ""}"><div class="game-btn fut">${row(a)}${row(b)}
+          <div class="game-foot"><span>${round || "Regular season"} · Upcoming</span></div></div>
+        <details class="fut-box"><summary>Projected lineups</summary><div class="fut-lineups">${col(a)}${col(b)}</div></details></article>`;
+    }).join("");
+    main.innerHTML = head + note + `<div class="games">${cards}</div>`;
+    centerWeekStrip();
+  }
+
   function renderMatchups() {
     if (state.sub === "bracket") { location.replace(href("playoffs", {}, "bracket")); return; } // the bracket moved to Playoffs
     if (state.sub === "pickem") { location.replace("#/games"); return; } // old link: pick'em moved to Games
@@ -1317,6 +1402,7 @@
       return r;
     }
     const w = matchupWeek();
+    if (isFuture(w)) return renderFutureMatchups(w);
     const wk = D.weeks.find(x => x.week === w);
     const open = state.params.get("game");
     const focusTeam = Number(state.params.get("team")) || null;   // set by Record book links
@@ -4868,7 +4954,7 @@
   // For an earlier week (or a past season), the same rating with the points each starter actually scored in place
   // of his projection: which games mattered most that week.
   function watchModel(week) {
-    const wk = D.weeks.find(w => w.week === week);
+    const wk = weekFor(week);
     if (!wk) return null;
     const live = liveWeek(week);
     const src = nflGamesFor(week);
@@ -4893,18 +4979,27 @@
         row.sides[i].players.push(p);
       }));
     });
+    // a later playoff round with no matchups yet: every team's current starters count, with no closeness weighting
+    if (wk.future && !wk.games.length) D.teams.forEach(t => wk.lineupOf(t.id).forEach(p => {
+      const g = byTeam[p.team];
+      if (!g) return;
+      g.starters++; g.proj += p.proj; g.stake += p.proj;
+      let row = g.rows.find(r => r.game === "t" + t.id);
+      if (!row) g.rows.push(row = { game: "t" + t.id, close: 0, sides: [{ team: t.id, players: [] }] });
+      row.sides[0].players.push(p);
+    }));
     const max = Math.max(1, ...games.map(g => g.stake));
     games.forEach(g => {
       g.score = Math.round(100 * g.stake / max);
       // ESPN's scoreboard (checked each minute during games) says when a game is really over; without a fresh
       // check, a guess from the kickoff time
       const k = NFL_STATUS.games && now - NFL_STATUS.at < 5 * 60e3 ? NFL_STATUS.games[String(g.id)] : null;
-      g.state = !live ? "final" : k ? (k[0] === "in" ? "live" : k[0] === "post" ? "final" : "upcoming")
+      g.state = wk.future ? "upcoming" : !live ? "final" : k ? (k[0] === "in" ? "live" : k[0] === "post" ? "final" : "upcoming")
         : !g.at || now < g.at ? "upcoming" : now < g.at + 3.5 * 3600e3 ? "live" : "final";
       g.detail = k && k[0] === "in" ? k[1] : "";
       g.rows.sort((x, y) => y.close - x.close);
     });
-    return { week: wk.week, games, live };
+    return { week: wk.week, games, live, future: !!wk.future, kind: wk.kind, byes: wk.byes || [] };
   }
   const kickText = g => g.state === "live" ? (g.detail ? "Live · " + g.detail : "Live now") : g.state === "final" ? "Final" : g.tbd ? "Time TBD"
     : new Date(g.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
@@ -4915,8 +5010,9 @@
     : live ? `<b class="wg-pts" title="Live points so far${p.proj != null ? ` (projected ${(p.proj || 0).toFixed(1)})` : ""}">${fmt(p.pts)}</b>` : `<span class="muted">${fmt(p.pts)}</span>`}`).join(", ");
 
   function renderWatch() {
-    const w = matchupWeek(), live = liveWeek(w);
-    const head = `<div class="section-head"><div><h1>Watch guide${live ? "" : ` <span class="muted">· week ${w}</span>`}</h1>${live ? expl("The real NFL games that matter most to the league this week.",
+    const w = matchupWeek(), live = liveWeek(w), fut = isFuture(w);
+    const head = `<div class="section-head"><div><h1>Watch guide${live ? "" : ` <span class="muted">· week ${w}</span>`}</h1>${fut ? expl(`A preview of the NFL games that should matter most to the league in week ${w}.`,
+      `The same rating as this week's guide, from what's known now: each team's best lineup by ESPN's projections for week ${w}, weighted by how close each fantasy matchup looks (from the playoff-odds model). Lineups, injuries and projections will change before then. 100 = the week's biggest game.`) : live ? expl("The real NFL games that matter most to the league this week.",
       "Each game is rated by the league starters playing in it, weighted by their projections and by how close their fantasy matchups are: a player in a toss-up counts almost three times as much as one in a lopsided matchup. 100 = the week's biggest game. Numbers next to players are ESPN's projections before their game, then their points: live points (highlighted) while it's on, final points once it's over.")
       : expl(`The real NFL games that mattered most to the league in week ${w}.`,
       `Each game is rated by the league starters who played in it, weighted by the points they scored and by how close their fantasy matchups were going in (by ESPN's projections): a player in a toss-up counts almost three times as much as one in a lopsided matchup. 100 = the week's biggest game. Numbers next to players are their points.`)}</div></div>${matchupNav("watch")}${weekStrip(w)}`;
@@ -4935,6 +5031,7 @@
       const rows = g.rows.map(r => {
         const [x, y] = r.sides.map(s => Object.assign({ t: teamById[s.team] }, s));
         const side = s => `<span class="wg-side${isMine(s.t) ? " me" : ""}"><b>${esc(s.t.name)}</b>${s.players.length ? " " + plist(s.players, g.state !== "upcoming", g.state === "live") : ' <span class="muted">none</span>'}</span>`;
+        if (!y) return `<div class="wg-row solo">${side(x)}</div>`; // a later playoff round: no matchups yet
         return `<div class="wg-row">${side(x)}<span class="wg-vs">vs</span>${side(y)}<span class="wg-close c${r.close >= 0.8 ? 3 : r.close >= 0.5 ? 2 : 1}">${closeText(r.close)}</span></div>`;
       }).join("");
       return `<article class="wg-game ${g.state}${mineHere ? " mine" : ""}">
@@ -4944,7 +5041,9 @@
           <span class="team-mgr">${g.starters} league starter${g.starters === 1 ? "" : "s"} · ${g.proj.toFixed(0)} ${g.state === "final" && !liveWeek(matchupWeek()) ? "" : "projected "}pts${mineHere ? " · <b>you have players here</b>" : ""}</span></div>
         ${rows ? `<div class="wg-rows">${rows}</div>` : ""}</article>`;
     };
-    if (!M.live) {
+    const futNote = !fut ? "" : M.kind === "today" ? `<p class="note">Playoff matchups aren't set yet. These are the first-round pairings if the playoffs started today${M.byes.length ? ` (${M.byes.map(id => esc(tname(id))).join(" and ")} would have byes)` : ""}.</p>`
+      : M.kind === "tbd" ? `<p class="note">This round's matchups depend on earlier playoff results, so every team's projected lineup counts here, without matchups.</p>` : "";
+    if (!M.live && !fut) {
       const played = M.games.filter(g => g.starters).sort((a, b) => b.stake - a.stake);
       const none = M.games.filter(g => !g.starters);
       main.innerHTML = head + (played.length ? section(`Week ${w}'s biggest games`, "", `<div class="wg-list">${played.map(card).join("")}</div>`) : `<div class="empty">No league starters played in week ${w}'s NFL games.</div>`) +
@@ -4960,7 +5059,7 @@
     });
     const done = M.games.filter(g => g.state === "final" && g.starters);
     const none = M.games.filter(g => !g.starters);
-    main.innerHTML = head +
+    main.innerHTML = head + futNote +
       (top.length ? section("Must-watch", "", `<div class="wg-list">${top.map(card).join("")}</div>`) : `<div class="empty">Every game with league starters has been played this week.</div>`) +
       Object.entries(days).map(([d, gs]) => section(esc(d), "", `<div class="wg-list">${gs.map(card).join("")}</div>`)).join("") +
       (done.length ? section("Already played", "", `<div class="wg-list">${done.map(card).join("")}</div>`) : "") +
@@ -5373,6 +5472,7 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-28", [
+      ["Look ahead on Matchups", "Matchups → Weekly, Watch guide", "The week strip now runs through the last playoff week. Upcoming weeks show their matchups with each team's best projected lineup, projected points and win chance, and a Watch guide preview. Week 15 shows the first-round pairings if the playoffs started today; later rounds wait for results.", "#/matchups"],
       ["Live points in the Watch guide", "Matchups → Watch guide, My team → Your games to watch", "Once a game kicks off, the players in it show their live points (highlighted) instead of their projections, then their final points.", "#/matchups/watch"],
       ["Compact layout for everyone", "Every page", "The compact layout (tighter tables and cards, one-line explanations with ⓘ for the rest) is now the only layout, so the setting is gone.", "#/settings"],
       ["Injury tags in box scores", "Matchups → any box score", "This week's box scores show each player's current ESPN designation beside his name: Q (questionable), D (doubtful), OUT, IR or SUSP, next to the in-game HURT tag.", "#/matchups"],
