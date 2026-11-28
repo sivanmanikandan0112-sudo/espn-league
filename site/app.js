@@ -63,6 +63,100 @@
     get(k, d) { try { const v = localStorage.getItem("lhq:" + k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } },
     set(k, v) { try { localStorage.setItem("lhq:" + k, JSON.stringify(v)); } catch (_) { /* ignore */ } },
   };
+  // ---------------------------------------------------------------- collapsible sections
+  // On the long pages (CZ_PAGES), every section's title collapses or expands it with a tap. Each choice is saved on
+  // this device ("cz": page|section -> 1 collapsed, 0 open). With no choice saved, phones start some sections collapsed
+  // (CZ_PHONE_SHUT) so the page is shorter; computers start everything open. Sections are found after each render
+  // (a MutationObserver on <main>), so pages need no changes of their own.
+  const CZ_PAGES = { "standings/": 1, "myteam/": 1, "matchups/watch": 1, "playoffs/": 1, "playoffs/picture": 1, "history/": 1, "history/overview": 1, "history/records": 1 };
+  const CZ_PHONE_SHUT = {
+    "standings/": ["season storyline", "league pulse", "weekly winners & losers"],
+    "myteam/": ["roster", "schedule", "your badges", "your record book", "your manager style", "byes ahead"],
+    "matchups/watch": ["already played"],
+    "playoffs/": ["tiebreaker race"], "playoffs/picture": ["tiebreaker race"],
+    "history/": ["all-time standings", "career luck"], "history/overview": ["all-time standings", "career luck"],
+  };
+  const CZ_SHUT_AFTER = { "history/records": 2 }; // record lists: on phones, all but the first two start collapsed
+  const czPage = () => (state.tab || "standings") + "/" + (state.sub || "");
+  const czIsPhone = () => window.matchMedia("(max-width: 640px)").matches;
+  // a section's name, without links, week numbers or "· week 12"-style tags, so it stays the same week to week
+  function czName(h) {
+    const c = h.cloneNode(true);
+    c.querySelectorAll("a, button, .muted, .pill, .badge").forEach(x => x.remove());
+    return c.textContent.split("·")[0].replace(/\d+/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+  function czSet(sec, shut) {
+    sec.classList.toggle("cz-off", shut);
+    const b = sec.querySelector(".cz-btn");
+    if (b) { b.setAttribute("aria-expanded", String(!shut)); b.setAttribute("aria-label", (shut ? "Expand " : "Collapse ") + sec.dataset.czName); }
+  }
+  function czAllBar() {
+    const bar = main.querySelector(".cz-all");
+    if (!bar) return;
+    const secs = [...main.querySelectorAll(".cz")];
+    const anyOpen = secs.some(x => !x.classList.contains("cz-off"));
+    bar.querySelector("button").textContent = anyOpen ? "Collapse all" : "Expand all";
+  }
+  function czApply() {
+    const page = czPage();
+    if (!CZ_PAGES[page]) return;
+    const saved = store.get("cz", {}) || {};
+    const phone = czIsPhone();
+    const shutList = CZ_PHONE_SHUT[page] || [];
+    const found = [...main.querySelectorAll("section")].filter(x => !x.classList.contains("cz") && (x.querySelector(":scope > .section-head h2") || (x.matches(".rec-card") && page === "history/records")));
+    if (!found.length) return;
+    const all = [...main.querySelectorAll(".cz")].length;
+    found.forEach((sec, i) => {
+      const h = sec.matches(".rec-card") ? sec.querySelector(":scope > h3") : sec.querySelector(":scope > .section-head h2");
+      if (!h) return;
+      const name = czName(h);
+      if (!name) return;
+      sec.classList.add("cz");
+      sec.dataset.czName = name;
+      h.classList.add("cz-h");
+      h.insertAdjacentHTML("afterbegin", '<button type="button" class="cz-btn" aria-expanded="true"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>');
+      const k = page + "|" + name;
+      const def = phone && (shutList.includes(name) || (CZ_SHUT_AFTER[page] != null && all + i >= CZ_SHUT_AFTER[page]));
+      czSet(sec, k in saved ? !!saved[k] : def);
+    });
+    // a Collapse all / Expand all link on pages with many sections
+    const secs = [...main.querySelectorAll(".cz")];
+    if (secs.length >= 5 && !main.querySelector(".cz-all")) {
+      let top = secs[0];
+      while (top.parentElement && top.parentElement !== main) top = top.parentElement;
+      top.insertAdjacentHTML("beforebegin", '<div class="cz-all"><button type="button" class="linkbtn"></button></div>');
+    }
+    czAllBar();
+  }
+  function czToggle(sec, shut) {
+    czSet(sec, shut);
+    const saved = store.get("cz", {}) || {};
+    saved[czPage() + "|" + sec.dataset.czName] = shut ? 1 : 0;
+    store.set("cz", saved);
+  }
+  main.addEventListener("click", e => {
+    const all = e.target.closest(".cz-all button");
+    if (all) {
+      const secs = [...main.querySelectorAll(".cz")];
+      const shut = secs.some(x => !x.classList.contains("cz-off"));
+      secs.forEach(x => czToggle(x, shut));
+      czAllBar();
+      return;
+    }
+    const h = e.target.closest(".cz-h");
+    if (!h || (e.target.closest("a, button, select, input, [role=button], .expl, .info") && !e.target.closest(".cz-btn"))) return;
+    const sec = h.closest(".cz");
+    if (!sec) return;
+    czToggle(sec, !sec.classList.contains("cz-off"));
+    czAllBar();
+  });
+  let czQueued = false;
+  new MutationObserver(() => {
+    if (czQueued) return;
+    czQueued = true;
+    setTimeout(() => { czQueued = false; try { czApply(); } catch (_) { /* never break a page */ } }, 0);
+  }).observe(main, { childList: true, subtree: true });
+
   // A brand-new visitor on this device (nothing saved yet): the getting-started tour opens for them. Read here, before
   // the first page render records a visit.
   const NEW_VISITOR = store.get("tour", null) == null && store.get("last-visit", null) == null && !store.get("me", "") && !store.get("pk-member", "");
@@ -981,6 +1075,13 @@
     `<a role="tab" aria-selected="${cur === k}" class="${cur === k ? "active" : ""}" href="${href("matchups", Object.assign(k ? { view: k } : {}, mWeekParam()), "plays")}">${lab}</a>`).join("")}</div>`;
   // an earlier week's plays from the worker (its stored copy of that week's feed), loaded once per visit
   const PWK = {};
+  const PG_OPEN = new Set(); // Big plays cards opened with "Show all"
+  main.addEventListener("click", e => {
+    const b = e.target.closest("[data-pg-all]");
+    if (!b) return;
+    PG_OPEN.add(b.dataset.pgAll);
+    renderKeepScroll(renderMatchups);
+  });
   async function renderPlaysSeason(head) {
     if (state.season !== IDX.current || !LIVE_API_BASE()) { main.innerHTML = head + playsSwitch("season") + `<div class="empty">Season big plays are tracked for the current season.</div>`; return; }
     if (!PS.data || Date.now() - PS.at > 120000) {
@@ -1065,7 +1166,12 @@
     const toggle = `<div class="pg-by" role="tablist" aria-label="Group big plays">${[["nfl", "By NFL game"], ["fantasy", "By fantasy matchup"]].map(([k, lab]) =>
       `<a role="tab" aria-selected="${by === k}" class="${by === k ? "active" : ""}" href="${href("matchups", Object.assign({ by: k }, mWeekParam()), "plays")}">${lab}</a>`).join("")}</div>`;
     const foot = (n, link) => `<div class="pg-foot"><span>${n} big play${n === 1 ? "" : "s"}</span>${link || ""}</div>`;
-    const plays = ev => ev.length ? `<div class="plays pg-plays">${ev.map(playLine).join("")}</div>` : `<p class="pg-none">No big plays yet.</p>`;
+    // each card shows its 3 newest plays; "Show all" opens the rest (remembered while you're on the page)
+    const plays = (ev, key) => {
+      if (!ev.length) return `<p class="pg-none">No big plays yet.</p>`;
+      const open = PG_OPEN.has(key) || ev.length <= 4;
+      return `<div class="plays pg-plays">${ev.slice(0, open ? ev.length : 3).map(playLine).join("")}</div>${open ? "" : `<button type="button" class="linkbtn pg-all" data-pg-all="${esc(key)}">Show all ${ev.length} plays</button>`}`;
+    };
     let body;
     if (by === "fantasy") {
       const games = wk.games.filter(g => g.sides.length === 2).map(g => ({ g, ev: all.filter(e => String(e.game) === String(g.id)) }))
@@ -1075,7 +1181,7 @@
         const side = s => { const t = teamById[s.team]; return `<span class="pg-side">${logo(t)}<span class="pg-name">${esc(t.name)}</span><b class="num">${fmt(s.pts)}</b></span>`; };
         const box = href("matchups", { week: wk.week, game: g.id });
         return `<article class="pg-card${g.sides.some(s => isMine(teamById[s.team])) ? " mine" : ""}">
-          <a class="pg-head" href="${box}">${side(a)}${side(b)}</a>${plays(ev)}${foot(ev.length, `<a href="${box}">Box score →</a>`)}</article>`;
+          <a class="pg-head" href="${box}">${side(a)}${side(b)}</a>${plays(ev, "f" + w + ":" + g.id)}${foot(ev.length, `<a href="${box}">Box score →</a>`)}</article>`;
       }).join("");
       body = `<div class="pg-grid">${body}</div>`;
     } else {
@@ -1093,7 +1199,7 @@
         const st = stateOf(g);
         const mine = ev.some(e => isMine(teamById[e.team]));
         return `<article class="pg-card${mine ? " mine" : ""}"><div class="pg-head pg-nfl"><span class="pg-teams">${esc(g.away)} <span class="pg-at">@</span> ${esc(g.home)}</span>
-          <span class="pg-st ${st}">${st === "live" ? "Live" : st === "final" ? "Final" : when(g)}</span></div>${plays(ev)}${foot(ev.length)}</article>`;
+          <span class="pg-st ${st}">${st === "live" ? "Live" : st === "final" ? "Final" : when(g)}</span></div>${plays(ev, "n" + w + ":" + (g.id || g.away))}${foot(ev.length)}</article>`;
       };
       const list = (label, xs) => xs.length ? `<p class="pg-quiet"><b>${label}:</b> ${xs.map(({ g }) => `${esc(g.away)} @ ${esc(g.home)}`).join(" · ")}</p>` : "";
       body = `<div class="pg-grid">${withPlays.map(card).join("")}${other.length ? card({ g: { away: "Other", home: "", date: 0 }, ev: other }).replace(" <span class=\"pg-at\">@</span> ", "") : ""}</div>
@@ -3192,7 +3298,8 @@
     if (state.sub === "compare") return renderCompare();
     if (state.sub === "impact") return renderTradeImpact();
     const swap = '<div class="swap"><svg width="22" height="22" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5h11l-3-3M14 11H3l3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>';
-    const body = D.trades.map(tr => {
+    if (TR_SHOWN.season !== state.season) Object.assign(TR_SHOWN, { season: state.season, n: 10 });
+    const body = D.trades.slice(0, TR_SHOWN.n).map(tr => {
       const early = !tr.weeksSince;
       const [a, b] = tr.sides;
       let verdict = "Too early to grade: no completed weeks since the trade.";
@@ -3216,8 +3323,15 @@
     main.innerHTML = `<div class="section-head"><div><h1>Trade history <span class="pill">${D.trades.length} trades</span></h1>
         ${expl(`Every ${L.season} deal, graded by points scored in the new team's lineup.`, `Every deal that went through in ${L.season}, newest first, graded by points the received players scored in the new team's starting lineup for as long as they stayed. Bench points don't count: a trade only pays off if you play them.`)}</div></div>
       ${subnav("trades", TRADE_TABS, "")}
-      <div class="trades">${body || '<div class="empty">No trades this season.</div>'}</div>`;
+      <div class="trades">${body || '<div class="empty">No trades this season.</div>'}</div>${D.trades.length > TR_SHOWN.n ? `<div class="tr-more"><button type="button" class="linkbtn" data-tr-more>Show ${Math.min(10, D.trades.length - TR_SHOWN.n)} more trades</button> <span class="muted">${TR_SHOWN.n} of ${D.trades.length} shown</span></div>` : ""}`;
   }
+  // Trade history shows the 10 newest; each tap shows 10 more (for this visit)
+  const TR_SHOWN = { n: 10, season: null };
+  main.addEventListener("click", e => {
+    if (!e.target.closest("[data-tr-more]")) return;
+    TR_SHOWN.n += 10;
+    renderKeepScroll(renderTrades);
+  });
 
   const TRADE_POS = ["QB", "RB", "WR", "TE"];
 
@@ -5245,6 +5359,13 @@
   // Every feature added to the site, grouped by the day it went live (newest first). Add new features at the top.
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
+    ["2026-11-28", [
+      ["Collapsible sections", "My team, Standings, Playoffs → Picture, Watch guide, History → Overview and Records", "Tap a section's title to collapse or expand it; your choice is saved on this device. On phones, the longer sections (Roster, Schedule, badges, the tiebreaker race, all-time tables…) start collapsed, and pages with many sections get Collapse all / Expand all.", "#/myteam"],
+      ["Shorter Big plays and Trade history", "Matchups → Big plays, Trades", "Each Big plays card shows its 3 newest plays with Show all; Trade history shows 10 trades at a time with Show more.", "#/matchups/plays"],
+    ]],
+    ["2026-11-26", [
+      ["Going your way, by win chance", "Matchups · My team → Who to root for", "During games, a matchup is \"going your way\" when the team you want has the better live win chance (ESPN's, which counts who each side has left to play), not just the higher score. Each live game shows that chance.", "#/matchups"],
+    ]],
     ["2026-11-25", [
       ["One week across Matchups", "Matchups → Weekly, Big plays, Watch guide", "The week you pick now carries over to Big plays and the Watch guide, each with its own week strip. Earlier weeks show that week's big plays and the games that mattered most.", "#/matchups/plays"],
     ]],

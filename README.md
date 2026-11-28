@@ -371,6 +371,15 @@ or Rank 'em entries (and Bullseye and the waiver wire challenge, until they were
 picked. One KV value per season, `pulse:<season>`, the last 40 events; the same person doing the same thing within
 30 minutes moves back to the top instead of adding a line (`pulse()` in `worker/src/index.js`).
 
+## Collapsible sections
+
+On the long pages (`CZ_PAGES` in `site/app.js`: Standings, My team, Playoffs → Picture, Matchups → Watch guide,
+History → Overview and Records) every section title collapses or expands its section; the choice is saved per device
+(`lhq:cz`). With nothing saved, phones (640px or narrower) start the sections in `CZ_PHONE_SHUT` collapsed (and all
+but the first two record lists); computers start everything open. Pages with 5+ sections get Collapse all / Expand all.
+Sections are found after each render by a MutationObserver on `<main>`, so pages need no changes. Big plays cards show
+their 3 newest plays (Show all), and Trade history 10 trades at a time (Show more).
+
 ## Who to root for
 
 Matchups (below this week's games) and My team. The playoff-odds simulation (`stats.playoff_odds`, 10,000 seasons)
