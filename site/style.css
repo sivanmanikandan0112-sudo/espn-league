@@ -1929,3 +1929,7 @@ section.rec-card.cz-off > h3 { margin-bottom: 0; }
 .inj-tag.d { background: #d9772b; }
 .inj-tag.out { background: #d9534f; }
 .inj-tag.sus { background: #6b7280; }
+
+/* Watch guide: a player's live points while his game is on */
+.wg-pts { color: var(--accent); font-variant-numeric: tabular-nums; }
+.set-display > .set-tour:first-child { margin-top: 0; padding-top: 0; border-top: 0; }

@@ -523,12 +523,12 @@ A first-time visitor on a device (nothing saved from the site yet) gets a five-s
 your team (name + PIN), turn on alerts, where everything lives, and the league games. The steps that send you
 somewhere (My team, Settings → Alerts) shrink the tour to a small "Continue" pill at the bottom, and those steps show
 as done once you've claimed a team or turned alerts on. Skipping or finishing ends it for good on that device;
-Settings → Display → **Take the tour** replays it. Saved in `localStorage` as `lhq:tour`.
+Settings → Getting started → **Take the tour** replays it. Saved in `localStorage` as `lhq:tour`.
 
-## Compact mode
+## Compact layout
 
-A per-device display setting (`lhq:compact`, the `compact` class on `<html>`): the switch in
-Settings → Display. Tighter table rows, matchup cards, tiles, game lists and spacing, and the one-line explanation
+The only layout (since Nov 28, 2026; it used to be a per-device switch in Settings): the `compact` class is on
+`<html>` in `index.html` and added again by `app.js`. Tighter table rows, matchup cards, tiles, game lists and spacing, and the one-line explanation
 with ⓘ on every screen size. Tap targets stay at least 36 px. Styles are the `.compact` rules at the end of
 `site/style.css`.
 

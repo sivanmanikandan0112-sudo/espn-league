@@ -161,16 +161,9 @@
   // A brand-new visitor on this device (nothing saved yet): the getting-started tour opens for them. Read here, before
   // the first page render records a visit.
   const NEW_VISITOR = store.get("tour", null) == null && store.get("last-visit", null) == null && !store.get("me", "") && !store.get("pk-member", "");
-  // Compact mode (per device): tighter tables, cards and spacing, one-line explanations everywhere
-  function setCompact(on) {
-    document.documentElement.classList.toggle("compact", on);
-    store.set("compact", on);
-    document.querySelectorAll("[data-compact]").forEach(b => { b.setAttribute("aria-pressed", on); if (b.type === "checkbox") b.checked = on; });
-  }
-  setCompact(!!store.get("compact", false));
-  document.addEventListener("change", e => {
-    if (e.target.matches && e.target.matches("input[data-compact]")) setCompact(e.target.checked);
-  });
+  // Compact layout is the only layout (tighter tables, cards and spacing, one-line explanations with ⓘ for the rest).
+  // It used to be a per-device setting; the class is also on <html> in index.html, so the first paint is compact.
+  document.documentElement.classList.add("compact");
 
   // ---------------------------------------------------------------- data loading
   function parseAssigned(text) { return JSON.parse(text.slice(text.indexOf('={"') + 1, text.lastIndexOf("}") + 1)); }
@@ -4917,12 +4910,14 @@
     : new Date(g.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
   const closeText = c => c >= 0.8 ? "Toss-up" : c >= 0.5 ? "Close" : "Leaning";
   const lastName = n => /D\/ST$/.test(n) ? n.replace(" D/ST", " D") : n.split(" ").slice(1).join(" ") || n;
-  const plist = (ps, done) => ps.map(p => `${esc(lastName(p.name))} <span class="muted">${done ? fmt(p.pts) : (p.proj || 0).toFixed(1)}</span>`).join(", ");
+  // each player with his projection before his game, his points once it starts (live points stand out while it's on)
+  const plist = (ps, scored, live) => ps.map(p => `${esc(lastName(p.name))} ${!scored ? `<span class="muted">${(p.proj || 0).toFixed(1)}</span>`
+    : live ? `<b class="wg-pts" title="Live points so far${p.proj != null ? ` (projected ${(p.proj || 0).toFixed(1)})` : ""}">${fmt(p.pts)}</b>` : `<span class="muted">${fmt(p.pts)}</span>`}`).join(", ");
 
   function renderWatch() {
     const w = matchupWeek(), live = liveWeek(w);
     const head = `<div class="section-head"><div><h1>Watch guide${live ? "" : ` <span class="muted">· week ${w}</span>`}</h1>${live ? expl("The real NFL games that matter most to the league this week.",
-      "Each game is rated by the league starters playing in it, weighted by their projections and by how close their fantasy matchups are: a player in a toss-up counts almost three times as much as one in a lopsided matchup. 100 = the week's biggest game. Numbers next to players are ESPN's projections (points once their game is over).")
+      "Each game is rated by the league starters playing in it, weighted by their projections and by how close their fantasy matchups are: a player in a toss-up counts almost three times as much as one in a lopsided matchup. 100 = the week's biggest game. Numbers next to players are ESPN's projections before their game, then their points: live points (highlighted) while it's on, final points once it's over.")
       : expl(`The real NFL games that mattered most to the league in week ${w}.`,
       `Each game is rated by the league starters who played in it, weighted by the points they scored and by how close their fantasy matchups were going in (by ESPN's projections): a player in a toss-up counts almost three times as much as one in a lopsided matchup. 100 = the week's biggest game. Numbers next to players are their points.`)}</div></div>${matchupNav("watch")}${weekStrip(w)}`;
     // opened between the minute checks: get the real game states now, then redraw once
@@ -4939,7 +4934,7 @@
       const mineHere = me && g.rows.some(r => r.sides.some(s => s.team === me.id && s.players.length));
       const rows = g.rows.map(r => {
         const [x, y] = r.sides.map(s => Object.assign({ t: teamById[s.team] }, s));
-        const side = s => `<span class="wg-side${isMine(s.t) ? " me" : ""}"><b>${esc(s.t.name)}</b>${s.players.length ? " " + plist(s.players, g.state === "final") : ' <span class="muted">none</span>'}</span>`;
+        const side = s => `<span class="wg-side${isMine(s.t) ? " me" : ""}"><b>${esc(s.t.name)}</b>${s.players.length ? " " + plist(s.players, g.state !== "upcoming", g.state === "live") : ' <span class="muted">none</span>'}</span>`;
         return `<div class="wg-row">${side(x)}<span class="wg-vs">vs</span>${side(y)}<span class="wg-close c${r.close >= 0.8 ? 3 : r.close >= 0.5 ? 2 : 1}">${closeText(r.close)}</span></div>`;
       }).join("");
       return `<article class="wg-game ${g.state}${mineHere ? " mine" : ""}">
@@ -5112,7 +5107,7 @@
         const r = x.rows.find(r => r.sides.some(s => s.team === t.id));
         const ms = r.sides.find(s => s.team === t.id), os = r.sides.find(s => s.team !== t.id);
         return `<div class="rec"><span class="rec-v me-kick">${esc(kickText(x))}</span><span class="rec-who"><span><b>${esc(x.away)} at ${esc(x.home)}</b>
-          <span class="team-mgr">You: ${plist(ms.players)}${os.players.length ? " · Them: " + plist(os.players) : ""}</span></span></span></div>`;
+          <span class="team-mgr">You: ${plist(ms.players, x.state === "live", x.state === "live")}${os.players.length ? " · Them: " + plist(os.players, x.state === "live", x.state === "live") : ""}</span></span></span></div>`;
       });
       watch = section("Your games to watch", "Real NFL games still to play with your starters in them.", lines.length ? `<div class="rec-card wrap">${lines.join("")}</div>` : `<div class="panel">All your starters have played.</div>`);
     }
@@ -5378,6 +5373,8 @@
   // [title, where it lives, one-line description, link]
   const CHANGELOG = [
     ["2026-11-28", [
+      ["Live points in the Watch guide", "Matchups → Watch guide, My team → Your games to watch", "Once a game kicks off, the players in it show their live points (highlighted) instead of their projections, then their final points.", "#/matchups/watch"],
+      ["Compact layout for everyone", "Every page", "The compact layout (tighter tables and cards, one-line explanations with ⓘ for the rest) is now the only layout, so the setting is gone.", "#/settings"],
       ["Injury tags in box scores", "Matchups → any box score", "This week's box scores show each player's current ESPN designation beside his name: Q (questionable), D (doubtful), OUT, IR or SUSP, next to the in-game HURT tag.", "#/matchups"],
       ["Collapsible sections", "My team, Standings, Matchups (recent big plays, league history, who to root for), Playoffs → Picture, Watch guide, History → Overview and Records", "Tap a section's title to collapse or expand it; your choice is saved on this device. On phones, the longer sections (Roster, Schedule, badges, the tiebreaker race, all-time tables…) start collapsed, and pages with many sections get Collapse all / Expand all.", "#/myteam"],
       ["Shorter Big plays and Trade history", "Matchups → Big plays, Trades", "Each Big plays card shows its 3 newest plays with Show all; Trade history shows 10 trades at a time with Show more.", "#/matchups/plays"],
@@ -5785,12 +5782,10 @@
       row("Trade review", S.tradeReviewHours ? `${S.tradeReviewHours} hours` : "None", S.vetoVotes ? `${S.vetoVotes} league votes veto a trade` : "") +
       (S.entryFee ? row("Entry fee", "$" + num(S.entryFee)) : ""));
 
-    const compactOn = document.documentElement.classList.contains("compact");
-    const display = `<section class="panel set-display"><label class="set-switch"><input type="checkbox" data-compact${compactOn ? " checked" : ""}>
-      <span><b>Compact mode</b><span class="team-mgr">Tighter tables, cards and spacing so more fits on screen, with one-line explanations (tap ⓘ for the rest). Saved on this device.</span></span></label>
+    const display = `<section class="panel set-display">
       <div class="set-tour"><span><b>Getting started tour</b><span class="team-mgr">Claim your team, turn on alerts, and a quick map of the site.</span></span><button type="button" class="linkbtn" data-tour-start>Take the tour ›</button></div></section>`;
     main.innerHTML = `<div class="section-head"><div><h1>League settings</h1><p class="sub">${L.season} season · straight from ESPN · updated ${esc(ago(D.updated))}</p></div></div>
-      <h2 class="set-h">Display</h2>${display}
+      <h2 class="set-h">Getting started</h2>${display}
       <h2 class="set-h" id="alerts">Alerts</h2><section class="panel set-alerts" id="alerts-panel"></section>
       ${glance}
       <h2 class="set-h">Roster & season</h2><div class="rec-grid set-grid">${roster}${schedule}${moves}${draft}</div>
